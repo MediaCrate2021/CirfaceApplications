@@ -285,6 +285,8 @@ app.get('/api/search-tasks', requireAuth, async (req, res) => {
 // Start
 // ---------------------------------------------------------------------------
 
-app.listen(PORT, () => {
-  console.log(`Custom Field Exporter running at http://localhost:${PORT}`);
+app.set('trust proxy', 1);
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Custom Field Exporter running on port ${PORT}`);
 });
