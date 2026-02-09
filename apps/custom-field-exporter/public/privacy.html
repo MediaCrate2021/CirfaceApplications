@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Custom Field Exporter</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .legal-container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+    }
+    .legal-container h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      text-align: left;
+    }
+    .legal-container .last-updated {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-bottom: 2rem;
+    }
+    .legal-container h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-top: 1.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .legal-container p,
+    .legal-container li {
+      font-size: 0.925rem;
+      line-height: 1.7;
+      color: #334155;
+    }
+    .legal-container ul {
+      padding-left: 1.25rem;
+      margin: 0.5rem 0;
+    }
+    .legal-container li {
+      margin-bottom: 0.35rem;
+    }
+    .legal-container a {
+      color: #2563eb;
+    }
+    .back-link {
+      display: inline-block;
+      margin-bottom: 1.5rem;
+      font-size: 0.875rem;
+      color: #2563eb;
+      text-decoration: none;
+    }
+    .back-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="legal-container">
+    <a href="/" class="back-link">&larr; Back to app</a>
+
+    <h1>Privacy Policy</h1>
+    <p class="last-updated">Last updated: February 8, 2026</p>
+
+    <p>Custom Field Exporter ("the App") is a governance tool that allows Asana users to view and export custom field data from their Asana workspace. This privacy policy explains how the App handles your information.</p>
+
+    <h2>1. Information We Access</h2>
+    <p>When you connect your Asana account, the App requests read-only access to the following data through Asana's API:</p>
+    <ul>
+      <li>Your Asana user profile (name and email) for display purposes</li>
+      <li>Workspace and organization information</li>
+      <li>Project names and visibility settings</li>
+      <li>Custom field definitions, including names, types, descriptions, creators, and configuration</li>
+      <li>Task metadata (modification dates only, used to determine when a custom field was last used)</li>
+    </ul>
+
+    <h2>2. Information We Store</h2>
+    <p><strong>We do not store your data.</strong> Specifically:</p>
+    <ul>
+      <li><strong>No database:</strong> The App has no database and does not persist any user data, custom field data, or workspace information to disk.</li>
+      <li><strong>Session data only:</strong> When you connect your Asana account, your OAuth access token is stored in a temporary server-side session. This session expires automatically after 8 hours or when you log out, whichever comes first.</li>
+      <li><strong>No passwords:</strong> The App never sees or stores your Asana password. Authentication is handled entirely by Asana's OAuth system.</li>
+      <li><strong>No analytics or tracking:</strong> The App does not use cookies for tracking, does not include analytics scripts, and does not collect usage data.</li>
+    </ul>
+
+    <h2>3. How Your Data Is Used</h2>
+    <p>Your Asana data is used exclusively to:</p>
+    <ul>
+      <li>Display custom field information in your browser</li>
+      <li>Generate CSV exports that are created entirely within your browser (client-side) and are never transmitted to any server</li>
+    </ul>
+    <p>Data is fetched live from Asana's API each time you load the dashboard. Nothing is cached or stored between sessions.</p>
+
+    <h2>4. Data Sharing</h2>
+    <p><strong>We do not share your data with anyone.</strong> The App communicates only with Asana's official API to retrieve your workspace data. No data is sent to third parties, advertising networks, or analytics services.</p>
+
+    <h2>5. Data Security</h2>
+    <ul>
+      <li>OAuth tokens are stored server-side only and are never exposed to the browser</li>
+      <li>Session cookies are HTTP-only and use the SameSite attribute for CSRF protection</li>
+      <li>The App requests only read-only permissions from Asana and cannot modify your workspace data</li>
+      <li>All communication with Asana's API uses HTTPS encryption</li>
+    </ul>
+
+    <h2>6. Your Rights and Control</h2>
+    <ul>
+      <li><strong>Disconnect anytime:</strong> You can revoke the App's access to your Asana account at any time by visiting your <a href="https://app.asana.com/0/my-apps" target="_blank" rel="noopener">Asana App Settings</a> and removing the App.</li>
+      <li><strong>Logout:</strong> Clicking "Logout" in the App immediately destroys your session and all associated token data.</li>
+      <li><strong>No data to delete:</strong> Since we don't store your data, there is nothing to request deletion of.</li>
+    </ul>
+
+    <h2>7. Read-Only Access</h2>
+    <p>The App only requests read-only OAuth scopes from Asana. It cannot create, modify, or delete any data in your Asana workspace, including tasks, projects, custom fields, or any other resources.</p>
+
+    <h2>8. Changes to This Policy</h2>
+    <p>If this privacy policy is updated, the changes will be reflected on this page with an updated "Last updated" date. Continued use of the App after changes constitutes acceptance of the revised policy.</p>
+
+    <h2>9. Contact</h2>
+    <p>If you have questions about this privacy policy or how the App handles your data, please contact the App administrator.</p>
+  </div>
+</body>
+</html>

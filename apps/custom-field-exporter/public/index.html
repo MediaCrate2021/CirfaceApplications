@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asana Custom Field Exporter</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen">
+    <div class="login-card">
+      <h1>Custom Field Exporter</h1>
+      <p class="subtitle">View and export all custom fields across your Asana workspace</p>
+      <button id="login-btn" class="btn btn-primary btn-lg">Connect with Asana</button>
+      <p id="login-error" class="error-text" hidden></p>
+      <p class="legal-links">By connecting, you agree to our <a href="/terms.html">Terms of Use</a> and <a href="/privacy.html">Privacy Policy</a>.</p>
+    </div>
+  </div>
+
+  <!-- App Screen (workspace select + dashboard) -->
+  <div id="app-screen" class="screen" hidden>
+    <header class="app-header">
+      <div class="header-left">
+        <h1>Custom Field Exporter</h1>
+      </div>
+      <div class="header-right">
+        <span id="user-name" class="user-name"></span>
+        <button id="logout-btn" class="btn btn-ghost">Logout</button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <!-- Workspace Selection -->
+      <div id="workspace-bar" class="workspace-bar">
+        <label for="workspace-select">Workspace</label>
+        <select id="workspace-select"></select>
+        <button id="load-btn" class="btn btn-primary">Load Custom Fields</button>
+      </div>
+
+      <!-- Loading Indicator -->
+      <div id="loading-section" class="loading-section" hidden>
+        <div class="progress-bar-track">
+          <div id="progress-bar" class="progress-bar-fill"></div>
+        </div>
+        <p id="progress-text" class="progress-text">Preparing...</p>
+      </div>
+
+      <!-- Stats Bar -->
+      <div id="stats-bar" class="stats-bar" hidden>
+        <div class="stat">
+          <span class="stat-value" id="stat-total">0</span>
+          <span class="stat-label">Total Fields</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-global">0</span>
+          <span class="stat-label">Global</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-local">0</span>
+          <span class="stat-label">Local</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-types">0</span>
+          <span class="stat-label">Types</span>
+        </div>
+      </div>
+
+      <!-- Info Note -->
+      <p id="info-note" class="info-note" hidden>Project data only includes projects you have access to. Private projects you are not a member of will not appear.</p>
+
+      <!-- Toolbar -->
+      <div id="toolbar" class="toolbar" hidden>
+        <input type="text" id="search-input" class="search-input" placeholder="Search fields...">
+        <select id="filter-type" class="filter-select">
+          <option value="all">All Types</option>
+        </select>
+        <select id="filter-scope" class="filter-select">
+          <option value="all">All Scopes</option>
+          <option value="global">Global</option>
+          <option value="local">Local</option>
+        </select>
+        <button id="export-btn" class="btn btn-secondary">Export CSV</button>
+      </div>
+
+      <!-- Data Table -->
+      <div id="table-container" class="table-container" hidden>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th data-col="name" class="sortable">Name <span class="sort-icon"></span></th>
+              <th data-col="type" class="sortable">Type <span class="sort-icon"></span></th>
+              <th data-col="description">Description</th>
+              <th data-col="created_by" class="sortable">Created By <span class="sort-icon"></span></th>
+              <th data-col="is_global" class="sortable">Scope <span class="sort-icon"></span></th>
+              <th data-col="last_used" class="sortable">Last Used <span class="sort-icon"></span></th>
+              <th data-col="projects">Projects</th>
+              <th data-col="enum_options">Options / Variations</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <p id="no-results" class="no-results" hidden>No custom fields match your filters.</p>
+      </div>
+
+      <!-- Error Banner -->
+      <div id="error-banner" class="error-banner" hidden>
+        <span id="error-message"></span>
+        <button id="error-dismiss" class="btn btn-ghost btn-sm">Dismiss</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
