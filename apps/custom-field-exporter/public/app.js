@@ -1,3 +1,16 @@
+//-------------------------//
+// app.js
+// Code implemented by Cirface.com / MMG
+//
+// Frontend JavaScript for Custom Field Exporter - manages state, data fetching,
+// filtering, sorting, and CSV export for Asana custom fields governance
+//
+// Disclaimer: This code was created with the help of Claude.AI
+//
+// This code is part of Cirface Custom Field Explorer
+// Last updated by: 2026FEB10 - LMR
+//-------------------------//
+
 // ============================================================================
 // State
 // ============================================================================

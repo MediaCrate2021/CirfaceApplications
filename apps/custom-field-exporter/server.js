@@ -1,3 +1,16 @@
+//-------------------------//
+// server.js
+// Code implemented by Cirface.com / MMG
+//
+// Express server for Asana Custom Field Exporter - handles OAuth authentication
+// and proxies API requests to Asana with token management
+//
+// Disclaimer: This code was created with the help of Claude.AI
+//
+// This code is part of Cirface Custom Field Explorer
+// Last updated by: 2026FEB10 - LMR
+//-------------------------//
+
 require('dotenv').config();
 
 const express = require('express');
