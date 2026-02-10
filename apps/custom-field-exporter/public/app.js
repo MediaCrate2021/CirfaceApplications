@@ -359,6 +359,7 @@ function applyFiltersAndRender() {
     list = list.filter((f) => {
       const text = [
         f.name,
+        f.gid,
         f.description,
         f.created_by?.name,
         ...(f.enum_options || []).map((o) => o.name),
@@ -398,6 +399,7 @@ function applyFiltersAndRender() {
 function getSortValue(field, col) {
   switch (col) {
     case 'name': return field.name || '';
+    case 'gid': return field.gid || '';
     case 'type': return field.resource_subtype || field.type || '';
     case 'created_by': return field.created_by?.name || '';
     case 'is_global': return field.is_global_to_workspace ? 'Global' : 'Local';
@@ -417,6 +419,7 @@ function renderTable(fields) {
   tableBody.innerHTML = fields.map((f) => `
     <tr>
       <td><strong>${esc(f.name)}</strong></td>
+      <td><code style="font-size:0.8rem;color:#64748b;user-select:all">${esc(f.gid)}</code></td>
       <td><span class="type-badge ${esc(f.resource_subtype || f.type)}">${esc(formatType(f.resource_subtype || f.type))}</span></td>
       <td class="truncate" title="${esc(f.description || '')}">${esc(f.description || '—')}</td>
       <td>${esc(f.created_by?.name || '—')}</td>
@@ -481,7 +484,7 @@ function exportCSV() {
   const rows = state.filtered;
   if (rows.length === 0) return;
 
-  const headers = ['Name', 'Type', 'Description', 'Created By', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Options / Variations'];
+  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Options / Variations'];
   const csvRows = [headers.join(',')];
 
   for (const f of rows) {
@@ -499,6 +502,7 @@ function exportCSV() {
 
     csvRows.push([
       csvCell(f.name),
+      csvCell(f.gid),
       csvCell(formatType(f.resource_subtype || f.type)),
       csvCell(f.description || ''),
       csvCell(f.created_by?.name || ''),

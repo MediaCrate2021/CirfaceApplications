@@ -360,9 +360,16 @@ select:focus, .search-input:focus {
   vertical-align: top;
 }
 
+/* GID column should be compact and selectable */
+.data-table td:nth-child(2) {
+  min-width: 120px;
+  max-width: 150px;
+  font-family: 'Courier New', monospace;
+}
+
 /* Let the options & projects columns breathe */
-.data-table td:nth-child(7),
-.data-table td:nth-child(8) {
+.data-table td:nth-child(8),
+.data-table td:nth-child(9) {
   min-width: 200px;
 }
 
