@@ -448,7 +448,8 @@ function renderProjects(projects) {
   if (!projects || projects.length === 0) return '<span style="color:#94a3b8">—</span>';
   return `<ul class="cell-list">${projects.map((p) => {
     const icon = p.privacy === 'private' ? '🔒' : '🌐';
-    return `<li class="tag" title="${esc(formatPrivacy(p.privacy))}">${icon} ${esc(p.name)}</li>`;
+    const url = `https://app.asana.com/0/${esc(p.gid)}`;
+    return `<li class="tag" title="${esc(formatPrivacy(p.privacy))}"><a href="${url}" target="_blank" rel="noopener" class="project-link">${icon} ${esc(p.name)}</a></li>`;
   }).join('')}</ul>`;
 }
 
