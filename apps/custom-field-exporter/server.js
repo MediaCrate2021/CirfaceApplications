@@ -15,11 +15,19 @@ require('dotenv').config();
 
 const express = require('express');
 const session = require('express-session');
-const FileStore = require('session-file-store')(session);
 const helmet = require('helmet');
 const cors = require('cors');
 const crypto = require('crypto');
 const path = require('path');
+
+// Only load file-based session store in production.
+// In development, concurrent API requests cause EPERM rename conflicts on Windows.
+const sessionStore = process.env.NODE_ENV === 'production'
+  ? (() => {
+      const FileStore = require('session-file-store')(session);
+      return new FileStore({ path: path.join(__dirname, 'sessions'), ttl: 28800, retries: 5, factor: 1, minTimeout: 100 });
+    })()
+  : undefined; // express-session default: in-memory store
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,7 +45,7 @@ app.use(cors({
 }));
 
 app.use(session({
-  store: new FileStore({ path: path.join(__dirname, 'sessions'), ttl: 28800 }),
+  store: sessionStore,
   secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
   resave: false,
   saveUninitialized: false,
@@ -129,7 +137,7 @@ app.get('/auth/login', (req, res) => {
     redirect_uri: process.env.ASANA_REDIRECT_URI,
     response_type: 'code',
     state,
-    scope: 'custom_fields:read projects:read workspaces:read users:read teams:read tasks:read',
+    scope:  'default',//'custom_fields:read projects:read workspaces:read users:read teams:read tasks:read',
   });
 
   res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);
@@ -253,6 +261,24 @@ app.get('/api/projects', requireAuth, async (req, res) => {
   }
 });
 
+// Full field detail opt_fields — reused across all custom_field_settings endpoints
+const FIELD_OPT_FIELDS = [
+  'custom_field.gid',
+  'custom_field.name',
+  'custom_field.type',
+  'custom_field.resource_subtype',
+  'custom_field.description',
+  'custom_field.created_by.name',
+  'custom_field.is_global_to_workspace',
+  'custom_field.enabled',
+  'custom_field.enum_options.name',
+  'custom_field.enum_options.color',
+  'custom_field.enum_options.enabled',
+  'custom_field.precision',
+  'custom_field.currency_code',
+  'custom_field.format',
+].join(',');
+
 app.get('/api/project-custom-fields/:project_gid', requireAuth, async (req, res) => {
   try {
     await ensureFreshToken(req);
@@ -261,7 +287,71 @@ app.get('/api/project-custom-fields/:project_gid', requireAuth, async (req, res)
     const data = await asanaFetch(
       `/projects/${encodeURIComponent(project_gid)}/custom_field_settings`,
       req.session.accessToken,
-      { opt_fields: 'custom_field,custom_field.gid', limit: '100' },
+      { opt_fields: FIELD_OPT_FIELDS, limit: '100' },
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/portfolios', requireAuth, async (req, res) => {
+  try {
+    await ensureFreshToken(req);
+    const { workspace_gid, offset } = req.query;
+    if (!workspace_gid) return res.status(400).json({ error: 'workspace_gid required' });
+
+    const params = { limit: '100', opt_fields: 'name', workspace: workspace_gid };
+    if (offset) params.offset = offset;
+
+    const data = await asanaFetch('/portfolios', req.session.accessToken, params);
+    res.json(data);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/portfolio-custom-fields/:portfolio_gid', requireAuth, async (req, res) => {
+  try {
+    await ensureFreshToken(req);
+    const { portfolio_gid } = req.params;
+
+    const data = await asanaFetch(
+      `/portfolios/${encodeURIComponent(portfolio_gid)}/custom_field_settings`,
+      req.session.accessToken,
+      { opt_fields: FIELD_OPT_FIELDS, limit: '100' },
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/goals', requireAuth, async (req, res) => {
+  try {
+    await ensureFreshToken(req);
+    const { workspace_gid, offset } = req.query;
+    if (!workspace_gid) return res.status(400).json({ error: 'workspace_gid required' });
+
+    const params = { limit: '100', opt_fields: 'name', workspace: workspace_gid };
+    if (offset) params.offset = offset;
+
+    const data = await asanaFetch('/goals', req.session.accessToken, params);
+    res.json(data);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/goal-custom-fields/:goal_gid', requireAuth, async (req, res) => {
+  try {
+    await ensureFreshToken(req);
+    const { goal_gid } = req.params;
+
+    const data = await asanaFetch(
+      `/goals/${encodeURIComponent(goal_gid)}/custom_field_settings`,
+      req.session.accessToken,
+      { opt_fields: FIELD_OPT_FIELDS, limit: '100' },
     );
     res.json(data);
   } catch (err) {

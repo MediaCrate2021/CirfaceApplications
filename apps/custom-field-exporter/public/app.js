@@ -191,12 +191,19 @@ async function handleLoad() {
     setProgress(40, `Loaded ${fields.length} custom fields. Loading projects...`);
 
     // Step 2: Fetch all projects and map field → projects (with privacy)
-    const projectMap = await buildProjectMap(wsGid, fields.length);
+    // Also collects full data for project-only fields not in the workspace library
+    const knownGids = new Set(fields.map((f) => f.gid));
+    const { map: projectMap, extraFields } = await buildProjectMap(wsGid, knownGids);
     setProgress(75, `Checking last usage for ${fields.length} fields...`);
 
     // Step 3: Attach project info to each field
     for (const field of fields) {
       field.projects = projectMap[field.gid] || [];
+    }
+
+    // Step 3b: Add fields found only in project settings (not in workspace library)
+    for (const [gid, fieldData] of Object.entries(extraFields)) {
+      fields.push({ ...fieldData, projects: projectMap[gid] || [] });
     }
 
     // Step 4: Fetch "last used" date for each field
@@ -223,12 +230,13 @@ async function handleLoad() {
 }
 
 async function fetchAllCustomFields(wsGid) {
+  // Step A: workspace custom fields (the primary source)
   let all = [];
   let offset = null;
   let page = 1;
 
   do {
-    setProgress(Math.min(page * 8, 35), `Loading custom fields (page ${page})...`);
+    setProgress(Math.min(page * 5, 20), `Loading workspace custom fields (page ${page})...`);
     const url = `/api/custom-fields?workspace_gid=${wsGid}` + (offset ? `&offset=${offset}` : '');
     const res = await fetch(url);
     if (!res.ok) {
@@ -241,12 +249,70 @@ async function fetchAllCustomFields(wsGid) {
     page++;
   } while (offset);
 
+  const knownGids = new Set(all.map((f) => f.gid));
+
+  // Step B: portfolios — may contain fields not in the workspace library
+  setProgress(25, 'Scanning portfolio custom fields...');
+  const portfolioFields = await fetchResourceTypeCustomFields(wsGid, 'portfolios', 'portfolio-custom-fields', knownGids);
+  for (const f of portfolioFields) { all.push(f); knownGids.add(f.gid); }
+
+  // Step C: goals — may contain fields not in the workspace library
+  setProgress(32, 'Scanning goal custom fields...');
+  const goalFields = await fetchResourceTypeCustomFields(wsGid, 'goals', 'goal-custom-fields', knownGids);
+  for (const f of goalFields) { all.push(f); knownGids.add(f.gid); }
+
   return all;
 }
 
-async function buildProjectMap(wsGid, totalFields) {
-  // fieldGid → [{ gid, name }]
+// Fetches all resources of a given type, then collects any custom fields on them
+// that are not already in knownGids. Returns only the new unique field objects.
+async function fetchResourceTypeCustomFields(wsGid, resourceEndpoint, fieldEndpoint, knownGids) {
+  // Paginate through all resources of this type
+  let resources = [];
+  let offset = null;
+
+  do {
+    const url = `/api/${resourceEndpoint}?workspace_gid=${wsGid}` + (offset ? `&offset=${offset}` : '');
+    const res = await fetch(url);
+    if (!res.ok) return []; // non-fatal — skip this resource type if unavailable
+    const data = await res.json();
+    resources = resources.concat(data.data || []);
+    offset = data.next_page?.offset || null;
+  } while (offset);
+
+  // Collect unique new fields from each resource's custom_field_settings
+  const newFields = {};
+  const CONCURRENCY = 5;
+
+  for (let i = 0; i < resources.length; i += CONCURRENCY) {
+    const batch = resources.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async (resource) => {
+        try {
+          const res = await fetch(`/api/${fieldEndpoint}/${resource.gid}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          for (const setting of (data.data || [])) {
+            const field = setting.custom_field;
+            if (!field?.gid) continue;
+            if (!knownGids.has(field.gid) && !newFields[field.gid]) {
+              newFields[field.gid] = field;
+            }
+          }
+        } catch { /* non-fatal */ }
+      }),
+    );
+    if (i + CONCURRENCY < resources.length) await sleep(200);
+  }
+
+  return Object.values(newFields);
+}
+
+async function buildProjectMap(wsGid, knownGids) {
+  // fieldGid → [{ gid, name, privacy }]
   const map = {};
+  // fieldGid → full field object, for fields not in the workspace library
+  const extraFields = {};
 
   // Fetch all projects
   let projects = [];
@@ -282,6 +348,7 @@ async function buildProjectMap(wsGid, totalFields) {
           const data = await res.json();
           return (data.data || []).map((setting) => ({
             fieldGid: setting.custom_field?.gid,
+            fieldData: setting.custom_field,
             project: { gid: proj.gid, name: proj.name, privacy: proj.privacy_setting || 'unknown' },
           }));
         } catch {
@@ -295,6 +362,10 @@ async function buildProjectMap(wsGid, totalFields) {
         if (!entry.fieldGid) continue;
         if (!map[entry.fieldGid]) map[entry.fieldGid] = [];
         map[entry.fieldGid].push(entry.project);
+        // Collect full field data for fields not already in the workspace library
+        if (!knownGids.has(entry.fieldGid) && entry.fieldData && !extraFields[entry.fieldGid]) {
+          extraFields[entry.fieldGid] = entry.fieldData;
+        }
       }
     }
 
@@ -303,7 +374,7 @@ async function buildProjectMap(wsGid, totalFields) {
     }
   }
 
-  return map;
+  return { map, extraFields };
 }
 
 async function fetchLastUsedDates(wsGid, fields) {
