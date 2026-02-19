@@ -72,8 +72,16 @@
           <span class="stat-label">Global</span>
         </div>
         <div class="stat">
-          <span class="stat-value" id="stat-local">0</span>
-          <span class="stat-label">Local</span>
+          <span class="stat-value" id="stat-projects">0</span>
+          <span class="stat-label">In Projects</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-portfolios">0</span>
+          <span class="stat-label">In Portfolios</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-goals">0</span>
+          <span class="stat-label">In Goals</span>
         </div>
         <div class="stat">
           <span class="stat-value" id="stat-types">0</span>
@@ -93,7 +101,9 @@
         <select id="filter-scope" class="filter-select">
           <option value="all">All Scopes</option>
           <option value="global">Global</option>
-          <option value="local">Local</option>
+          <option value="project">Project</option>
+          <option value="portfolio">Portfolio</option>
+          <option value="goal">Goal</option>
         </select>
         <button id="export-btn" class="btn btn-secondary">Export CSV</button>
       </div>
@@ -110,7 +120,7 @@
               <th data-col="created_by" class="sortable">Created By <span class="sort-icon"></span></th>
               <th data-col="is_global" class="sortable">Scope <span class="sort-icon"></span></th>
               <th data-col="last_used" class="sortable">Last Used <span class="sort-icon"></span></th>
-              <th data-col="projects">Projects</th>
+              <th data-col="scopes" class="sortable">Scopes <span class="sort-icon"></span></th>
               <th data-col="enum_options">Options / Variations</th>
             </tr>
           </thead>

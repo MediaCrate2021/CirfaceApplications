@@ -190,20 +190,30 @@ async function handleLoad() {
     const fields = await fetchAllCustomFields(wsGid);
     setProgress(40, `Loaded ${fields.length} custom fields. Loading projects...`);
 
-    // Step 2: Fetch all projects and map field → projects (with privacy)
-    // Also collects full data for project-only fields not in the workspace library
+    // Step 2: Scan projects, portfolios, and goals.
+    // Builds association maps (fieldGid → resources) and discovers fields
+    // that exist only in those resources (not in the workspace library).
     const knownGids = new Set(fields.map((f) => f.gid));
-    const { map: projectMap, extraFields } = await buildProjectMap(wsGid, knownGids);
+
+    setProgress(25, 'Scanning projects...');
+    const { map: projectMap, extraFields: projectFields } = await buildResourceMap(wsGid, 'projects', 'project-custom-fields', knownGids);
+    for (const [gid, f] of Object.entries(projectFields)) { fields.push(f); knownGids.add(gid); }
+
+    setProgress(45, 'Scanning portfolios...');
+    const { map: portfolioMap, extraFields: portfolioFields } = await buildResourceMap(wsGid, 'portfolios', 'portfolio-custom-fields', knownGids);
+    for (const [gid, f] of Object.entries(portfolioFields)) { fields.push(f); knownGids.add(gid); }
+
+    setProgress(60, 'Scanning goals...');
+    const { map: goalMap, extraFields: goalFields } = await buildResourceMap(wsGid, 'goals', 'goal-custom-fields', knownGids);
+    for (const [gid, f] of Object.entries(goalFields)) { fields.push(f); knownGids.add(gid); }
+
     setProgress(75, `Checking last usage for ${fields.length} fields...`);
 
-    // Step 3: Attach project info to each field
+    // Step 3: Attach resource associations to all fields
     for (const field of fields) {
-      field.projects = projectMap[field.gid] || [];
-    }
-
-    // Step 3b: Add fields found only in project settings (not in workspace library)
-    for (const [gid, fieldData] of Object.entries(extraFields)) {
-      fields.push({ ...fieldData, projects: projectMap[gid] || [] });
+      field.projects   = projectMap[field.gid]   || [];
+      field.portfolios = portfolioMap[field.gid] || [];
+      field.goals      = goalMap[field.gid]      || [];
     }
 
     // Step 4: Fetch "last used" date for each field
@@ -230,7 +240,7 @@ async function handleLoad() {
 }
 
 async function fetchAllCustomFields(wsGid) {
-  // Step A: workspace custom fields (the primary source)
+  // Workspace custom fields only — project/portfolio/goal fields discovered in Step 2
   let all = [];
   let offset = null;
   let page = 1;
@@ -249,129 +259,54 @@ async function fetchAllCustomFields(wsGid) {
     page++;
   } while (offset);
 
-  const knownGids = new Set(all.map((f) => f.gid));
-
-  // Step B: portfolios — may contain fields not in the workspace library
-  setProgress(25, 'Scanning portfolio custom fields...');
-  const portfolioFields = await fetchResourceTypeCustomFields(wsGid, 'portfolios', 'portfolio-custom-fields', knownGids);
-  for (const f of portfolioFields) { all.push(f); knownGids.add(f.gid); }
-
-  // Step C: goals — may contain fields not in the workspace library
-  setProgress(32, 'Scanning goal custom fields...');
-  const goalFields = await fetchResourceTypeCustomFields(wsGid, 'goals', 'goal-custom-fields', knownGids);
-  for (const f of goalFields) { all.push(f); knownGids.add(f.gid); }
-
   return all;
 }
 
-// Fetches all resources of a given type, then collects any custom fields on them
-// that are not already in knownGids. Returns only the new unique field objects.
-async function fetchResourceTypeCustomFields(wsGid, resourceEndpoint, fieldEndpoint, knownGids) {
-  // Paginate through all resources of this type
+// Builds a fieldGid → [{ gid, name, privacy? }] association map for any resource type
+// (projects, portfolios, goals). Also collects full field data for fields with
+// is_global_to_workspace = false that are not already in knownGids.
+async function buildResourceMap(wsGid, listEndpoint, settingsEndpoint, knownGids) {
   let resources = [];
   let offset = null;
 
   do {
-    const url = `/api/${resourceEndpoint}?workspace_gid=${wsGid}` + (offset ? `&offset=${offset}` : '');
+    const url = `/api/${listEndpoint}?workspace_gid=${wsGid}` + (offset ? `&offset=${offset}` : '');
     const res = await fetch(url);
-    if (!res.ok) return []; // non-fatal — skip this resource type if unavailable
+    if (!res.ok) return { map: {}, extraFields: {} };
     const data = await res.json();
     resources = resources.concat(data.data || []);
     offset = data.next_page?.offset || null;
   } while (offset);
 
-  // Collect unique new fields from each resource's custom_field_settings
-  const newFields = {};
+  const map = {};
+  const extraFields = {};
   const CONCURRENCY = 5;
 
   for (let i = 0; i < resources.length; i += CONCURRENCY) {
     const batch = resources.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      batch.map(async (resource) => {
-        try {
-          const res = await fetch(`/api/${fieldEndpoint}/${resource.gid}`);
-          if (!res.ok) return;
-          const data = await res.json();
-          for (const setting of (data.data || [])) {
-            const field = setting.custom_field;
-            if (!field?.gid) continue;
-            if (!knownGids.has(field.gid) && !newFields[field.gid]) {
-              newFields[field.gid] = field;
-            }
+    await Promise.all(batch.map(async (resource) => {
+      try {
+        const res = await fetch(`/api/${settingsEndpoint}/${resource.gid}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        for (const setting of (data.data || [])) {
+          const field = setting.custom_field;
+          if (!field?.gid) continue;
+
+          // Build association entry (include privacy_setting for resources that have it)
+          if (!map[field.gid]) map[field.gid] = [];
+          const entry = { gid: resource.gid, name: resource.name };
+          if (resource.privacy_setting) entry.privacy = resource.privacy_setting;
+          map[field.gid].push(entry);
+
+          // Collect fields that are not in the workspace library
+          if (!field.is_global_to_workspace && !knownGids.has(field.gid) && !extraFields[field.gid]) {
+            extraFields[field.gid] = field;
           }
-        } catch { /* non-fatal */ }
-      }),
-    );
+        }
+      } catch { /* non-fatal */ }
+    }));
     if (i + CONCURRENCY < resources.length) await sleep(200);
-  }
-
-  return Object.values(newFields);
-}
-
-async function buildProjectMap(wsGid, knownGids) {
-  // fieldGid → [{ gid, name, privacy }]
-  const map = {};
-  // fieldGid → full field object, for fields not in the workspace library
-  const extraFields = {};
-
-  // Fetch all projects
-  let projects = [];
-  let offset = null;
-  let page = 1;
-
-  do {
-    setProgress(40 + Math.min(page * 5, 20), `Loading projects (page ${page})...`);
-    const url = `/api/projects?workspace_gid=${wsGid}` + (offset ? `&offset=${offset}` : '');
-    const res = await fetch(url);
-    if (!res.ok) break; // non-fatal — we just won't have project data
-    const data = await res.json();
-    projects = projects.concat(data.data || []);
-    offset = data.next_page?.offset || null;
-    page++;
-  } while (offset);
-
-  // For each project, fetch its custom field settings
-  const total = projects.length;
-  const CONCURRENCY = 5;
-  const DELAY = 200;
-
-  for (let i = 0; i < total; i += CONCURRENCY) {
-    const batch = projects.slice(i, i + CONCURRENCY);
-    const pct = 60 + Math.round(((i + CONCURRENCY) / total) * 30);
-    setProgress(Math.min(pct, 90), `Mapping project fields (${Math.min(i + CONCURRENCY, total)} of ${total} projects)...`);
-
-    const results = await Promise.all(
-      batch.map(async (proj) => {
-        try {
-          const res = await fetch(`/api/project-custom-fields/${proj.gid}`);
-          if (!res.ok) return [];
-          const data = await res.json();
-          return (data.data || []).map((setting) => ({
-            fieldGid: setting.custom_field?.gid,
-            fieldData: setting.custom_field,
-            project: { gid: proj.gid, name: proj.name, privacy: proj.privacy_setting || 'unknown' },
-          }));
-        } catch {
-          return [];
-        }
-      }),
-    );
-
-    for (const entries of results) {
-      for (const entry of entries) {
-        if (!entry.fieldGid) continue;
-        if (!map[entry.fieldGid]) map[entry.fieldGid] = [];
-        map[entry.fieldGid].push(entry.project);
-        // Collect full field data for fields not already in the workspace library
-        if (!knownGids.has(entry.fieldGid) && entry.fieldData && !extraFields[entry.fieldGid]) {
-          extraFields[entry.fieldGid] = entry.fieldData;
-        }
-      }
-    }
-
-    if (i + CONCURRENCY < total) {
-      await sleep(DELAY);
-    }
   }
 
   return { map, extraFields };
@@ -423,12 +358,17 @@ function populateTypeFilter(fields) {
 }
 
 function updateStats(fields) {
-  const globalCount = fields.filter((f) => f.is_global_to_workspace).length;
+  const globalCount  = fields.filter((f) => f.is_global_to_workspace).length;
+  const inProjects   = fields.filter((f) => f.projects?.length   > 0).length;
+  const inPortfolios = fields.filter((f) => f.portfolios?.length > 0).length;
+  const inGoals      = fields.filter((f) => f.goals?.length      > 0).length;
   const types = new Set(fields.map((f) => f.resource_subtype || f.type));
-  $('#stat-total').textContent = fields.length;
-  $('#stat-global').textContent = globalCount;
-  $('#stat-local').textContent = fields.length - globalCount;
-  $('#stat-types').textContent = types.size;
+  $('#stat-total').textContent      = fields.length;
+  $('#stat-global').textContent     = globalCount;
+  $('#stat-projects').textContent   = inProjects;
+  $('#stat-portfolios').textContent = inPortfolios;
+  $('#stat-goals').textContent      = inGoals;
+  $('#stat-types').textContent      = types.size;
 }
 
 function applyFiltersAndRender() {
@@ -446,8 +386,10 @@ function applyFiltersAndRender() {
         f.gid,
         f.description,
         f.created_by?.name,
-        ...(f.enum_options || []).map((o) => o.name),
-        ...(f.projects || []).map((p) => p.name),
+        ...(f.enum_options  || []).map((o) => o.name),
+        ...(f.projects      || []).map((p) => p.name),
+        ...(f.portfolios    || []).map((p) => p.name),
+        ...(f.goals         || []).map((g) => g.name),
       ].filter(Boolean).join(' ').toLowerCase();
       return text.includes(state.searchQuery);
     });
@@ -461,8 +403,12 @@ function applyFiltersAndRender() {
   // Scope filter
   if (state.filterScope === 'global') {
     list = list.filter((f) => f.is_global_to_workspace);
-  } else if (state.filterScope === 'local') {
-    list = list.filter((f) => !f.is_global_to_workspace);
+  } else if (state.filterScope === 'project') {
+    list = list.filter((f) => f.projects?.length > 0);
+  } else if (state.filterScope === 'portfolio') {
+    list = list.filter((f) => f.portfolios?.length > 0);
+  } else if (state.filterScope === 'goal') {
+    list = list.filter((f) => f.goals?.length > 0);
   }
 
   // Sort
@@ -488,6 +434,7 @@ function getSortValue(field, col) {
     case 'created_by': return field.created_by?.name || '';
     case 'is_global': return field.is_global_to_workspace ? 'Global' : 'Local';
     case 'last_used': return field.last_used || '';
+    case 'scopes':    return (field.projects?.length || 0) + (field.portfolios?.length || 0) + (field.goals?.length || 0);
     default: return '';
   }
 }
@@ -509,19 +456,33 @@ function renderTable(fields) {
       <td>${esc(f.created_by?.name || '—')}</td>
       <td><span class="scope-badge ${f.is_global_to_workspace ? 'global' : 'local'}">${f.is_global_to_workspace ? 'Global' : 'Local'}</span></td>
       <td>${formatLastUsed(f.last_used)}</td>
-      <td>${renderProjects(f.projects)}</td>
+      <td>${renderScopes(f)}</td>
       <td>${renderEnumOptions(f.enum_options)}</td>
     </tr>
   `).join('');
 }
 
-function renderProjects(projects) {
-  if (!projects || projects.length === 0) return '<span style="color:#94a3b8">—</span>';
-  return `<ul class="cell-list">${projects.map((p) => {
+function renderScopes(f) {
+  const items = [];
+
+  for (const p of (f.projects || [])) {
     const icon = p.privacy === 'private' ? '🔒' : '🌐';
     const url = `https://app.asana.com/0/${esc(p.gid)}`;
-    return `<li class="tag" title="${esc(formatPrivacy(p.privacy))}"><a href="${url}" target="_blank" rel="noopener" class="project-link">${icon} ${esc(p.name)}</a></li>`;
-  }).join('')}</ul>`;
+    items.push(`<li class="tag scope-project" title="Project · ${esc(formatPrivacy(p.privacy))}"><a href="${url}" target="_blank" rel="noopener" class="project-link">${icon} ${esc(p.name)}</a></li>`);
+  }
+
+  for (const p of (f.portfolios || [])) {
+    const url = `https://app.asana.com/0/portfolio/${esc(p.gid)}/list`;
+    items.push(`<li class="tag scope-portfolio" title="Portfolio"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(p.name)}</a></li>`);
+  }
+
+  for (const g of (f.goals || [])) {
+    const url = `https://app.asana.com/0/goals/${esc(g.gid)}`;
+    items.push(`<li class="tag scope-goal" title="Goal"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(g.name)}</a></li>`);
+  }
+
+  if (items.length === 0) return '<span style="color:#94a3b8">—</span>';
+  return `<ul class="cell-list">${items.join('')}</ul>`;
 }
 
 function formatPrivacy(privacy) {
@@ -569,7 +530,7 @@ function exportCSV() {
   const rows = state.filtered;
   if (rows.length === 0) return;
 
-  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Options / Variations'];
+  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Portfolios', 'Goals', 'Options / Variations'];
   const csvRows = [headers.join(',')];
 
   for (const f of rows) {
@@ -578,6 +539,8 @@ function exportCSV() {
       const vis = p.privacy === 'private' ? 'Private' : p.privacy === 'public_to_workspace' ? 'Public' : 'Unknown';
       return `${p.name} (${vis})`;
     }).join('; ');
+    const portfolios = (f.portfolios || []).map((p) => p.name).join('; ');
+    const goals      = (f.goals      || []).map((g) => g.name).join('; ');
     const options = (f.enum_options || []).map((o) => {
       let s = o.name;
       if (o.enabled === false) s += ' (disabled)';
@@ -595,6 +558,8 @@ function exportCSV() {
       csvCell(lastUsed),
       csvCell(projects),
       csvCell(projectVisibility),
+      csvCell(portfolios),
+      csvCell(goals),
       csvCell(options),
     ].join(','));
   }

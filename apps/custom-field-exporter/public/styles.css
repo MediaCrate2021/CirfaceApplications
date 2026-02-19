@@ -382,7 +382,7 @@ select:focus, .search-input:focus {
   font-family: 'Courier New', monospace;
 }
 
-/* Let the options & projects columns breathe */
+/* Let the scopes & options columns breathe */
 .data-table td:nth-child(8),
 .data-table td:nth-child(9) {
   min-width: 200px;
@@ -424,6 +424,10 @@ select:focus, .search-input:focus {
   color: #2563eb;
   text-decoration: underline;
 }
+
+.tag.scope-project   { background: #e0f2fe; color: #075985; }
+.tag.scope-portfolio { background: #ede9fe; color: #5b21b6; }
+.tag.scope-goal      { background: #dcfce7; color: #166534; }
 
 .tag.disabled {
   opacity: 0.5;
