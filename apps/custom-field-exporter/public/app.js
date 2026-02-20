@@ -401,7 +401,7 @@ function applyFiltersAndRender() {
   }
 
   // Scope filter
-  if (state.filterScope === 'global') {
+  if (state.filterScope === 'library') {
     list = list.filter((f) => f.is_global_to_workspace);
   } else if (state.filterScope === 'project') {
     list = list.filter((f) => f.projects?.length > 0);
@@ -432,9 +432,9 @@ function getSortValue(field, col) {
     case 'gid': return field.gid || '';
     case 'type': return field.resource_subtype || field.type || '';
     case 'created_by': return field.created_by?.name || '';
-    case 'is_global': return field.is_global_to_workspace ? 'Global' : 'Local';
+    case 'is_global': return field.is_global_to_workspace ? 'Library' : 'Local';
     case 'last_used': return field.last_used || '';
-    case 'scopes':    return (field.projects?.length || 0) + (field.portfolios?.length || 0) + (field.goals?.length || 0);
+    case 'locations': return (field.projects?.length || 0) + (field.portfolios?.length || 0) + (field.goals?.length || 0);
     default: return '';
   }
 }
@@ -454,31 +454,31 @@ function renderTable(fields) {
       <td><span class="type-badge ${esc(f.resource_subtype || f.type)}">${esc(formatType(f.resource_subtype || f.type))}</span></td>
       <td class="truncate" title="${esc(f.description || '')}">${esc(f.description || '—')}</td>
       <td>${esc(f.created_by?.name || '—')}</td>
-      <td><span class="scope-badge ${f.is_global_to_workspace ? 'global' : 'local'}">${f.is_global_to_workspace ? 'Global' : 'Local'}</span></td>
+      <td><span class="scope-badge ${f.is_global_to_workspace ? 'global' : 'local'}">${f.is_global_to_workspace ? 'Library' : 'Local'}</span></td>
       <td>${formatLastUsed(f.last_used)}</td>
-      <td>${renderScopes(f)}</td>
+      <td>${renderLocations(f)}</td>
       <td>${renderEnumOptions(f.enum_options)}</td>
     </tr>
   `).join('');
 }
 
-function renderScopes(f) {
+function renderLocations(f) {
   const items = [];
 
   for (const p of (f.projects || [])) {
     const icon = p.privacy === 'private' ? '🔒' : '🌐';
     const url = `https://app.asana.com/0/${esc(p.gid)}`;
-    items.push(`<li class="tag scope-project" title="Project · ${esc(formatPrivacy(p.privacy))}"><a href="${url}" target="_blank" rel="noopener" class="project-link">${icon} ${esc(p.name)}</a></li>`);
+    items.push(`<li class="tag location-project" title="Project · ${esc(formatPrivacy(p.privacy))}"><a href="${url}" target="_blank" rel="noopener" class="project-link">${icon} ${esc(p.name)}</a></li>`);
   }
 
   for (const p of (f.portfolios || [])) {
     const url = `https://app.asana.com/0/portfolio/${esc(p.gid)}/list`;
-    items.push(`<li class="tag scope-portfolio" title="Portfolio"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(p.name)}</a></li>`);
+    items.push(`<li class="tag location-portfolio" title="Portfolio"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(p.name)}</a></li>`);
   }
 
   for (const g of (f.goals || [])) {
     const url = `https://app.asana.com/0/goals/${esc(g.gid)}`;
-    items.push(`<li class="tag scope-goal" title="Goal"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(g.name)}</a></li>`);
+    items.push(`<li class="tag location-goal" title="Goal"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(g.name)}</a></li>`);
   }
 
   if (items.length === 0) return '<span style="color:#94a3b8">—</span>';
@@ -554,7 +554,7 @@ function exportCSV() {
       csvCell(formatType(f.resource_subtype || f.type)),
       csvCell(f.description || ''),
       csvCell(f.created_by?.name || ''),
-      csvCell(f.is_global_to_workspace ? 'Global' : 'Local'),
+      csvCell(f.is_global_to_workspace ? 'Library' : 'Local'),
       csvCell(lastUsed),
       csvCell(projects),
       csvCell(projectVisibility),
