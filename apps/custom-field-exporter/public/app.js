@@ -26,6 +26,7 @@ const state = {
   searchQuery: '',
   filterType: 'all',
   filterScope: 'all',
+  filterCreator: 'all',
 };
 
 // ============================================================================
@@ -40,7 +41,8 @@ const loginError    = $('#login-error');
 const userName      = $('#user-name');
 const logoutBtn     = $('#logout-btn');
 const workspaceSelect = $('#workspace-select');
-const loadBtn       = $('#load-btn');
+const loadBtn          = $('#load-btn');
+const includeLastUsed  = $('#include-last-used');
 const loadingSection = $('#loading-section');
 const progressBar   = $('#progress-bar');
 const progressText  = $('#progress-text');
@@ -49,6 +51,7 @@ const toolbar       = $('#toolbar');
 const searchInput   = $('#search-input');
 const filterType    = $('#filter-type');
 const filterScope   = $('#filter-scope');
+const filterCreator = $('#filter-creator');
 const exportBtn     = $('#export-btn');
 const tableContainer = $('#table-container');
 const tableBody     = $('#table-body');
@@ -92,6 +95,7 @@ async function init() {
   searchInput.addEventListener('input', debounce(applyFiltersAndRender, 250));
   filterType.addEventListener('change', applyFiltersAndRender);
   filterScope.addEventListener('change', applyFiltersAndRender);
+  filterCreator.addEventListener('change', applyFiltersAndRender);
   exportBtn.addEventListener('click', exportCSV);
   errorDismiss.addEventListener('click', () => { errorBanner.hidden = true; });
 
@@ -207,8 +211,6 @@ async function handleLoad() {
     const { map: goalMap, extraFields: goalFields } = await buildResourceMap(wsGid, 'goals', 'goal-custom-fields', knownGids);
     for (const [gid, f] of Object.entries(goalFields)) { fields.push(f); knownGids.add(gid); }
 
-    setProgress(75, `Checking last usage for ${fields.length} fields...`);
-
     // Step 3: Attach resource associations to all fields
     for (const field of fields) {
       field.projects   = projectMap[field.gid]   || [];
@@ -216,14 +218,18 @@ async function handleLoad() {
       field.goals      = goalMap[field.gid]      || [];
     }
 
-    // Step 4: Fetch "last used" date for each field
-    await fetchLastUsedDates(wsGid, fields);
+    // Step 4: Fetch "last used" date for each field (optional)
+    if (includeLastUsed.checked) {
+      setProgress(75, `Checking last usage for ${fields.length} fields...`);
+      await fetchLastUsedDates(wsGid, fields);
+    }
 
     state.customFields = fields;
     setProgress(100, 'Done!');
 
     // Show dashboard
     populateTypeFilter(fields);
+    populateCreatorFilter(fields);
     updateStats(fields);
     applyFiltersAndRender();
 
@@ -357,6 +363,19 @@ function populateTypeFilter(fields) {
   });
 }
 
+function populateCreatorFilter(fields) {
+  const creators = [...new Set(
+    fields.map((f) => f.created_by?.name).filter(Boolean)
+  )].sort();
+  filterCreator.innerHTML = '<option value="all">All Creators</option>';
+  creators.forEach((name) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    filterCreator.appendChild(opt);
+  });
+}
+
 function updateStats(fields) {
   const globalCount  = fields.filter((f) => f.is_global_to_workspace).length;
   const inProjects   = fields.filter((f) => f.projects?.length   > 0).length;
@@ -375,6 +394,7 @@ function applyFiltersAndRender() {
   state.searchQuery = searchInput.value.toLowerCase().trim();
   state.filterType = filterType.value;
   state.filterScope = filterScope.value;
+  state.filterCreator = filterCreator.value;
 
   let list = state.customFields;
 
@@ -398,6 +418,11 @@ function applyFiltersAndRender() {
   // Type filter
   if (state.filterType !== 'all') {
     list = list.filter((f) => (f.resource_subtype || f.type) === state.filterType);
+  }
+
+  // Creator filter
+  if (state.filterCreator !== 'all') {
+    list = list.filter((f) => f.created_by?.name === state.filterCreator);
   }
 
   // Scope filter

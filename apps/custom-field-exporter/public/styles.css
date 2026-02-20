@@ -201,6 +201,17 @@ body {
   font-size: 0.875rem;
 }
 
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 400;
+  font-size: 0.875rem;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .workspace-bar select {
   flex: 1;
   min-width: 200px;

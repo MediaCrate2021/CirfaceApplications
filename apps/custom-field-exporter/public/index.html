@@ -50,7 +50,12 @@
       <div id="workspace-bar" class="workspace-bar">
         <label for="workspace-select">Workspace</label>
         <select id="workspace-select"></select>
+                <label class="checkbox-label">
+          <input type="checkbox" id="include-last-used" unchecked>
+          Include 'last used' date
+        </label>
         <button id="load-btn" class="btn btn-primary">Load Custom Fields</button>
+
       </div>
 
       <!-- Loading Indicator -->
@@ -104,6 +109,9 @@
           <option value="project">Project</option>
           <option value="portfolio">Portfolio</option>
           <option value="goal">Goal</option>
+        </select>
+        <select id="filter-creator" class="filter-select">
+          <option value="all">All Creators</option>
         </select>
         <button id="export-btn" class="btn btn-secondary">Export CSV</button>
       </div>
