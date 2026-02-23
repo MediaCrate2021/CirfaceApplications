@@ -116,7 +116,7 @@ body {
   background: #293556;
   color: #fff;
 }
-.btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+.btn-primary:hover:not(:disabled) { background: #e2e8f0; }
 
 .btn-secondary {
   background: #e2e8f0;
@@ -126,7 +126,7 @@ body {
 
 .btn-ghost {
   background: transparent;
-  color: #64748b;
+  color: #fff;
 }
 .btn-ghost:hover:not(:disabled) { background: rgba(0, 0, 0, 0.05); }
 

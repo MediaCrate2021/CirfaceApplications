@@ -508,12 +508,12 @@ function renderLocations(f) {
 
   for (const p of (f.portfolios || [])) {
     const url = `https://app.asana.com/0/portfolio/${esc(p.gid)}/list`;
-    items.push(`<li class="tag location-portfolio" title="Portfolio"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(p.name)}</a></li>`);
+    items.push(`<li class="tag location-portfolio" title="Portfolio"><a href="${url}" target="_blank" rel="noopener" class="project-link">📁 ${esc(p.name)}</a></li>`);
   }
 
   for (const g of (f.goals || [])) {
     const url = `https://app.asana.com/0/goals/${esc(g.gid)}`;
-    items.push(`<li class="tag location-goal" title="Goal"><a href="${url}" target="_blank" rel="noopener" class="project-link">${esc(g.name)}</a></li>`);
+    items.push(`<li class="tag location-goal" title="Goal"><a href="${url}" target="_blank" rel="noopener" class="project-link">🎯 ${esc(g.name)}</a></li>`);
   }
 
   if (items.length === 0) return '<span style="color:#94a3b8">—</span>';
