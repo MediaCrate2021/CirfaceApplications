@@ -27,6 +27,7 @@ const state = {
   filterType: 'all',
   filterScope: 'all',
   filterCreator: 'all',
+  lastUsedLoaded: false,
 };
 
 // ============================================================================
@@ -92,6 +93,8 @@ async function init() {
   loginBtn.addEventListener('click', () => { window.location = '/auth/login'; });
   logoutBtn.addEventListener('click', () => { window.location = '/auth/logout'; });
   loadBtn.addEventListener('click', handleLoad);
+  includeLastUsed.addEventListener('change', updateLastUsedVisibility);
+  updateLastUsedVisibility();
   searchInput.addEventListener('input', debounce(applyFiltersAndRender, 250));
   filterType.addEventListener('change', applyFiltersAndRender);
   filterScope.addEventListener('change', applyFiltersAndRender);
@@ -133,6 +136,10 @@ function showApp() {
 function showLoginError(msg) {
   loginError.textContent = msg;
   loginError.hidden = false;
+}
+
+function updateLastUsedVisibility() {
+  tableContainer.classList.toggle('no-last-used', !state.lastUsedLoaded);
 }
 
 function showError(msg) {
@@ -182,6 +189,7 @@ async function handleLoad() {
   state.selectedWorkspaceGid = wsGid;
 
   // Reset UI
+  state.lastUsedLoaded = false;
   loadBtn.disabled = true;
   loadingSection.hidden = false;
   statsBar.hidden = true;
@@ -222,10 +230,12 @@ async function handleLoad() {
     if (includeLastUsed.checked) {
       setProgress(75, `Checking last usage for ${fields.length} fields...`);
       await fetchLastUsedDates(wsGid, fields);
+      state.lastUsedLoaded = true;
     }
 
     state.customFields = fields;
     setProgress(100, 'Done!');
+    updateLastUsedVisibility();
 
     // Show dashboard
     populateTypeFilter(fields);

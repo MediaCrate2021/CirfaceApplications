@@ -113,7 +113,7 @@ body {
 }
 
 .btn-primary {
-  background: #2563eb;
+  background: #293556;
   color: #fff;
 }
 .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
@@ -153,12 +153,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
+  background: #293556;
   padding: 0.75rem 1.5rem;
   border-bottom: 1px solid #e2e8f0;
   position: sticky;
   top: 0;
   z-index: 10;
+  color: #ffa100;
 }
 
 .app-header h1 {
@@ -185,7 +186,6 @@ body {
 
 .user-name {
   font-size: 0.875rem;
-  color: #64748b;
 }
 
 /* ================================================================
@@ -261,7 +261,7 @@ select:focus, .search-input:focus {
 
 .progress-bar-fill {
   height: 100%;
-  background: #2563eb;
+  background: #ffa100;
   border-radius: 3px;
   width: 0%;
   transition: width 0.3s ease;
@@ -297,7 +297,7 @@ select:focus, .search-input:focus {
 .stat-value {
   font-size: 1.4rem;
   font-weight: 700;
-  color: #2563eb;
+  color: #293556;
 }
 
 .stat-label {
@@ -408,6 +408,12 @@ select:focus, .search-input:focus {
 .data-table td:nth-child(8),
 .data-table td:nth-child(9) {
   min-width: 200px;
+}
+
+/* Hide Last Used column (7th) when checkbox is unchecked */
+.no-last-used .data-table th:nth-child(7),
+.no-last-used .data-table td:nth-child(7) {
+  display: none;
 }
 
 .data-table tbody tr:hover {
