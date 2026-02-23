@@ -59,6 +59,12 @@ app.use(session({
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Serve environment-specific logo
+app.get('/logo', (_req, res) => {
+  const env = process.env.NODE_ENV || 'development';
+  res.sendFile(path.join(__dirname, 'public', 'images', `logo-${env}.png`));
+});
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -137,6 +143,8 @@ app.get('/auth/login', (req, res) => {
     redirect_uri: process.env.ASANA_REDIRECT_URI,
     response_type: 'code',
     state,
+   //scope:  'default',//'custom_fields:read projects:read workspaces:read users:read teams:read tasks:read',
+
   });
 
   res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);

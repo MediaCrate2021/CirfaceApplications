@@ -166,6 +166,17 @@ body {
   font-weight: 700;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.header-logo {
+  height: 36px;
+  width: auto;
+}
+
 .header-right {
   display: flex;
   align-items: center;
