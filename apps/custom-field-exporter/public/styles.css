@@ -85,7 +85,7 @@ body {
   text-decoration: underline;
 }
 .legal-links a:hover {
-  color: #2563eb;
+  color: #ffa100;
 }
 
 /* ================================================================
@@ -116,13 +116,13 @@ body {
   background: #293556;
   color: #fff;
 }
-.btn-primary:hover:not(:disabled) { background: #e2e8f0; }
+.btn-primary:hover:not(:disabled) { background: #ffa100; }
 
 .btn-secondary {
   background: #e2e8f0;
   color: #1e293b;
 }
-.btn-secondary:hover:not(:disabled) { background: #cbd5e1; }
+.btn-secondary:hover:not(:disabled) { background: #ffa100; }
 
 .btn-ghost {
   background: transparent;
