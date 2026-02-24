@@ -147,6 +147,23 @@
     </main>
   </div>
 
+  <!-- Field Detail Modal -->
+  <div id="field-modal" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-field-name">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <h2 id="modal-field-name" class="modal-title"></h2>
+          <span id="modal-field-type" class="type-badge"></span>
+        </div>
+        <button id="modal-close" class="btn btn-ghost modal-close-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="modal-meta" class="modal-meta"></div>
+        <div id="modal-locations"></div>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

@@ -285,6 +285,9 @@ const FIELD_OPT_FIELDS = [
   'custom_field.precision',
   'custom_field.currency_code',
   'custom_field.format',
+  // Settings-object fields: when/who added this field to the resource
+  'created_at',
+  'created_by.name',
 ].join(',');
 
 app.get('/api/project-custom-fields/:project_gid', requireAuth, async (req, res) => {
@@ -370,21 +373,24 @@ app.get('/api/goal-custom-fields/:goal_gid', requireAuth, async (req, res) => {
 app.get('/api/search-tasks', requireAuth, async (req, res) => {
   try {
     await ensureFreshToken(req);
-    const { workspace_gid, custom_field_gid } = req.query;
+    const { workspace_gid, custom_field_gid, project_gid } = req.query;
     if (!workspace_gid || !custom_field_gid) {
       return res.status(400).json({ error: 'workspace_gid and custom_field_gid required' });
     }
 
+    const params = {
+      [`custom_fields.${custom_field_gid}.is_set`]: 'true',
+      sort_by: 'modified_at',
+      sort_ascending: 'false',
+      limit: '1',
+      opt_fields: 'modified_at',
+    };
+    if (project_gid) params['projects.any'] = project_gid;
+
     const data = await asanaFetch(
       `/workspaces/${encodeURIComponent(workspace_gid)}/tasks/search`,
       req.session.accessToken,
-      {
-        [`custom_fields.${custom_field_gid}.is_set`]: 'true',
-        sort_by: 'modified_at',
-        sort_ascending: 'false',
-        limit: '1',
-        opt_fields: 'modified_at',
-      },
+      params,
     );
     res.json(data);
   } catch (err) {

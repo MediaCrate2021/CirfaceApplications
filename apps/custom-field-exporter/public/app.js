@@ -102,6 +102,17 @@ async function init() {
   exportBtn.addEventListener('click', exportCSV);
   errorDismiss.addEventListener('click', () => { errorBanner.hidden = true; });
 
+  // Field detail modal
+  $('#modal-close').addEventListener('click', closeModal);
+  $('#field-modal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#field-modal').hidden) closeModal(); });
+  tableBody.addEventListener('click', (e) => {
+    const btn = e.target.closest('.field-name-btn');
+    if (!btn) return;
+    const field = state.customFields.find((f) => f.gid === btn.dataset.gid);
+    if (field) openFieldModal(field);
+  });
+
   // Sort headers
   document.querySelectorAll('th.sortable').forEach((th) => {
     th.addEventListener('click', () => {
@@ -313,6 +324,8 @@ async function buildResourceMap(wsGid, listEndpoint, settingsEndpoint, knownGids
           if (!map[field.gid]) map[field.gid] = [];
           const entry = { gid: resource.gid, name: resource.name };
           if (resource.privacy_setting) entry.privacy = resource.privacy_setting;
+          if (setting.created_at) entry.added_at = setting.created_at;
+          if (setting.created_by?.name) entry.added_by = setting.created_by.name;
           map[field.gid].push(entry);
 
           // Collect fields that are not in the workspace library
@@ -486,7 +499,7 @@ function renderTable(fields) {
 
   tableBody.innerHTML = fields.map((f) => `
     <tr>
-      <td><strong>${esc(f.name)}</strong></td>
+      <td><button class="field-name-btn" data-gid="${esc(f.gid)}">${esc(f.name)}</button></td>
       <td><code style="font-size:0.8rem;color:#64748b;user-select:all">${esc(f.gid)}</code></td>
       <td><span class="type-badge ${esc(f.resource_subtype || f.type)}">${esc(formatType(f.resource_subtype || f.type))}</span></td>
       <td class="truncate" title="${esc(f.description || '')}">${esc(f.description || '—')}</td>
@@ -560,6 +573,148 @@ function renderEnumOptions(options) {
   return `<ul class="cell-list">${options.map((o) =>
     `<li class="tag ${o.enabled === false ? 'disabled' : ''}" ${o.color ? `style="border-left:3px solid ${mapColor(o.color)}"` : ''}>${esc(o.name)}</li>`
   ).join('')}</ul>`;
+}
+
+// ============================================================================
+// Field Detail Modal
+// ============================================================================
+
+function openFieldModal(field) {
+  // Header
+  $('#modal-field-name').textContent = field.name;
+  const subtype = field.resource_subtype || field.type;
+  const typeBadge = $('#modal-field-type');
+  typeBadge.textContent = formatType(subtype);
+  typeBadge.className = `type-badge ${subtype}`;
+
+  // Meta — show last used immediately if available, otherwise show loading
+  const lastUsedKnown = state.lastUsedLoaded || field._lastUsedFetched;
+  const lastUsedHtml = lastUsedKnown
+    ? formatLastUsed(field.last_used, field.last_used_task_gid)
+    : '<span style="color:#94a3b8">Loading…</span>';
+
+  $('#modal-meta').innerHTML = `
+    <div class="modal-meta-item full-width">
+      <label>Description</label>
+      <p>${esc(field.description || '—')}</p>
+    </div>
+    <div class="modal-meta-item">
+      <label>Created By</label>
+      <p>${esc(field.created_by?.name || '—')}</p>
+    </div>
+    <div class="modal-meta-item">
+      <label>Created</label>
+      <p>${field.created_at ? toShortDate(field.created_at) : '—'}</p>
+    </div>
+    <div class="modal-meta-item">
+      <label>Scope</label>
+      <p>${field.is_global_to_workspace ? 'Library' : 'Local'}</p>
+    </div>
+    <div class="modal-meta-item">
+      <label>Last Used</label>
+      <p id="modal-last-used">${lastUsedHtml}</p>
+    </div>
+  `;
+
+  // Locations table — Name and Type from initial load; Last Used lazy-fetched per project
+  const allLocs = [
+    ...(field.projects   || []).map((p) => ({ ref: p, locType: 'Project',   tagClass: 'location-project',   url: `https://app.asana.com/0/${p.gid}` })),
+    ...(field.portfolios || []).map((p) => ({ ref: p, locType: 'Portfolio', tagClass: 'location-portfolio', url: `https://app.asana.com/0/portfolio/${p.gid}/list` })),
+    ...(field.goals      || []).map((g) => ({ ref: g, locType: 'Goal',      tagClass: 'location-goal',      url: `https://app.asana.com/0/goals/${g.gid}` })),
+  ];
+
+  const locEl = $('#modal-locations');
+  if (allLocs.length === 0) {
+    locEl.innerHTML = '<p class="modal-section-title">Locations</p><p style="color:#94a3b8;font-size:0.875rem">Not applied to any project, portfolio, or goal.</p>';
+  } else {
+    const rows = allLocs.map((item, idx) => {
+      const lastUsedCell = item.locType === 'Project'
+        ? (item.ref._lastUsedFetched
+            ? formatLastUsed(item.ref.last_used, item.ref.last_used_task_gid)
+            : '<span style="color:#94a3b8">Loading…</span>')
+        : '<span style="color:#94a3b8">—</span>';
+      return `
+        <tr>
+          <td><a href="${esc(item.url)}" target="_blank" rel="noopener" class="project-link">${esc(item.ref.name)}</a></td>
+          <td><span class="tag ${item.tagClass}">${esc(item.locType)}</span></td>
+          <td id="loc-last-used-${idx}">${lastUsedCell}</td>
+        </tr>
+      `;
+    }).join('');
+    locEl.innerHTML = `
+      <p class="modal-section-title">Locations (${allLocs.length})</p>
+      <table class="modal-table">
+        <thead><tr><th>Name</th><th>Type</th><th>Last Used</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  $('#field-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+
+  // Lazy-fetch overall last used if not already loaded
+  if (!lastUsedKnown) {
+    fetchFieldLastUsed(field).then(() => {
+      const el = document.getElementById('modal-last-used');
+      if (el && !$('#field-modal').hidden) {
+        el.innerHTML = formatLastUsed(field.last_used, field.last_used_task_gid);
+      }
+    });
+  }
+
+  // Lazy-fetch per-project last used (portfolios/goals don't support task search filtering)
+  const wsGid = state.selectedWorkspaceGid;
+  allLocs.forEach((item, idx) => {
+    if (item.locType !== 'Project' || item.ref._lastUsedFetched) return;
+    fetchLocationLastUsed(item.ref, field.gid, wsGid).then(() => {
+      const el = document.getElementById(`loc-last-used-${idx}`);
+      if (el && !$('#field-modal').hidden) {
+        el.innerHTML = formatLastUsed(item.ref.last_used, item.ref.last_used_task_gid);
+      }
+    });
+  });
+}
+
+async function fetchFieldLastUsed(field) {
+  if (field._lastUsedFetched) return;
+  const wsGid = state.selectedWorkspaceGid;
+  if (!wsGid) return;
+  try {
+    const res = await fetch(`/api/search-tasks?workspace_gid=${wsGid}&custom_field_gid=${field.gid}`);
+    if (!res.ok) { field.last_used = null; field.last_used_task_gid = null; return; }
+    const data = await res.json();
+    const task = data.data?.[0];
+    field.last_used = task?.modified_at || null;
+    field.last_used_task_gid = task?.gid || null;
+  } catch {
+    field.last_used = null;
+    field.last_used_task_gid = null;
+  } finally {
+    field._lastUsedFetched = true;
+  }
+}
+
+async function fetchLocationLastUsed(loc, fieldGid, wsGid) {
+  if (loc._lastUsedFetched) return;
+  try {
+    const res = await fetch(`/api/search-tasks?workspace_gid=${wsGid}&custom_field_gid=${fieldGid}&project_gid=${loc.gid}`);
+    if (!res.ok) { loc.last_used = null; loc.last_used_task_gid = null; return; }
+    const data = await res.json();
+    const task = data.data?.[0];
+    loc.last_used = task?.modified_at || null;
+    loc.last_used_task_gid = task?.gid || null;
+  } catch {
+    loc.last_used = null;
+    loc.last_used_task_gid = null;
+  } finally {
+    loc._lastUsedFetched = true;
+  }
+}
+
+function closeModal() {
+  $('#field-modal').hidden = true;
+  document.body.style.overflow = '';
 }
 
 function updateSortIcons() {
