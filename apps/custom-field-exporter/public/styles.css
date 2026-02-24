@@ -404,15 +404,15 @@ select:focus, .search-input:focus {
   font-family: 'Courier New', monospace;
 }
 
-/* Let the scopes & options columns breathe */
-.data-table td:nth-child(8),
-.data-table td:nth-child(9) {
+/* Let the locations & options columns breathe */
+.data-table td:nth-child(9),
+.data-table td:nth-child(10) {
   min-width: 200px;
 }
 
-/* Hide Last Used column (7th) when checkbox is unchecked */
-.no-last-used .data-table th:nth-child(7),
-.no-last-used .data-table td:nth-child(7) {
+/* Hide Last Used column (8th) when checkbox is unchecked */
+.no-last-used .data-table th:nth-child(8),
+.no-last-used .data-table td:nth-child(8) {
   display: none;
 }
 

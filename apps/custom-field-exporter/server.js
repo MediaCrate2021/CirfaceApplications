@@ -228,7 +228,7 @@ app.get('/api/custom-fields', requireAuth, async (req, res) => {
       limit: '100',
       opt_fields: [
         'name', 'type', 'resource_subtype', 'description',
-        'created_by', 'created_by.name',
+        'created_by', 'created_by.name', 'created_at',
         'is_global_to_workspace', 'enabled',
         'enum_options', 'enum_options.name', 'enum_options.color', 'enum_options.enabled',
         'has_notifications_enabled', 'precision', 'currency_code', 'format',
@@ -276,6 +276,7 @@ const FIELD_OPT_FIELDS = [
   'custom_field.resource_subtype',
   'custom_field.description',
   'custom_field.created_by.name',
+  'custom_field.created_at',
   'custom_field.is_global_to_workspace',
   'custom_field.enabled',
   'custom_field.enum_options.name',

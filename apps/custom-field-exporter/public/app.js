@@ -346,6 +346,7 @@ async function fetchLastUsedDates(wsGid, fields) {
           const data = await res.json();
           const task = data.data?.[0];
           field.last_used = task?.modified_at || null;
+          field.last_used_task_gid = task?.gid || null;
         } catch {
           field.last_used = null;
         }
@@ -467,6 +468,7 @@ function getSortValue(field, col) {
     case 'gid': return field.gid || '';
     case 'type': return field.resource_subtype || field.type || '';
     case 'created_by': return field.created_by?.name || '';
+    case 'created_at': return field.created_at || '';
     case 'is_global': return field.is_global_to_workspace ? 'Library' : 'Local';
     case 'last_used': return field.last_used || '';
     case 'locations': return (field.projects?.length || 0) + (field.portfolios?.length || 0) + (field.goals?.length || 0);
@@ -489,8 +491,9 @@ function renderTable(fields) {
       <td><span class="type-badge ${esc(f.resource_subtype || f.type)}">${esc(formatType(f.resource_subtype || f.type))}</span></td>
       <td class="truncate" title="${esc(f.description || '')}">${esc(f.description || '—')}</td>
       <td>${esc(f.created_by?.name || '—')}</td>
+      <td>${formatDate(f.created_at)}</td>
       <td><span class="scope-badge ${f.is_global_to_workspace ? 'global' : 'local'}">${f.is_global_to_workspace ? 'Library' : 'Local'}</span></td>
-      <td>${formatLastUsed(f.last_used)}</td>
+      <td>${formatLastUsed(f.last_used, f.last_used_task_gid)}</td>
       <td>${renderLocations(f)}</td>
       <td>${renderEnumOptions(f.enum_options)}</td>
     </tr>
@@ -526,18 +529,30 @@ function formatPrivacy(privacy) {
   return 'Unknown visibility';
 }
 
-function formatLastUsed(dateStr) {
+function toShortDate(dateStr) {
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '<span style="color:#94a3b8">—</span>';
+  return toShortDate(dateStr);
+}
+
+function formatLastUsed(dateStr, taskGid) {
   if (!dateStr) return '<span style="color:#94a3b8">Never / Unknown</span>';
   const d = new Date(dateStr);
   const now = new Date();
   const diffDays = Math.floor((now - d) / (1000 * 60 * 60 * 24));
-  const formatted = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const formatted = toShortDate(dateStr);
 
   let color = '#166534'; // green — recent
   if (diffDays > 180) color = '#dc2626'; // red — stale
   else if (diffDays > 90) color = '#d97706'; // amber — aging
 
-  return `<span style="color:${color}" title="${diffDays} days ago">${formatted}</span>`;
+  const label = `<span style="color:${color}" title="${diffDays} days ago">${formatted}</span>`;
+  if (!taskGid) return label;
+  const url = `https://app.asana.com/0/0/${esc(taskGid)}/f`;
+  return `<a href="${url}" target="_blank" rel="noopener" style="text-decoration:none">${label}</a>`;
 }
 
 function renderEnumOptions(options) {
@@ -565,7 +580,7 @@ function exportCSV() {
   const rows = state.filtered;
   if (rows.length === 0) return;
 
-  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Portfolios', 'Goals', 'Options / Variations'];
+  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Created', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Portfolios', 'Goals', 'Options / Variations'];
   const csvRows = [headers.join(',')];
 
   for (const f of rows) {
@@ -581,7 +596,7 @@ function exportCSV() {
       if (o.enabled === false) s += ' (disabled)';
       return s;
     }).join('; ');
-    const lastUsed = f.last_used ? new Date(f.last_used).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Never / Unknown';
+    const lastUsed = f.last_used ? toShortDate(f.last_used) : 'Never / Unknown';
 
     csvRows.push([
       csvCell(f.name),
@@ -589,6 +604,7 @@ function exportCSV() {
       csvCell(formatType(f.resource_subtype || f.type)),
       csvCell(f.description || ''),
       csvCell(f.created_by?.name || ''),
+      csvCell(f.created_at ? toShortDate(f.created_at) : ''),
       csvCell(f.is_global_to_workspace ? 'Library' : 'Local'),
       csvCell(lastUsed),
       csvCell(projects),
