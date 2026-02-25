@@ -111,9 +111,19 @@
           <option value="portfolio">Portfolio</option>
           <option value="goal">Goal</option>
         </select>
-        <select id="filter-creator" class="filter-select">
-          <option value="all">All Creators</option>
-        </select>
+        <div class="multi-select" id="creator-multi-select">
+          <button class="multi-select-trigger" id="filter-creator-btn" type="button">
+            All Creators <span class="multi-select-arrow">▾</span>
+          </button>
+          <div class="multi-select-panel" id="filter-creator-panel" hidden>
+            <div class="multi-select-actions">
+              <button class="multi-select-action" id="creator-select-all" type="button">Select all</button>
+              <button class="multi-select-action" id="creator-clear-all" type="button">Clear all</button>
+            </div>
+            <div class="multi-select-divider"></div>
+            <div id="creator-checkboxes"></div>
+          </div>
+        </div>
         <button id="export-btn" class="btn btn-secondary">Export CSV</button>
       </div>
 

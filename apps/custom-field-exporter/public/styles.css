@@ -343,6 +343,82 @@ select:focus, .search-input:focus {
   min-width: 130px;
 }
 
+/* Multi-select creator filter */
+.multi-select {
+  position: relative;
+}
+
+.multi-select-trigger {
+  font-family: inherit;
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e293b;
+  cursor: pointer;
+  min-width: 150px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  white-space: nowrap;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.multi-select-trigger:hover,
+.multi-select-trigger:focus { border-color: #2563eb; }
+
+.multi-select-arrow { font-size: 0.65rem; color: #94a3b8; }
+
+.multi-select-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 50;
+  min-width: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.multi-select-actions {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.multi-select-action {
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 0.75rem;
+  color: #2563eb;
+  cursor: pointer;
+  padding: 0;
+}
+.multi-select-action:hover { text-decoration: underline; }
+
+.multi-select-divider {
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.multi-select-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #1e293b;
+}
+.multi-select-item:hover { background: #f8fafc; }
+.multi-select-item input[type="checkbox"] { cursor: pointer; }
+
 /* ================================================================
    Data Table
    ================================================================ */

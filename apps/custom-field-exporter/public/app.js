@@ -26,7 +26,7 @@ const state = {
   searchQuery: '',
   filterType: 'all',
   filterScope: 'all',
-  filterCreator: 'all',
+  excludedCreators: new Set(),
   lastUsedLoaded: false,
 };
 
@@ -52,7 +52,7 @@ const toolbar       = $('#toolbar');
 const searchInput   = $('#search-input');
 const filterType    = $('#filter-type');
 const filterScope   = $('#filter-scope');
-const filterCreator = $('#filter-creator');
+// creator filter is a custom multi-select; no single DOM ref needed
 const exportBtn     = $('#export-btn');
 const tableContainer = $('#table-container');
 const tableBody     = $('#table-body');
@@ -98,8 +98,31 @@ async function init() {
   searchInput.addEventListener('input', debounce(applyFiltersAndRender, 250));
   filterType.addEventListener('change', applyFiltersAndRender);
   filterScope.addEventListener('change', applyFiltersAndRender);
-  filterCreator.addEventListener('change', applyFiltersAndRender);
   exportBtn.addEventListener('click', exportCSV);
+
+  // Multi-select creator filter
+  $('#filter-creator-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const panel = $('#filter-creator-panel');
+    panel.hidden = !panel.hidden;
+  });
+  $('#creator-select-all').addEventListener('click', () => {
+    document.querySelectorAll('.creator-checkbox').forEach((cb) => { cb.checked = true; });
+    state.excludedCreators = new Set();
+    updateCreatorTrigger();
+    applyFiltersAndRender();
+  });
+  $('#creator-clear-all').addEventListener('click', () => {
+    document.querySelectorAll('.creator-checkbox').forEach((cb) => { cb.checked = false; });
+    state.excludedCreators = new Set([...document.querySelectorAll('.creator-checkbox')].map((cb) => cb.value));
+    updateCreatorTrigger();
+    applyFiltersAndRender();
+  });
+  document.addEventListener('click', (e) => {
+    if (!$('#creator-multi-select').contains(e.target)) {
+      $('#filter-creator-panel').hidden = true;
+    }
+  });
   errorDismiss.addEventListener('click', () => { errorBanner.hidden = true; });
 
   // Field detail modal
@@ -390,16 +413,38 @@ function populateTypeFilter(fields) {
 }
 
 function populateCreatorFilter(fields) {
-  const creators = [...new Set(
-    fields.map((f) => f.created_by?.name).filter(Boolean)
-  )].sort();
-  filterCreator.innerHTML = '<option value="all">All Creators</option>';
-  creators.forEach((name) => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    filterCreator.appendChild(opt);
+  const creators = [...new Set(fields.map((f) => f.created_by?.name || 'Asana'))].sort();
+  state.excludedCreators = new Set(); // reset on data reload
+
+  const container = document.getElementById('creator-checkboxes');
+  container.innerHTML = creators.map((name) => `
+    <label class="multi-select-item">
+      <input type="checkbox" class="creator-checkbox" value="${esc(name)}" checked>
+      <span>${esc(name)}</span>
+    </label>
+  `).join('');
+
+  container.querySelectorAll('.creator-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        state.excludedCreators.delete(cb.value);
+      } else {
+        state.excludedCreators.add(cb.value);
+      }
+      updateCreatorTrigger();
+      applyFiltersAndRender();
+    });
   });
+
+  updateCreatorTrigger();
+}
+
+function updateCreatorTrigger() {
+  const btn = document.getElementById('filter-creator-btn');
+  const n = state.excludedCreators.size;
+  btn.innerHTML = n === 0
+    ? 'All Creators <span class="multi-select-arrow">▾</span>'
+    : `${n} hidden <span class="multi-select-arrow">▾</span>`;
 }
 
 function updateStats(fields) {
@@ -420,8 +465,6 @@ function applyFiltersAndRender() {
   state.searchQuery = searchInput.value.toLowerCase().trim();
   state.filterType = filterType.value;
   state.filterScope = filterScope.value;
-  state.filterCreator = filterCreator.value;
-
   let list = state.customFields;
 
   // Search
@@ -447,8 +490,8 @@ function applyFiltersAndRender() {
   }
 
   // Creator filter
-  if (state.filterCreator !== 'all') {
-    list = list.filter((f) => f.created_by?.name === state.filterCreator);
+  if (state.excludedCreators.size > 0) {
+    list = list.filter((f) => !state.excludedCreators.has(f.created_by?.name || 'Asana'));
   }
 
   // Scope filter
