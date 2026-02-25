@@ -231,7 +231,7 @@ app.get('/api/custom-fields', requireAuth, async (req, res) => {
         'created_by', 'created_by.name', 'created_at',
         'is_global_to_workspace', 'enabled',
         'enum_options', 'enum_options.name', 'enum_options.color', 'enum_options.enabled',
-        'has_notifications_enabled', 'precision', 'currency_code', 'format',
+        'has_notifications_enabled', 'precision', 'currency_code', 'format', 'asana_created_field',
       ].join(','),
     };
     if (offset) params.offset = offset;
@@ -288,6 +288,7 @@ const FIELD_OPT_FIELDS = [
   // Settings-object fields: when/who added this field to the resource
   'created_at',
   'created_by.name',
+  'asana_created_field',
 ].join(',');
 
 app.get('/api/project-custom-fields/:project_gid', requireAuth, async (req, res) => {

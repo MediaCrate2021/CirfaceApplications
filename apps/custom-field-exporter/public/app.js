@@ -230,11 +230,13 @@ async function handleLoad() {
     const { map: goalMap, extraFields: goalFields } = await buildResourceMap(wsGid, 'goals', 'goal-custom-fields', knownGids);
     for (const [gid, f] of Object.entries(goalFields)) { fields.push(f); knownGids.add(gid); }
 
-    // Step 3: Attach resource associations to all fields
+    // Step 3: Attach resource associations to all fields and fix Asana creator entries
     for (const field of fields) {
       field.projects   = projectMap[field.gid]   || [];
       field.portfolios = portfolioMap[field.gid] || [];
       field.goals      = goalMap[field.gid]      || [];
+      // Fields with no creator are built-in Asana fields
+      if (!field.created_by?.name) field.created_by = { name: 'Asana' };
     }
 
     // Step 4: Fetch "last used" date for each field (optional)
