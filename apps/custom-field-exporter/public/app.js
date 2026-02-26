@@ -796,14 +796,15 @@ function exportCSV() {
       if (o.enabled === false) s += ' (disabled)';
       return s;
     }).join('; ');
-    const lastUsed = f.last_used ? toShortDate(f.last_used) : 'Never / Unknown';
+    const lastUsedKnown = state.lastUsedLoaded || f._lastUsedFetched;
+    const lastUsed = f.last_used ? toShortDate(f.last_used) : (lastUsedKnown ? 'Never used' : 'Not loaded');
 
     csvRows.push([
       csvCell(f.name),
       csvCell(f.gid),
       csvCell(formatType(f.resource_subtype || f.type)),
       csvCell(f.description || ''),
-      csvCell(f.created_by?.name || ''),
+      csvCell(f.created_by?.name),
       csvCell(f.created_at ? toShortDate(f.created_at) : ''),
       csvCell(f.is_global_to_workspace ? 'Library' : 'Local'),
       csvCell(lastUsed),
