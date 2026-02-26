@@ -175,8 +175,7 @@ app.get('/auth/login', (req, res) => {
     redirect_uri: process.env.ASANA_REDIRECT_URI,
     response_type: 'code',
     state,
-   //scope:  'default',//'custom_fields:read projects:read workspaces:read users:read teams:read tasks:read',
-
+    //scope: 'custom_fields:read projects:read workspaces:read users:read teams:read tasks:read',
   });
 
   res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);
