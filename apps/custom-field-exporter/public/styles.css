@@ -343,6 +343,24 @@ select:focus, .search-input:focus {
   min-width: 130px;
 }
 
+/* ================================================================
+   Footer
+   ================================================================ */
+
+.app-footer {
+  text-align: center;
+  padding: 0.75rem 1.5rem;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.feedback-link {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  text-decoration: none;
+}
+.feedback-link:hover { color: #ffa100; text-decoration: underline; }
+
 /* Multi-select creator filter */
 .multi-select {
   position: relative;
