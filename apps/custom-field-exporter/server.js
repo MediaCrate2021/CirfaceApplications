@@ -8,7 +8,7 @@
 // Disclaimer: This code was created with the help of Claude.AI
 //
 // This code is part of Cirface Custom Field Explorer
-// Last updated by: 2026FEB10 - LMR
+// Last updated by: 2026FEB26 - LMR
 //-------------------------//
 
 require('dotenv').config();
@@ -19,6 +19,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const crypto = require('crypto');
 const path = require('path');
+const logger = require('./logger');
 
 // Only load file-based session store in production.
 // In development, concurrent API requests cause EPERM rename conflicts on Windows.
@@ -57,7 +58,25 @@ app.use(session({
   },
 }));
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Debug-level request logging (staging only)
+if (logger.isLevelEnabled('debug')) {
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      logger.debug({
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        ms: Date.now() - start,
+        user: req.session?.user?.name,
+      }, 'request');
+    });
+    next();
+  });
+}
 
 // Serve environment-specific logo
 app.get('/logo', (_req, res) => {
@@ -98,6 +117,8 @@ async function ensureFreshToken(req) {
   const now = Date.now();
   if (now < req.session.tokenExpiresAt - 60_000) return; // still valid
 
+  logger.debug({ user: req.session.user?.name }, 'refreshing access token');
+
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: process.env.ASANA_CLIENT_ID,
@@ -130,6 +151,17 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// Centralised error responder — logs and sends JSON response
+function apiError(res, err, context) {
+  const status = err.status || 500;
+  if (status >= 500) {
+    logger.error({ err, ...context }, 'internal API error');
+  } else {
+    logger.warn({ err: { message: err.message, status }, ...context }, 'API error');
+  }
+  res.status(status).json({ error: err.message });
+}
+
 // ---------------------------------------------------------------------------
 // Auth routes
 // ---------------------------------------------------------------------------
@@ -153,9 +185,13 @@ app.get('/auth/login', (req, res) => {
 app.get('/auth/callback', async (req, res) => {
   const { code, state, error } = req.query;
 
-  if (error) return res.redirect('/?error=access_denied');
+  if (error) {
+    logger.warn({ error }, 'OAuth access denied');
+    return res.redirect('/?error=access_denied');
+  }
 
   if (state !== req.session.oauthState) {
+    logger.warn('OAuth state mismatch — possible CSRF attempt');
     return res.status(403).send('State mismatch');
   }
   delete req.session.oauthState;
@@ -175,7 +211,10 @@ app.get('/auth/callback', async (req, res) => {
       body,
     });
 
-    if (!tokenRes.ok) return res.redirect('/?error=token_exchange_failed');
+    if (!tokenRes.ok) {
+      logger.error({ status: tokenRes.status }, 'token exchange failed');
+      return res.redirect('/?error=token_exchange_failed');
+    }
 
     const tokenData = await tokenRes.json();
 
@@ -184,8 +223,11 @@ app.get('/auth/callback', async (req, res) => {
     req.session.tokenExpiresAt = Date.now() + tokenData.expires_in * 1000;
     req.session.user = tokenData.data; // { id, name, email }
 
+    logger.info({ user: tokenData.data?.name, email: tokenData.data?.email }, 'user logged in');
+
     res.redirect('/');
-  } catch {
+  } catch (err) {
+    logger.error({ err }, 'token exchange exception');
     res.redirect('/?error=token_exchange_failed');
   }
 });
@@ -198,7 +240,11 @@ app.get('/auth/status', (req, res) => {
 });
 
 app.get('/auth/logout', (req, res) => {
-  req.session.destroy(() => res.redirect('/'));
+  const user = req.session.user?.name;
+  req.session.destroy(() => {
+    logger.info({ user }, 'user logged out');
+    res.redirect('/');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -214,7 +260,7 @@ app.get('/api/workspaces', requireAuth, async (req, res) => {
     });
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'workspaces' });
   }
 });
 
@@ -243,7 +289,7 @@ app.get('/api/custom-fields', requireAuth, async (req, res) => {
     );
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'custom-fields' });
   }
 });
 
@@ -264,7 +310,7 @@ app.get('/api/projects', requireAuth, async (req, res) => {
     const data = await asanaFetch('/projects', req.session.accessToken, params);
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'projects' });
   }
 });
 
@@ -303,7 +349,7 @@ app.get('/api/project-custom-fields/:project_gid', requireAuth, async (req, res)
     );
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'project-custom-fields' });
   }
 });
 
@@ -319,7 +365,7 @@ app.get('/api/portfolios', requireAuth, async (req, res) => {
     const data = await asanaFetch('/portfolios', req.session.accessToken, params);
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'portfolios' });
   }
 });
 
@@ -335,7 +381,7 @@ app.get('/api/portfolio-custom-fields/:portfolio_gid', requireAuth, async (req, 
     );
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'portfolio-custom-fields' });
   }
 });
 
@@ -351,7 +397,7 @@ app.get('/api/goals', requireAuth, async (req, res) => {
     const data = await asanaFetch('/goals', req.session.accessToken, params);
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'goals' });
   }
 });
 
@@ -367,7 +413,7 @@ app.get('/api/goal-custom-fields/:goal_gid', requireAuth, async (req, res) => {
     );
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'goal-custom-fields' });
   }
 });
 
@@ -395,8 +441,23 @@ app.get('/api/search-tasks', requireAuth, async (req, res) => {
     );
     res.json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    apiError(res, err, { user: req.session.user?.name, route: 'search-tasks' });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Client-side event logging
+// ---------------------------------------------------------------------------
+
+app.post('/api/log/export', requireAuth, (req, res) => {
+  const { workspace_name, field_count } = req.body;
+  logger.info({
+    event: 'csv_export',
+    user: req.session.user?.name,
+    workspace: workspace_name,
+    field_count,
+  }, 'CSV exported');
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -406,5 +467,5 @@ app.get('/api/search-tasks', requireAuth, async (req, res) => {
 app.set('trust proxy', 1);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Custom Field Exporter running on port ${PORT}`);
+  logger.info({ port: PORT, env: process.env.NODE_ENV || 'development', log_level: logger.level }, 'server started');
 });

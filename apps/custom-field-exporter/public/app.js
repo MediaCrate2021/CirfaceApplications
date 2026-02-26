@@ -823,6 +823,14 @@ function exportCSV() {
   a.download = `custom-fields-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+
+  // Log the export server-side (fire-and-forget)
+  const wsName = workspaceSelect.options[workspaceSelect.selectedIndex]?.text || state.selectedWorkspaceGid;
+  fetch('/api/log/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_name: wsName, field_count: rows.length }),
+  }).catch(() => {}); // non-blocking, ignore network failures
 }
 
 function csvCell(value) {
