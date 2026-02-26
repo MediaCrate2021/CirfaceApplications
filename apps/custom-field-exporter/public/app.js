@@ -780,7 +780,7 @@ function exportCSV() {
   const rows = state.filtered;
   if (rows.length === 0) return;
 
-  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Created', 'Scope', 'Last Used', 'Projects', 'Project Visibility', 'Portfolios', 'Goals', 'Options / Variations'];
+  const headers = ['Name', 'Field GID', 'Type', 'Description', 'Created By', 'Created', 'Scope', 'Last Used', 'Last Used Link', 'Projects', 'Project Visibility', 'Project Links', 'Portfolios', 'Portfolio Links', 'Goals', 'Goal Links', 'Options / Variations'];
   const csvRows = [headers.join(',')];
 
   for (const f of rows) {
@@ -789,8 +789,11 @@ function exportCSV() {
       const vis = p.privacy === 'private' ? 'Private' : p.privacy === 'public_to_workspace' ? 'Public' : 'Unknown';
       return `${p.name} (${vis})`;
     }).join('; ');
-    const portfolios = (f.portfolios || []).map((p) => p.name).join('; ');
-    const goals      = (f.goals      || []).map((g) => g.name).join('; ');
+    const projectLinks   = (f.projects   || []).map((p) => `https://app.asana.com/0/${p.gid}`).join('; ');
+    const portfolios     = (f.portfolios || []).map((p) => p.name).join('; ');
+    const portfolioLinks = (f.portfolios || []).map((p) => `https://app.asana.com/0/portfolio/${p.gid}/list`).join('; ');
+    const goals          = (f.goals      || []).map((g) => g.name).join('; ');
+    const goalLinks      = (f.goals      || []).map((g) => `https://app.asana.com/0/goals/${g.gid}`).join('; ');
     const options = (f.enum_options || []).map((o) => {
       let s = o.name;
       if (o.enabled === false) s += ' (disabled)';
@@ -798,6 +801,7 @@ function exportCSV() {
     }).join('; ');
     const lastUsedKnown = state.lastUsedLoaded || f._lastUsedFetched;
     const lastUsed = f.last_used ? toShortDate(f.last_used) : (lastUsedKnown ? 'Never used' : 'Not loaded');
+    const lastUsedLink = f.last_used_task_gid ? `https://app.asana.com/0/0/${f.last_used_task_gid}/f` : '';
 
     csvRows.push([
       csvCell(f.name),
@@ -808,10 +812,14 @@ function exportCSV() {
       csvCell(f.created_at ? toShortDate(f.created_at) : ''),
       csvCell(f.is_global_to_workspace ? 'Library' : 'Local'),
       csvCell(lastUsed),
+      csvCell(lastUsedLink),
       csvCell(projects),
       csvCell(projectVisibility),
+      csvCell(projectLinks),
       csvCell(portfolios),
+      csvCell(portfolioLinks),
       csvCell(goals),
+      csvCell(goalLinks),
       csvCell(options),
     ].join(','));
   }
