@@ -18,6 +18,7 @@ const session = require('express-session');
 const helmet = require('helmet');
 const cors = require('cors');
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
 
@@ -25,8 +26,10 @@ const logger = require('./logger');
 // In development, concurrent API requests cause EPERM rename conflicts on Windows.
 const sessionStore = process.env.NODE_ENV === 'production'
   ? (() => {
+      const sessionsDir = path.join(__dirname, 'sessions');
+      fs.mkdirSync(sessionsDir, { recursive: true });
       const FileStore = require('session-file-store')(session);
-      return new FileStore({ path: path.join(__dirname, 'sessions'), ttl: 28800, retries: 5, factor: 1, minTimeout: 100 });
+      return new FileStore({ path: sessionsDir, ttl: 28800, retries: 5, factor: 1, minTimeout: 100 });
     })()
   : undefined; // express-session default: in-memory store
 
