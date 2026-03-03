@@ -84,6 +84,7 @@ if (logger.isLevelEnabled('debug')) {
 // Serve environment-specific logo
 app.get('/logo', (_req, res) => {
   const env = process.env.NODE_ENV || 'development';
+  res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'public', 'images', `logo-${env}.png`));
 });
 
