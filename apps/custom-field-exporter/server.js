@@ -361,7 +361,7 @@ app.get('/api/portfolios', requireAuth, async (req, res) => {
     const { workspace_gid, offset } = req.query;
     if (!workspace_gid) return res.status(400).json({ error: 'workspace_gid required' });
 
-    const params = { limit: '100', opt_fields: 'name', workspace: workspace_gid };
+    const params = { limit: '100', opt_fields: 'name', workspace: workspace_gid, owner: 'me' };
     if (offset) params.offset = offset;
 
     const data = await asanaFetch('/portfolios', req.session.accessToken, params);

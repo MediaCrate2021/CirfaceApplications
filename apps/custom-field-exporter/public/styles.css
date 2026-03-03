@@ -498,6 +498,11 @@ select:focus, .search-input:focus {
   font-family: 'Courier New', monospace;
 }
 
+/* Description column — cap width so it doesn't push other columns off screen */
+.data-table td:nth-child(4) {
+  max-width: 500px;
+}
+
 /* Let the locations & options columns breathe */
 .data-table td:nth-child(9),
 .data-table td:nth-child(10) {
