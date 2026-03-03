@@ -182,7 +182,12 @@ app.get('/auth/login', (req, res) => {
     //scope: 'custom_fields:read projects:read workspaces:read users:read teams:read tasks:read',
   });
 
-  res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);
+  // Explicitly save the session before redirecting to ensure oauthState is
+  // persisted before the OAuth callback arrives.
+  req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save error on login');
+    res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);
+  });
 });
 
 app.get('/auth/callback', async (req, res) => {
