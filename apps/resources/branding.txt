@@ -1,0 +1,14 @@
+Hex values for the colours
+
+Delft Blue  (Primary)
+HEX 293556
+
+Bright Orange (primary)
+HEX ffa100 
+
+Tomato (secondary)
+HEX f64d3d
+
+Verdigris (secondary) 
+HEX 16b4bf 
+
