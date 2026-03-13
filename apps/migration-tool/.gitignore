@@ -1,0 +1,4 @@
+sessions/
+.env
+dist/
+node_modules/
