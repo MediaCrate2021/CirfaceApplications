@@ -76,6 +76,7 @@ declare module 'express-session' {
     migrationInProgress?: boolean;
     trackingProject?: { gid: string; name: string };
     trackingPortfolio?: { gid: string; name: string };
+    trackingOwner?: { gid: string; name: string };
     userMapping?: UserMappingEntry[];
     fieldMapping?: FieldMappingEntry[];
     lastReport?: MigrationReport;
@@ -489,6 +490,40 @@ app.post('/api/session/tracking-portfolio', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/session/tracking-owner', requireAuth, (req, res) => {
+  const { gid, name } = req.body as { gid: string | null; name: string | null };
+  req.session.trackingOwner = gid && name ? { gid, name } : undefined;
+  res.json({ ok: true });
+});
+
+// Look up a single Asana user by GID, email, or display name
+app.get('/api/destination/user', requireAuth, async (req, res) => {
+  if (!req.session.destConfig) return res.status(400).json({ error: 'Destination not connected' });
+  const { q } = req.query as { q?: string };
+  if (!q?.trim()) return res.status(400).json({ error: 'q is required' });
+  const query = q.trim();
+  try {
+    const { token, workspaceGid } = req.session.destConfig;
+    const dest = new AsanaDestination(token);
+    // Numeric GID — look up directly
+    if (/^\d+$/.test(query)) {
+      const user = await dest.getUserByGid(query);
+      return res.json(user);
+    }
+    // Email or name — search workspace users
+    const users = await dest.getUsers(workspaceGid);
+    const lower = query.toLowerCase();
+    const match =
+      users.find((u) => u.email?.toLowerCase() === lower) ??
+      users.find((u) => u.name.toLowerCase() === lower) ??
+      users.find((u) => u.name.toLowerCase().includes(lower));
+    if (!match) return res.status(404).json({ error: `No Asana user found matching "${query}".` });
+    res.json({ gid: match.gid, name: match.name });
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'destination/user' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Mapping persistence
 // ---------------------------------------------------------------------------
@@ -558,6 +593,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       fieldMapping: req.session.fieldMapping,
       trackingProjectGid: req.session.trackingProject?.gid,
       trackingPortfolioGid: req.session.trackingPortfolio?.gid,
+      projectOwnerGid: req.session.trackingOwner?.gid,
       sourcePlatform: platform,
       writerName: req.session.destConfig.patUserName,
       onProgress: (event) => send(event.type, event),

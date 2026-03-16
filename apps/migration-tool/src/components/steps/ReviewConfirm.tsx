@@ -46,6 +46,9 @@ export default function ReviewConfirm({ state, onConfirm, onBack }: Props) {
           {state.trackingPortfolioName && (
             <ReviewRow label="Portfolio" value={state.trackingPortfolioName} />
           )}
+          {state.trackingOwnerName && (
+            <ReviewRow label="Project owner" value={state.trackingOwnerName} />
+          )}
         </ReviewSection>
 
         <ReviewSection title="Mappings">

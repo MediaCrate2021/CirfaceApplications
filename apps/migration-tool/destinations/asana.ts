@@ -37,6 +37,8 @@ export interface WriteOptions {
   fieldMapping: FieldMappingEntry[];
   trackingProjectGid?: string;
   trackingPortfolioGid?: string;
+  /** If set, ownership of the migrated project is transferred to this Asana user GID after migration. */
+  projectOwnerGid?: string;
   sourcePlatform?: string;
   /** Name of the PAT account performing the migration — shown in the report. */
   writerName?: string;
@@ -124,6 +126,10 @@ export class AsanaDestination {
       'GET',
       `/workspaces/${encodeURIComponent(workspaceGid)}/users?opt_fields=name,email&limit=100`,
     );
+  }
+
+  async getUserByGid(userGid: string): Promise<{ gid: string; name: string }> {
+    return this.request('GET', `/users/${encodeURIComponent(userGid)}?opt_fields=name`);
   }
 
   async getOrgWideFields(workspaceGid: string): Promise<Array<{
@@ -378,6 +384,20 @@ export class AsanaDestination {
       }
     }
 
+    // Step 8: transfer project ownership to the specified user
+    if (options.projectOwnerGid && projectGid) {
+      try {
+        await this.request('PUT', `/projects/${encodeURIComponent(projectGid)}`, {
+          owner: options.projectOwnerGid,
+        });
+        log('Project ownership transferred to specified user.');
+        emit({ type: 'info', message: 'Project ownership transferred' });
+      } catch (err) {
+        log(`Failed to transfer project ownership: ${(err as Error).message}`, 'warning');
+        report.warnings++;
+      }
+    }
+
     emit({ type: 'info', message: 'Migration complete' });
     return report;
   }
@@ -492,7 +512,7 @@ export class AsanaDestination {
       for (const comment of task.comments) {
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName}]: ${comment.text}`,
+            text: `[${comment.authorName}]: ${this.htmlToText(comment.text)}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -560,7 +580,7 @@ export class AsanaDestination {
       for (const comment of subtask.comments) {
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName}]: ${comment.text}`,
+            text: `[${comment.authorName}]: ${this.htmlToText(comment.text)}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -727,6 +747,31 @@ export class AsanaDestination {
       unknown: 'text',
     };
     return map[type] ?? 'text';
+  }
+
+  /** Convert HTML from Monday/Trello update bodies to plain text suitable for Asana stories. */
+  private htmlToText(html: string): string {
+    let text = html;
+    // Anchor tags → "link text (href)"
+    text = text.replace(/<a\s[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href, inner) => {
+      const innerText = inner.replace(/<[^>]+>/g, '').trim();
+      return innerText ? `${innerText} (${href})` : href;
+    });
+    // Block/line elements → newline
+    text = text.replace(/<\/?(p|div|li|tr|blockquote|h[1-6])[^>]*>/gi, '\n');
+    text = text.replace(/<br\s*\/?>/gi, '\n');
+    // Strip remaining tags
+    text = text.replace(/<[^>]+>/g, '');
+    // Decode HTML entities
+    text = text
+      .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&nbsp;/gi, ' ')
+      .replace(/&#(\d+);/g, (_m, code) => String.fromCharCode(Number(code)));
+    // Normalise whitespace
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    text = text.replace(/[ \t]+/g, ' ');
+    text = text.replace(/\n{3,}/g, '\n\n');
+    return text.trim();
   }
 
   /** ISO timestamp formatted as "YYYY-MM-DD HH:MM:SS". */

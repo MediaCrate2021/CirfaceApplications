@@ -6,7 +6,9 @@ interface Props {
   currentName: string | null;
   currentPortfolioGid: string | null;
   currentPortfolioName: string | null;
-  onSet: (projectGid: string, projectName: string, portfolioGid: string | null, portfolioName: string | null) => void;
+  currentOwnerGid: string | null;
+  currentOwnerName: string | null;
+  onSet: (projectGid: string, projectName: string, portfolioGid: string | null, portfolioName: string | null, ownerGid: string | null, ownerName: string | null) => void;
   onBack: () => void;
 }
 
@@ -28,7 +30,8 @@ function parseGid(input: string): string | null {
 }
 
 export default function TrackingProject({
-  currentGid, currentName, currentPortfolioGid, currentPortfolioName, onSet, onBack,
+  currentGid, currentName, currentPortfolioGid, currentPortfolioName,
+  currentOwnerGid, currentOwnerName, onSet, onBack,
 }: Props) {
   const [projectInput, setProjectInput] = useState('');
   const [validatedProject, setValidatedProject] = useState<{ gid: string; name: string } | null>(
@@ -43,6 +46,13 @@ export default function TrackingProject({
   );
   const [portfolioChecking, setPortfolioChecking] = useState(false);
   const [portfolioError, setPortfolioError] = useState('');
+
+  const [ownerInput, setOwnerInput] = useState('');
+  const [validatedOwner, setValidatedOwner] = useState<{ gid: string; name: string } | null>(
+    currentOwnerGid && currentOwnerName ? { gid: currentOwnerGid, name: currentOwnerName } : null,
+  );
+  const [ownerChecking, setOwnerChecking] = useState(false);
+  const [ownerError, setOwnerError] = useState('');
 
   const [saving, setSaving] = useState(false);
 
@@ -98,6 +108,29 @@ export default function TrackingProject({
     }
   }
 
+  async function handleCheckOwner() {
+    setOwnerError('');
+    const query = ownerInput.trim();
+    if (!query) return;
+    setOwnerChecking(true);
+    try {
+      const res = await fetch(`/api/destination/user?q=${encodeURIComponent(query)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setOwnerError(body.error ?? `User not found (${res.status}).`);
+        setValidatedOwner(null);
+      } else {
+        const user = await res.json() as { gid: string; name: string };
+        setValidatedOwner(user);
+        setOwnerInput('');
+      }
+    } catch {
+      setOwnerError('Failed to reach the server. Please try again.');
+    } finally {
+      setOwnerChecking(false);
+    }
+  }
+
   async function handleContinue() {
     if (!validatedProject) return;
     setSaving(true);
@@ -116,11 +149,22 @@ export default function TrackingProject({
             : { gid: null, name: null },
         ),
       });
+      await fetch('/api/session/tracking-owner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          validatedOwner
+            ? { gid: validatedOwner.gid, name: validatedOwner.name }
+            : { gid: null, name: null },
+        ),
+      });
       onSet(
         validatedProject.gid,
         validatedProject.name,
         validatedPortfolio?.gid ?? null,
         validatedPortfolio?.name ?? null,
+        validatedOwner?.gid ?? null,
+        validatedOwner?.name ?? null,
       );
     } finally {
       setSaving(false);
@@ -131,8 +175,8 @@ export default function TrackingProject({
     <div className="step-panel">
       <h2 className="step-title">Migration Tracking</h2>
       <p className="step-desc">
-        Set up where migration reports are saved. The tracking project is required; the portfolio is optional
-        and will have each migrated project added to it automatically.
+        Set up where migration reports are saved. The tracking project is required; the portfolio and project
+        owner are optional.
       </p>
 
       {/* Tracking project */}
@@ -203,6 +247,45 @@ export default function TrackingProject({
               </button>
             </div>
             {portfolioError && <p className="error-text">{portfolioError}</p>}
+          </>
+        )}
+      </div>
+
+      {/* Project owner handoff (optional) */}
+      <div className="field-group">
+        <label>Project Owner <span className="muted-text">(optional)</span></label>
+        <p className="field-hint">
+          After migration, project ownership is transferred to this Asana user. Enter a name, email address,
+          or numeric user GID. Leave blank to keep the PAT service account as owner.
+        </p>
+
+        {validatedOwner ? (
+          <div className="validated-project">
+            <span className="validated-icon">✓</span>
+            <span className="validated-name">{validatedOwner.name}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setValidatedOwner(null)}>Change</button>
+          </div>
+        ) : (
+          <>
+            <div className="input-with-button">
+              <input
+                type="text"
+                value={ownerInput}
+                onChange={(e) => { setOwnerInput(e.target.value); setOwnerError(''); }}
+                onKeyDown={(e) => e.key === 'Enter' && !ownerChecking && ownerInput.trim() && handleCheckOwner()}
+                placeholder="jane@example.com  or  Jane Smith  or  1234567890"
+                disabled={ownerChecking}
+                autoComplete="off"
+              />
+              <button
+                className="btn btn-primary"
+                onClick={handleCheckOwner}
+                disabled={!ownerInput.trim() || ownerChecking}
+              >
+                {ownerChecking ? 'Looking up…' : 'Find'}
+              </button>
+            </div>
+            {ownerError && <p className="error-text">{ownerError}</p>}
           </>
         )}
       </div>

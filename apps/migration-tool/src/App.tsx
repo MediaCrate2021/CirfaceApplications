@@ -90,6 +90,8 @@ export interface AppState {
   trackingProjectName: string | null;
   trackingPortfolioGid: string | null;
   trackingPortfolioName: string | null;
+  trackingOwnerGid: string | null;
+  trackingOwnerName: string | null;
 
   // User mapping
   userMapping: UserMappingEntry[];
@@ -115,7 +117,7 @@ type Action =
   | { type: 'SET_STEP'; step: WizardStep }
   | { type: 'SOURCE_CONNECTED'; platform: SourcePlatform; workspaceName: string }
   | { type: 'DEST_CONNECTED'; workspaceGid: string; workspaceName: string }
-  | { type: 'SET_TRACKING'; gid: string; name: string; portfolioGid: string | null; portfolioName: string | null }
+  | { type: 'SET_TRACKING'; gid: string; name: string; portfolioGid: string | null; portfolioName: string | null; ownerGid: string | null; ownerName: string | null }
   | { type: 'SET_USER_MAPPING'; mapping: UserMappingEntry[] }
   | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; isNew: boolean }
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[] }
@@ -142,7 +144,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DEST_CONNECTED':
       return { ...state, destConnected: true, destWorkspaceGid: action.workspaceGid, destWorkspaceName: action.workspaceName };
     case 'SET_TRACKING':
-      return { ...state, trackingProjectGid: action.gid, trackingProjectName: action.name, trackingPortfolioGid: action.portfolioGid, trackingPortfolioName: action.portfolioName };
+      return { ...state, trackingProjectGid: action.gid, trackingProjectName: action.name, trackingPortfolioGid: action.portfolioGid, trackingPortfolioName: action.portfolioName, trackingOwnerGid: action.ownerGid, trackingOwnerName: action.ownerName };
     case 'SET_USER_MAPPING':
       return { ...state, userMapping: action.mapping };
     case 'SET_PROJECT_SELECTION':
@@ -194,6 +196,8 @@ const initialState: AppState = {
   trackingProjectName: null,
   trackingPortfolioGid: null,
   trackingPortfolioName: null,
+  trackingOwnerGid: null,
+  trackingOwnerName: null,
   userMapping: [],
   selectedSourceProjectId: null,
   selectedSourceProjectName: null,
@@ -279,8 +283,10 @@ export default function App() {
               currentName={state.trackingProjectName}
               currentPortfolioGid={state.trackingPortfolioGid}
               currentPortfolioName={state.trackingPortfolioName}
-              onSet={(gid, name, portfolioGid, portfolioName) => {
-                dispatch({ type: 'SET_TRACKING', gid, name, portfolioGid, portfolioName });
+              currentOwnerGid={state.trackingOwnerGid}
+              currentOwnerName={state.trackingOwnerName}
+              onSet={(gid, name, portfolioGid, portfolioName, ownerGid, ownerName) => {
+                dispatch({ type: 'SET_TRACKING', gid, name, portfolioGid, portfolioName, ownerGid, ownerName });
                 next('user-mapping');
               }}
               onBack={() => next('connect')}
