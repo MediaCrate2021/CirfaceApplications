@@ -14,6 +14,7 @@
 
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import express from 'express';
 import session from 'express-session';
 import helmet from 'helmet';
@@ -54,7 +55,7 @@ function makeSessionStore() {
   if (APP_ENV !== 'production') return undefined;
   const sessionsDir = path.join(process.cwd(), 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const require = createRequire(import.meta.url);
   const FileStore = require('session-file-store')(session);
   return new FileStore({ path: sessionsDir, ttl: 28800, retries: 5, factor: 1, minTimeout: 100 });
 }
