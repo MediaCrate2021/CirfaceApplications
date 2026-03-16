@@ -22,9 +22,15 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
 
+// APP_ENV drives environment-specific behaviour (logo, session store, CORS, cookies).
+// Railway overrides NODE_ENV=production for all deployments, so we use APP_ENV instead.
+// Set APP_ENV=staging on the staging service and APP_ENV=production on production.
+// Falls back to NODE_ENV, then 'development' for local dev.
+const APP_ENV = process.env.APP_ENV || process.env.NODE_ENV || 'development';
+
 // Only load file-based session store in production.
 // In development, concurrent API requests cause EPERM rename conflicts on Windows.
-const sessionStore = process.env.NODE_ENV === 'production'
+const sessionStore = APP_ENV === 'production'
   ? (() => {
       const sessionsDir = path.join(__dirname, 'sessions');
       fs.mkdirSync(sessionsDir, { recursive: true });
@@ -42,7 +48,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
+  origin: APP_ENV === 'production'
     ? process.env.ALLOWED_ORIGIN
     : `http://localhost:${PORT}`,
   credentials: true,
@@ -54,7 +60,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: APP_ENV === 'production',
     httpOnly: true,
     maxAge: 8 * 60 * 60 * 1000, // 8 hours
     sameSite: 'lax',
@@ -83,9 +89,8 @@ if (logger.isLevelEnabled('debug')) {
 
 // Serve environment-specific logo
 app.get('/logo', (_req, res) => {
-  const env = process.env.NODE_ENV || 'development';
   res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(__dirname, 'public', 'images', `logo-${env}.png`));
+  res.sendFile(path.join(__dirname, 'public', 'images', `logo-${APP_ENV}.png`));
 });
 
 // ---------------------------------------------------------------------------
@@ -475,5 +480,5 @@ app.post('/api/log/export', requireAuth, (req, res) => {
 app.set('trust proxy', 1);
 
 app.listen(PORT, '0.0.0.0', () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV || 'development', log_level: logger.level }, 'server started');
+  logger.info({ port: PORT, env: APP_ENV, log_level: logger.level }, 'server started');
 });
