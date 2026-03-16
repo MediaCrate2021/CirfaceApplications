@@ -53,7 +53,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 function makeSessionStore() {
   if (APP_ENV !== 'production') return undefined;
-  const sessionsDir = path.join(process.cwd(), 'sessions');
+  const sessionsDir = path.join(__dirname, 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
   const require = createRequire(import.meta.url);
   const FileStore = require('session-file-store')(session);
@@ -112,11 +112,11 @@ app.use(session({
 app.use(express.json());
 
 // Serve Vite build output in production; in dev Vite runs separately on 5173
-const distDir = path.join(process.cwd(), 'dist');
+const distDir = path.join(__dirname, 'dist');
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
 }
-app.use(express.static(path.join(process.cwd(), 'public')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Debug request logging (staging only)
 if (logger.isLevelEnabled('debug')) {
@@ -143,7 +143,7 @@ const LOGO_ENVS = new Set(['development', 'staging', 'production']);
 const logoFile = LOGO_ENVS.has(APP_ENV) ? APP_ENV : 'development';
 app.get('/logo', (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(process.cwd(), 'public', 'images', `logo-${logoFile}.png`));
+  res.sendFile(path.join(__dirname, 'public', 'images', `logo-${logoFile}.png`));
 });
 
 // ---------------------------------------------------------------------------
@@ -671,7 +671,7 @@ app.get('/dev-notes', async (_req, res) => {
 // ---------------------------------------------------------------------------
 
 app.get('*', (_req, res) => {
-  const index = path.join(process.cwd(), 'dist', 'index.html');
+  const index = path.join(__dirname, 'dist', 'index.html');
   if (fs.existsSync(index)) {
     res.sendFile(index);
   } else {
