@@ -128,6 +128,7 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
                     <select
                       value={entry.destId ?? ''}
                       onChange={(e) => updateMapping(entry.sourceId, e.target.value)}
+                      disabled={sameDomain}
                     >
                       <option value="">— Unmapped (no assignee) —</option>
                       {destUsers.map((d) => (

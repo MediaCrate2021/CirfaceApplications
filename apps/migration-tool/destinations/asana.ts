@@ -512,7 +512,7 @@ export class AsanaDestination {
       for (const comment of task.comments) {
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName}]: ${this.htmlToText(comment.text)}`,
+            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${this.htmlToText(comment.text)}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -580,7 +580,7 @@ export class AsanaDestination {
       for (const comment of subtask.comments) {
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName}]: ${this.htmlToText(comment.text)}`,
+            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${this.htmlToText(comment.text)}`,
           });
           report.migratedComments++;
         } catch (err) {

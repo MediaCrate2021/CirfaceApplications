@@ -47,6 +47,13 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
       });
   }, []);
 
+  // When source project changes or mode switches to 'new', default the new project name to the source name
+  useEffect(() => {
+    if (destMode !== 'new') return;
+    const src = sourceProjects.find((p) => p.id === selectedSource);
+    if (src) setNewProjectName(src.name);
+  }, [selectedSource, destMode, sourceProjects]);
+
   // Reload destination projects when team changes
   useEffect(() => {
     setLoadingProjects(true);
