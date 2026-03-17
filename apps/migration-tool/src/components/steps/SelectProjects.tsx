@@ -7,11 +7,13 @@ interface AsanaProject { gid: string; name: string; }
 
 interface Props {
   state: AppState;
-  onSelect: (sourceId: string, sourceName: string, destGid: string, destName: string, teamGid: string | null, isNew: boolean) => void;
+  onSelect: (sourceId: string, sourceName: string, destGid: string, destName: string, teamGid: string | null, teamName: string | null, isNew: boolean) => void;
   onBack: () => void;
 }
 
 export default function SelectProjects({ state, onSelect, onBack }: Props) {
+  const [sourceWorkspaces, setSourceWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedSourceWorkspace, setSelectedSourceWorkspace] = useState('');
   const [sourceProjects, setSourceProjects]   = useState<SourceProject[]>([]);
   const [teams, setTeams]                     = useState<AsanaTeam[]>([]);
   const [destProjects, setDestProjects]       = useState<AsanaProject[]>([]);
@@ -31,12 +33,12 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState('');
 
-  // Load source projects and teams on mount
+  // Load source workspaces and Asana teams on mount
   useEffect(() => {
-    fetch('/api/source/projects')
-      .then((r) => r.json() as Promise<SourceProject[]>)
-      .then((src) => { setSourceProjects([...src].sort((a, b) => a.name.localeCompare(b.name))); setLoadingSource(false); })
-      .catch(() => { setError('Failed to load source projects'); setLoadingSource(false); });
+    fetch('/api/source/workspaces')
+      .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
+      .then((ws) => setSourceWorkspaces(ws))
+      .catch(() => { /* workspaces are optional — fail silently */ });
 
     fetch('/api/destination/teams')
       .then((r) => r.json() as Promise<AsanaTeam[]>)
@@ -46,6 +48,19 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
         setLoadingTeams(false);
       });
   }, []);
+
+  // Reload source projects when workspace filter changes
+  useEffect(() => {
+    setLoadingSource(true);
+    setSelectedSource('');
+    const url = selectedSourceWorkspace
+      ? `/api/source/projects?workspaceId=${encodeURIComponent(selectedSourceWorkspace)}`
+      : '/api/source/projects';
+    fetch(url)
+      .then((r) => r.json() as Promise<SourceProject[]>)
+      .then((src) => { setSourceProjects([...src].sort((a, b) => a.name.localeCompare(b.name))); setLoadingSource(false); })
+      .catch(() => { setError('Failed to load source projects'); setLoadingSource(false); });
+  }, [selectedSourceWorkspace]);
 
   // When source project changes or mode switches to 'new', default the new project name to the source name
   useEffect(() => {
@@ -126,13 +141,14 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     if (!srcProject) return;
 
     const teamGid = selectedTeamGid || null;
+    const teamName = teams.find((t) => t.gid === selectedTeamGid)?.name ?? null;
 
     if (destMode === 'new') {
-      onSelect(srcProject.id, srcProject.name, '', newProjectName.trim(), teamGid, true);
+      onSelect(srcProject.id, srcProject.name, '', newProjectName.trim(), teamGid, teamName, true);
     } else {
       const destProject = destProjects.find((p) => p.gid === selectedDest);
       if (!destProject) return;
-      onSelect(srcProject.id, srcProject.name, destProject.gid, destProject.name, teamGid, false);
+      onSelect(srcProject.id, srcProject.name, destProject.gid, destProject.name, teamGid, teamName, false);
     }
   }
 
@@ -150,112 +166,154 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
       {error && <p className="error-text">{error}</p>}
 
       {!loading && !error && (
-        <>
-          {/* Source project */}
-          <div className="field-group">
-            <label htmlFor="source-project">
-              Source Project ({state.sourcePlatform === 'monday' ? 'Monday.com board' : 'Trello board'})
-            </label>
-            <select
-              id="source-project"
-              value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
-            >
-              <option value="">— Select a project —</option>
-              {sourceProjects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
+        <div className="connect-grid">
+          {/* Source card */}
+          <div className={`connect-card ${selectedSource ? 'connected' : ''}`}>
+            <div className="connect-card-header">
+              <h3>Source Project</h3>
+              {selectedSource && (
+                <span className="badge badge-success">
+                  {sourceProjects.find((p) => p.id === selectedSource)?.name}
+                </span>
+              )}
+            </div>
 
-          {/* Asana team filter */}
-          {teams.length > 0 && (
+            {sourceWorkspaces.length > 0 && (
+              <div className="field-group">
+                <label htmlFor="source-workspace">
+                  Monday Workspace <span className="field-hint-inline">(filters board list)</span>
+                </label>
+                <select
+                  id="source-workspace"
+                  value={selectedSourceWorkspace}
+                  onChange={(e) => setSelectedSourceWorkspace(e.target.value)}
+                >
+                  <option value="">— All workspaces —</option>
+                  {sourceWorkspaces.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="field-group">
-              <label htmlFor="dest-team">Asana Team <span className="field-hint-inline">(filters project list)</span></label>
+              <label htmlFor="source-project">
+                {state.sourcePlatform === 'monday' ? 'Monday.com board' : 'Trello board'}
+              </label>
               <select
-                id="dest-team"
-                value={selectedTeamGid}
-                onChange={(e) => setSelectedTeamGid(e.target.value)}
+                id="source-project"
+                value={selectedSource}
+                onChange={(e) => setSelectedSource(e.target.value)}
               >
-                <option value="">— All teams —</option>
-                {teams.map((t) => (
-                  <option key={t.gid} value={t.gid}>{t.name}</option>
+                <option value="">— Select a project —</option>
+                {sourceProjects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
             </div>
-          )}
-
-          {/* Destination mode */}
-          <div className="field-group">
-            <label>Destination</label>
-            <div className="radio-group">
-              <label className="radio-label">
-                <input type="radio" name="dest-mode" value="new"
-                  checked={destMode === 'new'} onChange={() => setDestMode('new')} />
-                Create new Asana project
-              </label>
-              <label className="radio-label">
-                <input type="radio" name="dest-mode" value="existing"
-                  checked={destMode === 'existing'} onChange={() => setDestMode('existing')} />
-                Migrate to existing project
-              </label>
-            </div>
           </div>
 
-          {destMode === 'new' && (
-            <div className="field-group">
-              <label htmlFor="new-project-name">New Project Name</label>
-              <input
-                id="new-project-name"
-                type="text"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="Enter project name"
-              />
-            </div>
-          )}
-
-          {destMode === 'existing' && (
-            <div className="field-group">
-              <label htmlFor="dest-project-search">
-                Destination Asana Project
-                <span className="label-warning"> — tasks will be added to this project</span>
-              </label>
-              <div className="typeahead-wrapper" ref={typeaheadRef}>
-                <input
-                  id="dest-project-search"
-                  type="text"
-                  value={projectQuery}
-                  onChange={(e) => handleProjectQueryChange(e.target.value)}
-                  onFocus={() => setShowSuggestions(true)}
-                  placeholder={loadingProjects ? 'Loading projects…' : 'Search by name or paste project GID…'}
-                  disabled={loadingProjects}
-                  autoComplete="off"
-                />
-                {showSuggestions && filteredProjects.length > 0 && (
-                  <ul className="typeahead-list">
-                    {filteredProjects.slice(0, 20).map((p) => (
-                      <li
-                        key={p.gid}
-                        className={`typeahead-item ${p.gid === selectedDest ? 'selected' : ''}`}
-                        onMouseDown={() => selectProject(p)}
-                      >
-                        <span className="typeahead-name">{p.name}</span>
-                        <span className="typeahead-gid">{p.gid}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {showSuggestions && projectQuery && filteredProjects.length === 0 && !loadingProjects && (
-                  <div className="typeahead-empty">No projects match</div>
-                )}
-              </div>
-              {selectedDest && (
-                <p className="warning-banner">Tasks will be added to an existing project. This cannot be undone.</p>
+          {/* Destination card */}
+          <div className={`connect-card ${(destMode === 'new' ? !!newProjectName.trim() : !!selectedDest) ? 'connected' : ''}`}>
+            <div className="connect-card-header">
+              <h3>Destination Asana</h3>
+              {destMode === 'new' && newProjectName.trim() && (
+                <span className="badge badge-success">New: {newProjectName.trim()}</span>
+              )}
+              {destMode === 'existing' && selectedDest && (
+                <span className="badge badge-success">{projectQuery}</span>
               )}
             </div>
-          )}
-        </>
+
+            {teams.length > 0 && (
+              <div className="field-group">
+                <label htmlFor="dest-team">
+                  Asana Team <span className="field-hint-inline">(filters project list)</span>
+                </label>
+                <select
+                  id="dest-team"
+                  value={selectedTeamGid}
+                  onChange={(e) => setSelectedTeamGid(e.target.value)}
+                >
+                  <option value="">— All teams —</option>
+                  {teams.map((t) => (
+                    <option key={t.gid} value={t.gid}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="field-group">
+              <label>Destination</label>
+              <div className="radio-group">
+                <label className="radio-label">
+                  <input type="radio" name="dest-mode" value="new"
+                    checked={destMode === 'new'} onChange={() => setDestMode('new')} />
+                  Create new Asana project
+                </label>
+                <label className="radio-label">
+                  <input type="radio" name="dest-mode" value="existing"
+                    checked={destMode === 'existing'} onChange={() => setDestMode('existing')} />
+                  Migrate to existing project
+                </label>
+              </div>
+            </div>
+
+            {destMode === 'new' && (
+              <div className="field-group">
+                <label htmlFor="new-project-name">New Project Name</label>
+                <input
+                  id="new-project-name"
+                  type="text"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Enter project name"
+                />
+              </div>
+            )}
+
+            {destMode === 'existing' && (
+              <div className="field-group">
+                <label htmlFor="dest-project-search">
+                  Asana Project
+                  <span className="label-warning"> — tasks will be added to this project</span>
+                </label>
+                <div className="typeahead-wrapper" ref={typeaheadRef}>
+                  <input
+                    id="dest-project-search"
+                    type="text"
+                    value={projectQuery}
+                    onChange={(e) => handleProjectQueryChange(e.target.value)}
+                    onFocus={() => setShowSuggestions(true)}
+                    placeholder={loadingProjects ? 'Loading projects…' : 'Search by name or paste project GID…'}
+                    disabled={loadingProjects}
+                    autoComplete="off"
+                  />
+                  {showSuggestions && filteredProjects.length > 0 && (
+                    <ul className="typeahead-list">
+                      {filteredProjects.slice(0, 20).map((p) => (
+                        <li
+                          key={p.gid}
+                          className={`typeahead-item ${p.gid === selectedDest ? 'selected' : ''}`}
+                          onMouseDown={() => selectProject(p)}
+                        >
+                          <span className="typeahead-name">{p.name}</span>
+                          <span className="typeahead-gid">{p.gid}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {showSuggestions && projectQuery && filteredProjects.length === 0 && !loadingProjects && (
+                    <div className="typeahead-empty">No projects match</div>
+                  )}
+                </div>
+                {selectedDest && (
+                  <p className="warning-banner">Tasks will be added to an existing project. This cannot be undone.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       <div className="step-actions">

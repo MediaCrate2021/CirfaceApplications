@@ -29,8 +29,11 @@ export interface SourceConnector {
   /** Return all users visible in the connected account. */
   getUsers(): Promise<NormalisedUser[]>;
 
-  /** Return a lightweight list of projects (id + name only). */
-  getProjects(): Promise<ProjectListItem[]>;
+  /** Return a lightweight list of workspace/team groupings, if the platform supports it. */
+  getWorkspaces?(): Promise<Array<{ id: string; name: string }>>;
+
+  /** Return a lightweight list of projects (id + name only), optionally filtered by workspace/team. */
+  getProjects(workspaceId?: string): Promise<ProjectListItem[]>;
 
   /**
    * Fetch only the custom field definitions for a project — no tasks, no users.

@@ -519,6 +519,8 @@ a:hover { text-decoration: underline; }
   padding: 1.25rem;
 }
 
+.review-section-full { grid-column: 1 / -1; }
+
 .review-section-title {
   font-size: 0.8rem;
   font-weight: 700;

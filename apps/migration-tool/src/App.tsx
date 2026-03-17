@@ -25,6 +25,7 @@ import Report from './components/steps/Report.tsx';
 import type {
   FieldMappingEntry,
   MigrationReport,
+  SectionMappingEntry,
   SourcePlatform,
   UserMappingEntry,
 } from './types/index.ts';
@@ -59,7 +60,7 @@ const STEP_LABELS: Record<WizardStep, string> = {
   'tracking': 'Tracking',
   'user-mapping': 'Users',
   'select-projects': 'Projects',
-  'field-mapping': 'Fields',
+  'field-mapping': 'Mapping',
   'review': 'Review',
   'running': 'Migrate',
   'report': 'Report',
@@ -102,10 +103,12 @@ export interface AppState {
   selectedDestProjectGid: string | null;
   selectedDestProjectName: string | null;
   selectedDestTeamGid: string | null;
+  selectedDestTeamName: string | null;
   isNewDestProject: boolean;
 
   // Field mapping
   fieldMapping: FieldMappingEntry[];
+  sectionMapping: SectionMappingEntry[];
 
   // Report
   lastReport: MigrationReport | null;
@@ -119,8 +122,8 @@ type Action =
   | { type: 'DEST_CONNECTED'; workspaceGid: string; workspaceName: string }
   | { type: 'SET_TRACKING'; gid: string; name: string; portfolioGid: string | null; portfolioName: string | null; ownerGid: string | null; ownerName: string | null }
   | { type: 'SET_USER_MAPPING'; mapping: UserMappingEntry[] }
-  | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; isNew: boolean }
-  | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[] }
+  | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean }
+  | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[] }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' };
 
@@ -155,10 +158,11 @@ function reducer(state: AppState, action: Action): AppState {
         selectedDestProjectGid: action.destGid,
         selectedDestProjectName: action.destName,
         selectedDestTeamGid: action.teamGid,
+        selectedDestTeamName: action.teamName,
         isNewDestProject: action.isNew,
       };
     case 'SET_FIELD_MAPPING':
-      return { ...state, fieldMapping: action.mapping };
+      return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RUN_ANOTHER':
@@ -171,8 +175,10 @@ function reducer(state: AppState, action: Action): AppState {
         selectedDestProjectGid: null,
         selectedDestProjectName: null,
         selectedDestTeamGid: null,
+        selectedDestTeamName: null,
         isNewDestProject: false,
         fieldMapping: [],
+        sectionMapping: [],
         lastReport: null,
       };
     default:
@@ -204,8 +210,10 @@ const initialState: AppState = {
   selectedDestProjectGid: null,
   selectedDestProjectName: null,
   selectedDestTeamGid: null,
+  selectedDestTeamName: null,
   isNewDestProject: false,
   fieldMapping: [],
+  sectionMapping: [],
   lastReport: null,
 };
 
@@ -305,8 +313,8 @@ export default function App() {
           {state.step === 'select-projects' && (
             <SelectProjects
               state={state}
-              onSelect={(sourceId, sourceName, destGid, destName, teamGid, isNew) => {
-                dispatch({ type: 'SET_PROJECT_SELECTION', sourceId, sourceName, destGid, destName, teamGid, isNew });
+              onSelect={(sourceId, sourceName, destGid, destName, teamGid, teamName, isNew) => {
+                dispatch({ type: 'SET_PROJECT_SELECTION', sourceId, sourceName, destGid, destName, teamGid, teamName, isNew });
                 next('field-mapping');
               }}
               onBack={() => next('user-mapping')}
@@ -315,8 +323,8 @@ export default function App() {
           {state.step === 'field-mapping' && (
             <FieldMapping
               state={state}
-              onSave={(mapping) => {
-                dispatch({ type: 'SET_FIELD_MAPPING', mapping });
+              onSave={(mapping, sectionMapping) => {
+                dispatch({ type: 'SET_FIELD_MAPPING', mapping, sectionMapping });
                 next('review');
               }}
               onBack={() => next('select-projects')}
@@ -338,7 +346,10 @@ export default function App() {
           {state.step === 'report' && (
             <Report
               report={state.lastReport!}
-              onRunAnother={() => dispatch({ type: 'RUN_ANOTHER' })}
+              onRunAnother={() => {
+                fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
+                dispatch({ type: 'RUN_ANOTHER' });
+              }}
             />
           )}
         </main>
