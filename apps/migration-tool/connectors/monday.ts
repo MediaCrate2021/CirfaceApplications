@@ -95,18 +95,30 @@ export class MondayConnector implements SourceConnector {
     }));
   }
 
-  async getProjects(): Promise<ProjectListItem[]> {
-    // Monday "boards" are the equivalent of projects
+  async getWorkspaces(): Promise<Array<{ id: string; name: string }>> {
     const data = await this.gql<{
-      boards: Array<{ id: string; name: string }>;
+      workspaces: Array<{ id: string; name: string }>;
     }>(`
       query {
-        boards(limit: 200, board_kind: public) {
+        workspaces(limit: 100) {
           id
           name
         }
       }
     `);
+    return data.workspaces;
+  }
+
+  async getProjects(workspaceId?: string): Promise<ProjectListItem[]> {
+    // Monday "boards" are the equivalent of projects
+    const data = await this.gql<{
+      boards: Array<{ id: string; name: string }>;
+    }>(
+      workspaceId
+        ? `query($wsId: [ID!]) { boards(limit: 200, board_kind: public, workspace_ids: $wsId) { id name } }`
+        : `query { boards(limit: 200, board_kind: public) { id name } }`,
+      workspaceId ? { wsId: [workspaceId] } : undefined,
+    );
 
     return data.boards.map((b) => ({ id: b.id, name: b.name }));
   }

@@ -10,10 +10,6 @@ interface Props {
   onBack: () => void;
 }
 
-function localPart(email: string) {
-  return email.split('@')[0].toLowerCase();
-}
-
 export default function UserMapping({ state, onSave, onBack }: Props) {
   const [sourceUsers, setSourceUsers] = useState<NormalisedUser[]>([]);
   const [destUsers, setDestUsers]     = useState<AsanaUser[]>([]);
@@ -30,7 +26,7 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
       .then(([src, dest]) => {
         setSourceUsers(src);
         setDestUsers(dest);
-        setMapping(autoMap(src, dest, false));
+        setMapping(autoMap(src, dest));
         setLoading(false);
       })
       .catch(() => { setError('Failed to load users'); setLoading(false); });
@@ -39,22 +35,15 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
   // Re-run auto-map when same-domain toggle changes
   useEffect(() => {
     if (!sourceUsers.length || !destUsers.length) return;
-    setMapping(autoMap(sourceUsers, destUsers, sameDomain));
+    setMapping(autoMap(sourceUsers, destUsers));
   }, [sameDomain]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function autoMap(src: NormalisedUser[], dest: AsanaUser[], samedom: boolean): UserMappingEntry[] {
+  // Always auto-match by full email. In both modes, the mapping is seeded the same way —
+  // the only difference is that same-domain locks the dropdowns (trusting the auto-match),
+  // while different/mixed domains keeps dropdowns open for manual override.
+  function autoMap(src: NormalisedUser[], dest: AsanaUser[]): UserMappingEntry[] {
     return src.map((u) => {
-      let match: AsanaUser | undefined;
-
-      if (samedom) {
-        // Same domain: match on the local part of the email only
-        match = dest.find((d) => localPart(d.email) === localPart(u.email));
-      } else {
-        // Different domains: require exact full email, fall back to name
-        match = dest.find((d) => d.email.toLowerCase() === u.email.toLowerCase())
-          ?? dest.find((d) => d.name.toLowerCase() === u.name.toLowerCase());
-      }
-
+      const match = dest.find((d) => d.email.toLowerCase() === u.email.toLowerCase());
       return {
         sourceId:    u.id,
         sourceName:  u.name,
@@ -91,9 +80,9 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
     <div className="step-panel">
       <h2 className="step-title">User Mapping</h2>
       <p className="step-desc">
-        Map source platform users to Asana users. Users are auto-matched by email.
-        {unmappedCount > 0 && (
-          <> <strong className="warning-text">{unmappedCount} user{unmappedCount !== 1 ? 's' : ''} unmapped</strong> — tasks assigned to them will have no assignee in Asana.</>
+        Users are auto-matched by email. This mapping is used to assign tasks and memberships in Asana.
+        {!sameDomain && unmappedCount > 0 && (
+          <> <strong className="warning-text">{unmappedCount} user{unmappedCount !== 1 ? 's' : ''} could not be auto-matched</strong> — use the dropdowns below to map them manually, or leave unmapped to skip assignee on those tasks.</>
         )}
       </p>
 
@@ -103,7 +92,7 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
           checked={sameDomain}
           onChange={(e) => setSameDomain(e.target.checked)}
         />
-        Users are on the same domain — match by email username only (ignore domain suffix)
+        All users have the same email address in both systems — trust auto-match, no manual override needed
       </label>
 
       {loading && <p className="loading-text">Loading users…</p>}
@@ -120,23 +109,34 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
               </tr>
             </thead>
             <tbody>
-              {mapping.map((entry) => (
+              {mapping.map((entry) => {
+                const isAutoMatched = !!entry.destId && destUsers.find((d) => d.gid === entry.destId)?.email.toLowerCase() === entry.sourceEmail.toLowerCase();
+                return (
                 <tr key={entry.sourceId} className={!entry.destId ? 'row-warning' : ''}>
                   <td>{entry.sourceName}</td>
                   <td className="email-cell">{entry.sourceEmail}</td>
                   <td>
-                    <select
-                      value={entry.destId ?? ''}
-                      onChange={(e) => updateMapping(entry.sourceId, e.target.value)}
-                    >
-                      <option value="">— Unmapped (no assignee) —</option>
-                      {destUsers.map((d) => (
-                        <option key={d.gid} value={d.gid}>{d.name} ({d.email})</option>
-                      ))}
-                    </select>
+                    {sameDomain ? (
+                      // Same domain — show auto-matched name, no override
+                      <span>{entry.destName ?? <em className="muted-text">No match</em>}</span>
+                    ) : (
+                      <select
+                        value={entry.destId ?? ''}
+                        onChange={(e) => updateMapping(entry.sourceId, e.target.value)}
+                      >
+                        <option value="">— Unmapped (no assignee) —</option>
+                        {destUsers.map((d) => (
+                          <option key={d.gid} value={d.gid}>{d.name} ({d.email})</option>
+                        ))}
+                      </select>
+                    )}
+                    {!sameDomain && isAutoMatched && (
+                      <span className="field-hint-inline"> auto-matched</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

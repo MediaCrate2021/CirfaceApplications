@@ -52,18 +52,11 @@ endpoint returns an error. The connector catches this and returns `[]` — no er
 
 ### Destination uses a PAT, not the OAuth user's token
 
-**Why:** The person authenticating with the app via Asana OAuth is the person *operating* the
-migrator — typically a consultant or project manager. They may not be a member of the destination
-Asana workspace at all. The destination write operations (creating tasks, custom fields, uploading
-report attachments, adding projects to portfolios) require a token with write access to that
-workspace, so a separate Personal Access Token is entered at Step 1 under "Destination Asana".
+**Why:** The person authenticating with the app via Asana OAuth is the person *operating* the migrator — typically a consultant or project manager. They may not be a member of the destination Asana workspace at all. The destination write operations (creating tasks, custom fields, uploading report attachments, adding projects to portfolios) require a token with write access to that workspace, so a separate Personal Access Token is entered at Step 1 under "Destination Asana".
 
-The PAT belongs to a service account (e.g. "Cirface Migration Bot") that is a member of every
-workspace we migrate into. All tasks and comments created in Asana are attributed to that account,
-making it clear the content was created by the migration tool and not by the user.
+The PAT or Service Accounts belongs to a member of the workspace (e.g. "Cirface Migration Bot") that is a member of every workspace we migrate into. All tasks and comments created in Asana are attributed to that account, making it clear the content was created by the migration tool and not by the user.
 
-The PAT owner's name is fetched from `GET /users/me` at connect time and stored in the session
-(`destConfig.patUserName`). It is included in the migration report task notes as
+The PAT owner's name is fetched from `GET /users/me` at connect time and stored in the session (`destConfig.patUserName`). It is included in the migration report task notes as
 `Performed by: [name] (Cirface Migration Tool)`.
 
 ### Attachments are linked, not downloaded

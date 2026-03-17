@@ -22,6 +22,7 @@ import type {
   NormalisedAttachment,
   NormalisedProject,
   NormalisedTask,
+  SectionMappingEntry,
   UserMappingEntry,
 } from '../src/types/index.js';
 import logger from '../logger.js';
@@ -35,8 +36,12 @@ export interface WriteOptions {
   destWorkspaceGid: string;
   userMapping: UserMappingEntry[];
   fieldMapping: FieldMappingEntry[];
+  /** Section mapping from source groups to Asana sections. */
+  sectionMapping?: SectionMappingEntry[];
   trackingProjectGid?: string;
   trackingPortfolioGid?: string;
+  /** OAuth token to use for tracking project writes when the PAT cannot access it. */
+  trackingToken?: string;
   /** If set, ownership of the migrated project is transferred to this Asana user GID after migration. */
   projectOwnerGid?: string;
   sourcePlatform?: string;
@@ -64,11 +69,12 @@ export class AsanaDestination {
     method: string,
     path: string,
     body?: unknown,
+    tokenOverride?: string,
   ): Promise<T> {
     const res = await fetch(`${ASANA_BASE}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${tokenOverride ?? this.token}`,
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify({ data: body }) : undefined,
@@ -179,6 +185,13 @@ export class AsanaDestination {
     return settings.map((s) => s.custom_field);
   }
 
+  async getSections(projectGid: string): Promise<Array<{ gid: string; name: string }>> {
+    return this.request(
+      'GET',
+      `/projects/${encodeURIComponent(projectGid)}/sections?opt_fields=name&limit=100`,
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Main migration entry point
   // ---------------------------------------------------------------------------
@@ -193,6 +206,7 @@ export class AsanaDestination {
       completedAt: '',
       sourceProject: project.name,
       destProject: '',
+      destProjectName: '',
       totalTasks: project.tasks.length,
       migratedTasks: 0,
       migratedSubtasks: 0,
@@ -235,6 +249,8 @@ export class AsanaDestination {
       log(`Migrating to existing Asana project (GID: ${projectGid}).`);
     }
     report.destProject = projectGid;
+    report.destProjectName = options.destProjectName ?? options.destProjectGid;
+
 
     // Step 2: user mapping stats
     const mappedUsers = options.userMapping.filter((u) => u.destId).length;
@@ -273,18 +289,29 @@ export class AsanaDestination {
       report.warnings++;
     }
 
-    // Step 5: create Asana sections to mirror source groups/lists
+    // Step 5: create or map Asana sections to mirror source groups/lists
     const sectionGidMap = new Map<string, string>(); // sourceSectionId → asanaSectionGid
-    if (project.sections.length > 0) {
-      log(`Creating ${project.sections.length} section(s).`);
-      for (const section of project.sections) {
+    const secMap = new Map<string, SectionMappingEntry>();
+    for (const entry of (options.sectionMapping ?? [])) {
+      secMap.set(entry.sourceId, entry);
+    }
+
+    for (const section of project.sections) {
+      const entry = secMap.get(section.id);
+      if (entry?.omit) continue; // explicitly omitted — tasks in this section get no section
+      if (entry?.destId) {
+        // Map to existing Asana section
+        sectionGidMap.set(section.id, entry.destId);
+      } else {
+        // Create new section (use mapped name if provided, otherwise source name)
+        const sectionName = entry?.destName ?? section.name;
         try {
           const created = await this.request<{ gid: string }>('POST', `/projects/${encodeURIComponent(projectGid)}/sections`, {
-            name: section.name,
+            name: sectionName,
           });
           sectionGidMap.set(section.id, created.gid);
         } catch (err) {
-          log(`Failed to create section '${section.name}': ${(err as Error).message}`, 'warning');
+          log(`Failed to create section '${sectionName}': ${(err as Error).message}`, 'warning');
           report.warnings++;
         }
       }
@@ -354,16 +381,17 @@ export class AsanaDestination {
     // Step 6: save report to tracking project
     if (options.trackingProjectGid) {
       try {
+        const tt = options.trackingToken; // undefined = use PAT
         const taskName = `Migration log: ${project.name} → ${options.destProjectName ?? projectGid} (${new Date().toLocaleDateString()})`;
         const reportTask = await this.request<{ gid: string }>('POST', '/tasks', {
           projects: [options.trackingProjectGid],
           name: taskName,
           notes: this.formatReportSummary(report, options.writerName),
-        });
+        }, tt);
         report.trackingTaskGid = reportTask.gid;
 
         const filename = `migration-report-${new Date().toISOString().slice(0, 10)}.txt`;
-        await this.uploadTextAttachment(reportTask.gid, filename, this.formatReportLog(report));
+        await this.uploadTextAttachment(reportTask.gid, filename, this.formatReportLog(report), tt);
 
         emit({ type: 'info', message: 'Report saved to tracking project' });
       } catch (err) {
@@ -443,6 +471,11 @@ export class AsanaDestination {
           // Date custom fields require { date: "YYYY-MM-DD" }, not a plain string
           const dateStr = Array.isArray(value) ? value[0] : value;
           if (dateStr) customFields[destGid] = { date: String(dateStr).substring(0, 10) };
+        } else if (fieldTypeMap.get(sourceFieldId) === 'people') {
+          // People custom fields require Asana GIDs — map source user IDs through userGidMap
+          const ids = Array.isArray(value) ? value : [value];
+          const gids = ids.map((id) => userGidMap.get(String(id))).filter((g): g is string => g != null);
+          if (gids.length) customFields[destGid] = gids;
         } else {
           customFields[destGid] = value;
         }
@@ -482,10 +515,10 @@ export class AsanaDestination {
       if (nativeAssigneeSourceId) {
         const ids = task.customFields[nativeAssigneeSourceId];
         const firstId = Array.isArray(ids) ? ids[0] : (ids ?? undefined);
-        const gid = firstId ? userGidMap.get(firstId) : undefined;
+        const gid = firstId != null ? userGidMap.get(String(firstId)) : undefined;
         if (gid) payload.assignee = gid;
       } else if (task.assigneeId) {
-        const asanaGid = userGidMap.get(task.assigneeId);
+        const asanaGid = userGidMap.get(String(task.assigneeId));
         if (asanaGid) payload.assignee = asanaGid;
       }
 
@@ -512,7 +545,7 @@ export class AsanaDestination {
       for (const comment of task.comments) {
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName}]: ${this.htmlToText(comment.text)}`,
+            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${this.htmlToText(comment.text)}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -580,7 +613,7 @@ export class AsanaDestination {
       for (const comment of subtask.comments) {
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName}]: ${this.htmlToText(comment.text)}`,
+            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${this.htmlToText(comment.text)}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -653,12 +686,12 @@ export class AsanaDestination {
             for (const opt of setting.custom_field.enum_options) {
               optMap.set(opt.name, opt.gid);
             }
-            // Checkbox source values: "v" / "1" / "true" → "Yes", everything else → "No"
+            // Checkbox source values: "v" / "1" / "true" → "True", everything else → "False"
             if (entry.sourceFieldType === 'checkbox') {
-              const yesGid = optMap.get('Yes');
-              const noGid = optMap.get('No');
-              if (yesGid) { optMap.set('v', yesGid); optMap.set('1', yesGid); optMap.set('true', yesGid); }
-              if (noGid)  { optMap.set('0', noGid);  optMap.set('false', noGid); }
+              const trueGid  = optMap.get('True');
+              const falseGid = optMap.get('False');
+              if (trueGid)  { optMap.set('v', trueGid);  optMap.set('1', trueGid);  optMap.set('true', trueGid); }
+              if (falseGid) { optMap.set('0', falseGid); optMap.set('false', falseGid); }
             }
             enumOptionMap.set(entry.sourceFieldId, optMap);
           }
@@ -669,25 +702,13 @@ export class AsanaDestination {
           logger.warn({ err, field: entry.sourceFieldName }, 'failed to create custom field');
         }
       } else {
-        // Map to existing field — attach to project if not already attached
+        // Field is mapped to an existing Asana field — it is already on the project
+        // (the user selected it from the project's own field list). Use it directly;
+        // no addCustomFieldSetting call needed and no new field should be created.
         log(`Field '${entry.sourceFieldName}' mapped to existing Asana field '${entry.destFieldName}'.`);
         const existingType = entry.destFieldType ?? this.mapToAsanaFieldType(entry.sourceFieldType);
         fieldTypeMap.set(entry.sourceFieldId, existingType);
-        try {
-          await this.request('POST', `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting`, {
-            custom_field: entry.destFieldId,
-          });
-          fieldGidMap.set(entry.sourceFieldId, entry.destFieldId);
-        } catch (err: unknown) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== '400') {
-            log(`Failed to attach field '${entry.sourceFieldName}': ${(err as Error).message}`, 'warning');
-            logger.warn({ err, fieldGid: entry.destFieldId }, 'failed to attach custom field');
-          } else {
-            // 400 = field already on project — that's fine
-            fieldGidMap.set(entry.sourceFieldId, entry.destFieldId);
-          }
-        }
+        fieldGidMap.set(entry.sourceFieldId, entry.destFieldId!);
 
         // Build enum option map from the pre-built enumMapping (field mapping step)
         if (entry.enumMapping?.length) {
@@ -719,7 +740,7 @@ export class AsanaDestination {
       case 'multi_enum': {
         let options: Array<{ name: string }>;
         if (entry.sourceFieldType === 'checkbox') {
-          options = [{ name: 'Yes' }, { name: 'No' }];
+          options = [{ name: 'True' }, { name: 'False' }];
         } else if (entry.sourceOptions?.length) {
           options = entry.sourceOptions.map((opt) => ({ name: String(opt.name) }));
         } else {
@@ -852,7 +873,7 @@ export class AsanaDestination {
   }
 
   /** Upload a plain-text string as a file attachment on a task. */
-  private async uploadTextAttachment(taskGid: string, filename: string, content: string): Promise<void> {
+  private async uploadTextAttachment(taskGid: string, filename: string, content: string, tokenOverride?: string): Promise<void> {
     const formData = new FormData();
     formData.append('parent', taskGid);
     formData.append('file', new Blob([content], { type: 'text/plain' }), filename);
@@ -861,7 +882,7 @@ export class AsanaDestination {
       method: 'POST',
       headers: {
         // Do NOT set Content-Type — fetch sets it automatically with the multipart boundary
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${tokenOverride ?? this.token}`,
       },
       body: formData,
     });

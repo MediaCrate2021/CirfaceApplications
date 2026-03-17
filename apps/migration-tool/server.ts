@@ -36,6 +36,8 @@ import type { SourceConnector } from './connectors/base.js';
 import type {
   FieldMappingEntry,
   MigrationReport,
+  NormalisedProject,
+  SectionMappingEntry,
   SourcePlatform,
   UserMappingEntry,
 } from './src/types/index.js';
@@ -53,7 +55,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 function makeSessionStore() {
   if (APP_ENV !== 'production') return undefined;
-  const sessionsDir = path.join(process.cwd(), 'sessions');
+  const sessionsDir = path.join(__dirname, 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
   const require = createRequire(import.meta.url);
   const FileStore = require('session-file-store')(session);
@@ -75,11 +77,13 @@ declare module 'express-session' {
     sourceConfig?: { platform: SourcePlatform; token: string };
     destConfig?: { token: string; workspaceGid: string; workspaceName: string; patUserName: string };
     migrationInProgress?: boolean;
-    trackingProject?: { gid: string; name: string };
+    trackingProject?: { gid: string; name: string; tokenSource: 'pat' | 'oauth' };
     trackingPortfolio?: { gid: string; name: string };
     trackingOwner?: { gid: string; name: string };
     userMapping?: UserMappingEntry[];
     fieldMapping?: FieldMappingEntry[];
+    sectionMapping?: SectionMappingEntry[];
+    cachedProject?: { id: string; data: NormalisedProject };
     lastReport?: MigrationReport;
   }
 }
@@ -112,11 +116,11 @@ app.use(session({
 app.use(express.json());
 
 // Serve Vite build output in production; in dev Vite runs separately on 5173
-const distDir = path.join(process.cwd(), 'dist');
+const distDir = path.join(__dirname, 'dist');
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir));
 }
-app.use(express.static(path.join(process.cwd(), 'public')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Debug request logging (staging only)
 if (logger.isLevelEnabled('debug')) {
@@ -143,7 +147,7 @@ const LOGO_ENVS = new Set(['development', 'staging', 'production']);
 const logoFile = LOGO_ENVS.has(APP_ENV) ? APP_ENV : 'development';
 app.get('/logo', (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(process.cwd(), 'public', 'images', `logo-${logoFile}.png`));
+  res.sendFile(path.join(__dirname, 'public', 'images', `logo-${logoFile}.png`));
 });
 
 // ---------------------------------------------------------------------------
@@ -330,12 +334,26 @@ app.get('/api/source/users', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/source/projects', requireAuth, async (req, res) => {
+app.get('/api/source/workspaces', requireAuth, async (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   try {
     const { platform, token } = req.session.sourceConfig;
     const connector = makeConnector(platform, token);
-    const projects = await connector.getProjects();
+    if (!connector.getWorkspaces) return res.json([]);
+    const workspaces = await connector.getWorkspaces();
+    res.json(workspaces);
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'source/workspaces' });
+  }
+});
+
+app.get('/api/source/projects', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  try {
+    const { platform, token } = req.session.sourceConfig;
+    const { workspaceId } = req.query as { workspaceId?: string };
+    const connector = makeConnector(platform, token);
+    const projects = await connector.getProjects(workspaceId);
     res.json(projects);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/projects' });
@@ -354,6 +372,51 @@ app.get('/api/source/project-fields', requireAuth, async (req, res) => {
     res.json(fields);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/project-fields' });
+  }
+});
+
+// Returns the section list for a specific source project (used by ProjectMapping step)
+app.get('/api/source/project-sections', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  const { projectId } = req.query as { projectId?: string };
+  if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+  try {
+    const { platform, token } = req.session.sourceConfig;
+    const connector = makeConnector(platform, token);
+    // Re-use cached project data if available to avoid a redundant full fetch
+    const project = req.session.cachedProject?.id === projectId
+      ? req.session.cachedProject.data
+      : await connector.getProjectData(projectId);
+    res.json(project.sections);
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'source/project-sections' });
+  }
+});
+
+// Returns task/subtask/comment/attachment counts for the review page
+app.get('/api/source/project-summary', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  const { projectId } = req.query as { projectId?: string };
+  if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+  try {
+    let project: NormalisedProject;
+    if (req.session.cachedProject?.id === projectId) {
+      project = req.session.cachedProject.data;
+    } else {
+      const { platform, token } = req.session.sourceConfig;
+      const connector = makeConnector(platform, token);
+      project = await connector.getProjectData(projectId);
+      req.session.cachedProject = { id: projectId, data: project };
+    }
+    const tasks = project.tasks.length;
+    const subtasks = project.tasks.reduce((n, t) => n + t.subtasks.length, 0);
+    const comments = project.tasks.reduce((n, t) =>
+      n + t.comments.length + t.subtasks.reduce((sn, s) => sn + s.comments.length, 0), 0);
+    const attachments = project.tasks.reduce((n, t) =>
+      n + t.attachments.length + t.subtasks.reduce((sn, s) => sn + s.attachments.length, 0), 0);
+    res.json({ tasks, subtasks, comments, attachments });
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'source/project-summary' });
   }
 });
 
@@ -433,14 +496,23 @@ app.get('/api/destination/fields', requireAuth, async (req, res) => {
 });
 
 // Validate and look up a single project by GID (used by tracking project step and anywhere a URL is pasted)
+// Tries PAT first; if that fails and an OAuth token is available, falls back to OAuth.
 app.get('/api/destination/project', requireAuth, async (req, res) => {
   if (!req.session.destConfig) return res.status(400).json({ error: 'Destination not connected' });
   const { gid } = req.query as { gid?: string };
   if (!gid) return res.status(400).json({ error: 'gid is required' });
   try {
     const dest = new AsanaDestination(req.session.destConfig.token);
-    const project = await dest.getProjectByGid(gid);
-    res.json(project);
+    try {
+      const project = await dest.getProjectByGid(gid);
+      return res.json({ ...project, tokenSource: 'pat' });
+    } catch (patErr) {
+      // PAT failed — try OAuth token if available
+      if (!req.session.accessToken) throw patErr;
+      const oauthDest = new AsanaDestination(req.session.accessToken);
+      const project = await oauthDest.getProjectByGid(gid);
+      return res.json({ ...project, tokenSource: 'oauth' });
+    }
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'destination/project' });
   }
@@ -457,6 +529,20 @@ app.get('/api/destination/project-fields', requireAuth, async (req, res) => {
     res.json(fields);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'destination/project-fields' });
+  }
+});
+
+// Returns sections for a specific destination Asana project
+app.get('/api/destination/sections', requireAuth, async (req, res) => {
+  if (!req.session.destConfig) return res.status(400).json({ error: 'Destination not connected' });
+  const { projectGid } = req.query as { projectGid?: string };
+  if (!projectGid) return res.status(400).json({ error: 'projectGid is required' });
+  try {
+    const dest = new AsanaDestination(req.session.destConfig.token);
+    const sections = await dest.getSections(projectGid);
+    res.json(sections);
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'destination/sections' });
   }
 });
 
@@ -479,9 +565,9 @@ app.get('/api/destination/portfolio', requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.post('/api/session/tracking-project', requireAuth, (req, res) => {
-  const { gid, name } = req.body as { gid: string; name: string };
+  const { gid, name, tokenSource } = req.body as { gid: string; name: string; tokenSource: 'pat' | 'oauth' };
   if (!gid || !name) return res.status(400).json({ error: 'gid and name are required' });
-  req.session.trackingProject = { gid, name };
+  req.session.trackingProject = { gid, name, tokenSource: tokenSource ?? 'pat' };
   res.json({ ok: true });
 });
 
@@ -494,6 +580,13 @@ app.post('/api/session/tracking-portfolio', requireAuth, (req, res) => {
 app.post('/api/session/tracking-owner', requireAuth, (req, res) => {
   const { gid, name } = req.body as { gid: string | null; name: string | null };
   req.session.trackingOwner = gid && name ? { gid, name } : undefined;
+  res.json({ ok: true });
+});
+
+app.post('/api/session/reset-project', requireAuth, (req, res) => {
+  req.session.cachedProject = undefined;
+  req.session.fieldMapping = undefined;
+  req.session.sectionMapping = undefined;
   res.json({ ok: true });
 });
 
@@ -537,9 +630,10 @@ app.post('/api/session/user-mapping', requireAuth, (req, res) => {
 });
 
 app.post('/api/session/field-mapping', requireAuth, (req, res) => {
-  const { mapping } = req.body as { mapping: FieldMappingEntry[] };
+  const { mapping, sectionMapping } = req.body as { mapping: FieldMappingEntry[]; sectionMapping?: SectionMappingEntry[] };
   if (!Array.isArray(mapping)) return res.status(400).json({ error: 'mapping must be an array' });
   req.session.fieldMapping = mapping;
+  if (Array.isArray(sectionMapping)) req.session.sectionMapping = sectionMapping;
   res.json({ ok: true });
 });
 
@@ -578,11 +672,17 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     const { platform, token: sourceToken } = req.session.sourceConfig;
     const { token: destToken, workspaceGid } = req.session.destConfig;
 
-    send('info', { message: `Fetching source project from ${platform}...` });
-    const connector = makeConnector(platform, sourceToken);
-    const project = await connector.getProjectData(sourceProjectId);
-
-    send('info', { message: `Loaded ${project.tasks.length} tasks` });
+    let project: NormalisedProject;
+    if (req.session.cachedProject?.id === sourceProjectId) {
+      project = req.session.cachedProject.data;
+      send('info', { message: `Loaded ${project.tasks.length} tasks from cache` });
+    } else {
+      send('info', { message: `Fetching source project from ${platform}...` });
+      const connector = makeConnector(platform, sourceToken);
+      project = await connector.getProjectData(sourceProjectId);
+      send('info', { message: `Loaded ${project.tasks.length} tasks` });
+    }
+    req.session.cachedProject = undefined; // clear after use
 
     const dest = new AsanaDestination(destToken);
     const report = await dest.migrate(project, {
@@ -592,7 +692,9 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       destWorkspaceGid: workspaceGid,
       userMapping: req.session.userMapping,
       fieldMapping: req.session.fieldMapping,
+      sectionMapping: req.session.sectionMapping,
       trackingProjectGid: req.session.trackingProject?.gid,
+      trackingToken: req.session.trackingProject?.tokenSource === 'oauth' ? req.session.accessToken : undefined,
       trackingPortfolioGid: req.session.trackingPortfolio?.gid,
       projectOwnerGid: req.session.trackingOwner?.gid,
       sourcePlatform: platform,
@@ -671,7 +773,7 @@ app.get('/dev-notes', async (_req, res) => {
 // ---------------------------------------------------------------------------
 
 app.get('*', (_req, res) => {
-  const index = path.join(process.cwd(), 'dist', 'index.html');
+  const index = path.join(__dirname, 'dist', 'index.html');
   if (fs.existsSync(index)) {
     res.sendFile(index);
   } else {

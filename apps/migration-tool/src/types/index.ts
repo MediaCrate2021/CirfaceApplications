@@ -154,6 +154,16 @@ export interface FieldMappingEntry {
   destNativeField?: 'due_on' | 'notes' | 'assignee' | 'followers';
 }
 
+export interface SectionMappingEntry {
+  sourceId: string;
+  sourceName: string;
+  /** GID of an existing Asana section (existing-project mode). Null = create new. */
+  destId: string | null;
+  /** Name to use when creating a new section, or the matched existing section name. */
+  destName: string | null;
+  omit: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Migration report
 // ---------------------------------------------------------------------------
@@ -169,7 +179,8 @@ export interface MigrationReport {
   startedAt: string;
   completedAt: string;
   sourceProject: string;
-  destProject: string;
+  destProject: string;       // GID
+  destProjectName: string;   // display name
   totalTasks: number;
   migratedTasks: number;
   migratedSubtasks: number;

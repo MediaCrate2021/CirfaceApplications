@@ -34,8 +34,8 @@ export default function TrackingProject({
   currentOwnerGid, currentOwnerName, onSet, onBack,
 }: Props) {
   const [projectInput, setProjectInput] = useState('');
-  const [validatedProject, setValidatedProject] = useState<{ gid: string; name: string } | null>(
-    currentGid && currentName ? { gid: currentGid, name: currentName } : null,
+  const [validatedProject, setValidatedProject] = useState<{ gid: string; name: string; tokenSource: 'pat' | 'oauth' } | null>(
+    currentGid && currentName ? { gid: currentGid, name: currentName, tokenSource: 'pat' } : null,
   );
   const [projectChecking, setProjectChecking] = useState(false);
   const [projectError, setProjectError] = useState('');
@@ -71,7 +71,7 @@ export default function TrackingProject({
         setProjectError(body.error ?? `Project not found or not accessible (${res.status}).`);
         setValidatedProject(null);
       } else {
-        const project = await res.json() as { gid: string; name: string };
+        const project = await res.json() as { gid: string; name: string; tokenSource: 'pat' | 'oauth' };
         setValidatedProject(project);
         setProjectInput('');
       }
@@ -138,7 +138,7 @@ export default function TrackingProject({
       await fetch('/api/session/tracking-project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gid: validatedProject.gid, name: validatedProject.name }),
+        body: JSON.stringify({ gid: validatedProject.gid, name: validatedProject.name, tokenSource: validatedProject.tokenSource }),
       });
       await fetch('/api/session/tracking-portfolio', {
         method: 'POST',
@@ -188,6 +188,9 @@ export default function TrackingProject({
           <div className="validated-project">
             <span className="validated-icon">✓</span>
             <span className="validated-name">{validatedProject.name}</span>
+            {validatedProject.tokenSource === 'oauth' && (
+              <span className="field-hint-inline"> — accessible via your login credentials (not the PAT)</span>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={() => setValidatedProject(null)}>Change</button>
           </div>
         ) : (

@@ -47,7 +47,16 @@ export default function Report({ report, onRunAnother }: Props) {
 
       <div className="report-meta">
         <p><strong>Source:</strong> {report.sourceProject}</p>
-        <p><strong>Destination:</strong> {report.destProject}</p>
+        <p>
+          <strong>Destination:</strong>{' '}
+          <a
+            href={`https://app.asana.com/0/${report.destProject}/list`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {report.destProjectName || report.destProject}
+          </a>
+        </p>
         <p><strong>Started:</strong> {new Date(report.startedAt).toLocaleString()}</p>
         {duration !== null && <p><strong>Duration:</strong> {duration}s</p>}
         {report.trackingTaskGid && (
@@ -92,7 +101,7 @@ export default function Report({ report, onRunAnother }: Props) {
 
       <div className="step-actions">
         <button className="btn btn-primary" onClick={onRunAnother}>
-          Run Another Migration
+          Migrate Another Project
         </button>
       </div>
     </div>
