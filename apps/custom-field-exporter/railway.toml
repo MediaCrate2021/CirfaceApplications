@@ -1,7 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm run build"
-watchPatterns = ["apps/migration-tool/**"]
+watchPatterns = ["apps/custom-field-exporter/**"]
 
 [deploy]
 startCommand = "npm start"
