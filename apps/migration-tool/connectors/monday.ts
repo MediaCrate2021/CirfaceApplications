@@ -164,7 +164,7 @@ export class MondayConnector implements SourceConnector {
               name
               state
               group { id }
-              column_values { id type text value }
+              column_values { id type text value ... on DependencyValue { linked_items { id } } }
               subitems { id }
             }
           }
@@ -195,7 +195,7 @@ export class MondayConnector implements SourceConnector {
             items {
               id name state
               group { id }
-              column_values { id type text value }
+              column_values { id type text value ... on DependencyValue { linked_items { id } } }
               subitems { id }
             }
           }
@@ -348,14 +348,22 @@ export class MondayConnector implements SourceConnector {
       const dependencyIds: string[] = [];
 
       for (const cv of item.column_values) {
-        const col = columns.find((c) => c.id === cv.id);
-        if (!col) continue;
+        // Use cv.type directly — more reliable than looking up the column definition,
+        // which can miss built-in columns that don't appear in board.columns.
+        const colType = cv.type || columns.find((c) => c.id === cv.id)?.type;
 
-        if (col.type === 'dependency') {
+        if (colType === 'dependency') {
           // Extract same-board task dependencies. board_relation (cross-board) is intentionally
           // skipped — those IDs reference tasks outside this migration scope and cannot be
           // wired up in Asana. See DEV_NOTES.md for details.
-          if (cv.value) {
+          //
+          // Prefer linked_items from the DependencyValue inline fragment (reliable typed field).
+          // Fall back to parsing the generic value JSON for older API responses.
+          if (cv.linked_items?.length) {
+            for (const linked of cv.linked_items) {
+              dependencyIds.push(linked.id);
+            }
+          } else if (cv.value) {
             try {
               const parsed = JSON.parse(cv.value) as {
                 linkedPulseIds?: Array<{ linkedPulseId: number }>;
@@ -364,11 +372,14 @@ export class MondayConnector implements SourceConnector {
                 dependencyIds.push(String(link.linkedPulseId));
               }
             } catch {
-              // ignore malformed value
+              logger.warn({ itemId: item.id, colId: cv.id, value: cv.value }, 'failed to parse monday dependency value');
             }
           }
           continue;
         }
+
+        const col = columns.find((c) => c.id === cv.id);
+        if (!col) continue;
 
         if (col.type === 'people' || col.type === 'team') {
           // Extract all persons: first becomes the default assignee, all IDs are stored
@@ -531,6 +542,7 @@ interface MondayColumnValue {
   type: string;
   text: string;
   value: string | null;
+  linked_items?: Array<{ id: string }>; // populated for DependencyValue via inline fragment
 }
 
 interface MondayUpdate {
