@@ -284,7 +284,7 @@ export class MondayConnector implements SourceConnector {
 
   private normaliseColumns(columns: MondayColumn[]): NormalisedField[] {
     return columns
-      .filter((c) => !['name', 'subitems'].includes(c.type))
+      .filter((c) => !['name', 'subitems', 'dependency', 'board_relation'].includes(c.type))
       .map((c) => {
         const type = this.mapColumnType(c.type);
         const field: NormalisedField = { id: c.id, name: c.title, type };
@@ -345,10 +345,30 @@ export class MondayConnector implements SourceConnector {
     return items.map((item) => {
       const customFields: Record<string, string | string[] | null> = {};
       let assigneeId: string | undefined;
+      const dependencyIds: string[] = [];
 
       for (const cv of item.column_values) {
         const col = columns.find((c) => c.id === cv.id);
         if (!col) continue;
+
+        if (col.type === 'dependency') {
+          // Extract same-board task dependencies. board_relation (cross-board) is intentionally
+          // skipped — those IDs reference tasks outside this migration scope and cannot be
+          // wired up in Asana. See DEV_NOTES.md for details.
+          if (cv.value) {
+            try {
+              const parsed = JSON.parse(cv.value) as {
+                linkedPulseIds?: Array<{ linkedPulseId: number }>;
+              };
+              for (const link of parsed.linkedPulseIds ?? []) {
+                dependencyIds.push(String(link.linkedPulseId));
+              }
+            } catch {
+              // ignore malformed value
+            }
+          }
+          continue;
+        }
 
         if (col.type === 'people' || col.type === 'team') {
           // Extract all persons: first becomes the default assignee, all IDs are stored
@@ -389,7 +409,7 @@ export class MondayConnector implements SourceConnector {
         subtasks,
         comments: this.normaliseUpdates(item.updates ?? [], usersMap),
         attachments: this.normaliseAssets(item.assets ?? []),
-        dependencyIds: [],
+        dependencyIds,
       };
     });
   }
