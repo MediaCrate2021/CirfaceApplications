@@ -6,6 +6,7 @@ interface ProjectSummary {
   subtasks: number;
   comments: number;
   attachments: number;
+  dependencies: number;
 }
 
 interface Props {
@@ -95,6 +96,7 @@ export default function ReviewConfirm({ state, onConfirm, onBack }: Props) {
             <>
               <ReviewRow label="Tasks" value={String(summary.tasks)} />
               <ReviewRow label="Subtasks" value={String(summary.subtasks)} />
+              <ReviewRow label="Dependencies" value={String(summary.dependencies)} />
               <ReviewRow label="Comments" value={String(summary.comments)} />
               <ReviewRow label="Attachments" value={String(summary.attachments)} />
             </>
