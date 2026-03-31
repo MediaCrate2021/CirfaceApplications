@@ -284,7 +284,7 @@ export class MondayConnector implements SourceConnector {
 
   private normaliseColumns(columns: MondayColumn[]): NormalisedField[] {
     return columns
-      .filter((c) => !['name', 'subitems', 'dependency', 'board_relation'].includes(c.type))
+      .filter((c) => !['name', 'subitems', 'board_relation'].includes(c.type))
       .map((c) => {
         const type = this.mapColumnType(c.type);
         const field: NormalisedField = { id: c.id, name: c.title, type };
@@ -332,6 +332,7 @@ export class MondayConnector implements SourceConnector {
       link: 'link',
       email: 'text',
       phone: 'text',
+      dependency: 'text',
     };
     return map[mondayType] ?? 'unknown';
   }
@@ -353,26 +354,27 @@ export class MondayConnector implements SourceConnector {
         const colType = cv.type || columns.find((c) => c.id === cv.id)?.type;
 
         if (colType === 'dependency') {
-          // Extract same-board task dependencies. board_relation (cross-board) is intentionally
-          // skipped — those IDs reference tasks outside this migration scope and cannot be
-          // wired up in Asana. See DEV_NOTES.md for details.
-          //
-          // Prefer linked_items from the DependencyValue inline fragment (reliable typed field).
-          // Fall back to parsing the generic value JSON for older API responses.
+          // Store raw dependency data as a text field so it is visible in Asana for debugging.
+          // Also populate dependencyIds for wiring — prefer linked_items from the typed inline
+          // fragment, fall back to parsing the generic value JSON.
           if (cv.linked_items?.length) {
             for (const linked of cv.linked_items) {
               dependencyIds.push(linked.id);
             }
-          } else if (cv.value) {
-            try {
-              const parsed = JSON.parse(cv.value) as {
-                linkedPulseIds?: Array<{ linkedPulseId: number }>;
-              };
-              for (const link of parsed.linkedPulseIds ?? []) {
-                dependencyIds.push(String(link.linkedPulseId));
+            customFields[cv.id] = cv.linked_items.map((l) => l.id).join(', ');
+          } else {
+            customFields[cv.id] = cv.value ?? cv.text ?? null;
+            if (cv.value) {
+              try {
+                const parsed = JSON.parse(cv.value) as {
+                  linkedPulseIds?: Array<{ linkedPulseId: number }>;
+                };
+                for (const link of parsed.linkedPulseIds ?? []) {
+                  dependencyIds.push(String(link.linkedPulseId));
+                }
+              } catch {
+                logger.warn({ itemId: item.id, colId: cv.id, value: cv.value }, 'failed to parse monday dependency value');
               }
-            } catch {
-              logger.warn({ itemId: item.id, colId: cv.id, value: cv.value }, 'failed to parse monday dependency value');
             }
           }
           continue;
