@@ -44,6 +44,11 @@ export interface WriteOptions {
   trackingToken?: string;
   /** If set, ownership of the migrated project is transferred to this Asana user GID after migration. */
   projectOwnerGid?: string;
+  /**
+   * GID of an existing Asana custom field to use as the External ID (source platform item ID).
+   * If null or omitted, a new project-level text field named 'm_External ID' is created.
+   */
+  externalIdDestFieldGid?: string | null;
   sourcePlatform?: string;
   /** Name of the PAT account performing the migration — shown in the report. */
   writerName?: string;
@@ -171,18 +176,23 @@ export class AsanaDestination {
     gid: string;
     name: string;
     type: string;
+    isGlobal: boolean;
     enum_options?: Array<{ gid: string; name: string }>;
   }>> {
     const settings = await this.request<Array<{
       custom_field: {
         gid: string; name: string; type: string;
+        is_global_to_workspace: boolean;
         enum_options?: Array<{ gid: string; name: string }>;
       };
     }>>(
       'GET',
-      `/projects/${encodeURIComponent(projectGid)}/custom_field_settings?opt_fields=custom_field.gid,custom_field.name,custom_field.type,custom_field.enum_options,custom_field.enum_options.name&limit=100`,
+      `/projects/${encodeURIComponent(projectGid)}/custom_field_settings?opt_fields=custom_field.gid,custom_field.name,custom_field.type,custom_field.is_global_to_workspace,custom_field.enum_options,custom_field.enum_options.name&limit=100`,
     );
-    return settings.map((s) => s.custom_field);
+    return settings.map((s) => ({
+      ...s.custom_field,
+      isGlobal: s.custom_field.is_global_to_workspace ?? false,
+    }));
   }
 
   async getSections(projectGid: string): Promise<Array<{ gid: string; name: string }>> {
@@ -271,22 +281,40 @@ export class AsanaDestination {
       log,
     );
 
-    // Step 4: create a project-level "Source ID" field to store the source platform's item ID.
-    // This lets users trace any Asana task back to its original Monday/Trello item.
+    // Step 4: resolve the External ID field — used to store each task's source platform item ID
+    // so tasks can be traced back to their origin. If the user mapped this to an existing Asana
+    // field, attach that field to the project and use it. Otherwise create 'm_External ID'.
     let sourceIdFieldGid: string | undefined;
-    try {
-      const setting = await this.request<{
-        custom_field: { gid: string };
-      }>(
-        'POST',
-        `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting?opt_fields=custom_field.gid`,
-        { custom_field: { resource_subtype: 'text', name: 'Source ID' } },
-      );
-      sourceIdFieldGid = setting.custom_field.gid;
-      log(`'Source ID' field created.`);
-    } catch (err) {
-      log(`Could not create Source ID field: ${(err as Error).message}`, 'warning');
-      report.warnings++;
+    if (options.externalIdDestFieldGid) {
+      try {
+        await this.request(
+          'POST',
+          `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting`,
+          { custom_field: options.externalIdDestFieldGid },
+        );
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        // "already exists" means the field is already on the project — that's fine
+        if (!msg.toLowerCase().includes('already exists')) {
+          log(`Could not attach External ID field: ${msg}`, 'warning');
+          report.warnings++;
+        }
+      }
+      sourceIdFieldGid = options.externalIdDestFieldGid;
+      log(`External ID mapped to existing field (GID: ${options.externalIdDestFieldGid}).`);
+    } else {
+      try {
+        const setting = await this.request<{ custom_field: { gid: string } }>(
+          'POST',
+          `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting?opt_fields=custom_field.gid`,
+          { custom_field: { resource_subtype: 'text', name: 'm_External ID' } },
+        );
+        sourceIdFieldGid = setting.custom_field.gid;
+        log(`'m_External ID' field created.`);
+      } catch (err) {
+        log(`Could not create External ID field: ${(err as Error).message}`, 'warning');
+        report.warnings++;
+      }
     }
 
     // Step 5: create or map Asana sections to mirror source groups/lists
@@ -702,10 +730,18 @@ export class AsanaDestination {
           logger.warn({ err, field: entry.sourceFieldName }, 'failed to create custom field');
         }
       } else {
-        // Field is mapped to an existing Asana field — it is already on the project
-        // (the user selected it from the project's own field list). Use it directly;
-        // no addCustomFieldSetting call needed and no new field should be created.
+        // Field is mapped to an existing Asana field. Attach it to the project in case
+        // it isn't already — no-op if already present.
         log(`Field '${entry.sourceFieldName}' mapped to existing Asana field '${entry.destFieldName}'.`);
+        try {
+          await this.request('POST', `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting`,
+            { custom_field: entry.destFieldId });
+        } catch (err) {
+          const msg = (err as Error).message ?? '';
+          if (!msg.toLowerCase().includes('already exists')) {
+            log(`Could not attach field '${entry.destFieldName}': ${msg}`, 'warning');
+          }
+        }
         const existingType = entry.destFieldType ?? this.mapToAsanaFieldType(entry.sourceFieldType);
         fieldTypeMap.set(entry.sourceFieldId, existingType);
         fieldGidMap.set(entry.sourceFieldId, entry.destFieldId!);

@@ -83,6 +83,7 @@ declare module 'express-session' {
     userMapping?: UserMappingEntry[];
     fieldMapping?: FieldMappingEntry[];
     sectionMapping?: SectionMappingEntry[];
+    externalIdDestFieldGid?: string | null;
     cachedProject?: { id: string; data: NormalisedProject };
     lastReport?: MigrationReport;
   }
@@ -631,10 +632,15 @@ app.post('/api/session/user-mapping', requireAuth, (req, res) => {
 });
 
 app.post('/api/session/field-mapping', requireAuth, (req, res) => {
-  const { mapping, sectionMapping } = req.body as { mapping: FieldMappingEntry[]; sectionMapping?: SectionMappingEntry[] };
+  const { mapping, sectionMapping, externalIdDestFieldGid } = req.body as {
+    mapping: FieldMappingEntry[];
+    sectionMapping?: SectionMappingEntry[];
+    externalIdDestFieldGid?: string | null;
+  };
   if (!Array.isArray(mapping)) return res.status(400).json({ error: 'mapping must be an array' });
   req.session.fieldMapping = mapping;
   if (Array.isArray(sectionMapping)) req.session.sectionMapping = sectionMapping;
+  req.session.externalIdDestFieldGid = externalIdDestFieldGid ?? null;
   res.json({ ok: true });
 });
 
@@ -694,6 +700,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       userMapping: req.session.userMapping,
       fieldMapping: req.session.fieldMapping,
       sectionMapping: req.session.sectionMapping,
+      externalIdDestFieldGid: req.session.externalIdDestFieldGid,
       trackingProjectGid: req.session.trackingProject?.gid,
       trackingToken: req.session.trackingProject?.tokenSource === 'oauth' ? req.session.accessToken : undefined,
       trackingPortfolioGid: req.session.trackingPortfolio?.gid,

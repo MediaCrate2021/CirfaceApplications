@@ -14,12 +14,13 @@ interface AsanaField {
   gid: string;
   name: string;
   type: string;
+  isGlobal: boolean;
   enum_options?: Array<{ gid: string; name: string }>;
 }
 
 interface Props {
   state: AppState;
-  onSave: (fieldMapping: FieldMappingEntry[], sectionMapping: SectionMappingEntry[]) => void;
+  onSave: (fieldMapping: FieldMappingEntry[], sectionMapping: SectionMappingEntry[], externalIdDestFieldGid: string | null) => void;
   onBack: () => void;
 }
 
@@ -205,9 +206,9 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
     await fetch('/api/session/field-mapping', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mapping, sectionMapping }),
+      body: JSON.stringify({ mapping, sectionMapping, externalIdDestFieldGid: null }),
     });
-    onSave(mapping, sectionMapping);
+    onSave(mapping, sectionMapping, null);
   }
 
   // Group entries for sectioned display
@@ -330,6 +331,7 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
   const [destSections, setDestSections] = useState<Array<{ gid: string; name: string }>>([]);
   const [mapping, setMapping] = useState<FieldMappingEntry[]>(state.fieldMapping);
   const [sectionMapping, setSectionMapping] = useState<SectionMappingEntry[]>([]);
+  const [externalIdDestFieldGid, setExternalIdDestFieldGid] = useState<string | null>(state.externalIdDestFieldGid);
   const [expandedEnums, setExpandedEnums] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -374,13 +376,17 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
   }, []);
 
   function autoMap(src: NormalisedField[], dest: AsanaField[]): FieldMappingEntry[] {
+    const usedDestGids = new Set<string>();
+
     return src.map((field) => {
-      const exactName = dest.find((d) => d.name.toLowerCase() === field.name.toLowerCase());
+      const exactName = dest.find((d) => !usedDestGids.has(d.gid) && d.name.toLowerCase() === field.name.toLowerCase());
       const typeMatch = !exactName ? dest.find((d) => {
+        if (usedDestGids.has(d.gid)) return false;
         if (field.type === 'dropdown') return d.type === 'enum' || d.type === 'multi_enum';
         return d.type === defaultAsanaType(field.type);
       }) : null;
       const match = exactName ?? typeMatch ?? null;
+      if (match) usedDestGids.add(match.gid);
       const confidence: FieldMappingEntry['confidence'] = exactName ? 'exact' : typeMatch ? 'type' : 'none';
 
       const enumMapping = buildEnumMapping(field, match);
@@ -435,7 +441,17 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
 
     // Map to an existing Asana custom field
     const dest = destFields.find((d) => d.gid === destGid) ?? null;
+
+    // If this dest field is the current External ID selection, release it
+    if (dest && externalIdDestFieldGid === dest.gid) {
+      setExternalIdDestFieldGid(null);
+    }
+
     setMapping((prev) => prev.map((m) => {
+      // Displace any other row that currently owns this dest field
+      if (dest && m.sourceFieldId !== sourceFieldId && m.destFieldId === dest.gid) {
+        return { ...m, destFieldId: null, destFieldName: null, destFieldType: null, confidence: 'none' as const, enumMapping: undefined };
+      }
       if (m.sourceFieldId !== sourceFieldId) return m;
       const srcField = { options: m.sourceOptions } as NormalisedField;
       const enumMapping = buildEnumMapping(srcField, dest);
@@ -462,6 +478,18 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
     }));
   }
 
+  function handleExternalIdChange(gid: string | null) {
+    // If this dest field is currently owned by a main-mapping row, release it
+    if (gid) {
+      setMapping((prev) => prev.map((m) =>
+        m.destFieldId === gid
+          ? { ...m, destFieldId: null, destFieldName: null, destFieldType: null, confidence: 'none' as const, enumMapping: undefined }
+          : m,
+      ));
+    }
+    setExternalIdDestFieldGid(gid);
+  }
+
   function toggleOmit(sourceFieldId: string) {
     setMapping((prev) => prev.map((m) =>
       m.sourceFieldId === sourceFieldId ? { ...m, omit: !m.omit } : m,
@@ -479,13 +507,19 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
   const unmappedCount = mapping.filter((m) => !m.omit && !m.destFieldId && !m.destNativeField).length;
   const omittedCount = mapping.filter((m) => m.omit).length;
 
+  // All dest field GIDs currently in use (across main mapping + External ID row)
+  const usedFieldGids = new Set<string>([
+    ...mapping.map((m) => m.destFieldId).filter(Boolean) as string[],
+    ...(externalIdDestFieldGid ? [externalIdDestFieldGid] : []),
+  ]);
+
   async function handleSave() {
     await fetch('/api/session/field-mapping', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mapping, sectionMapping }),
+      body: JSON.stringify({ mapping, sectionMapping, externalIdDestFieldGid }),
     });
-    onSave(mapping, sectionMapping);
+    onSave(mapping, sectionMapping, externalIdDestFieldGid);
   }
 
   function confidenceBadge(c: FieldMappingEntry['confidence']) {
@@ -548,18 +582,35 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
                 <option value={NATIVE_NOTES}>→ Notes / Description</option>
                 <option value={NATIVE_FOLLOWERS}>→ Followers / Members</option>
               </optgroup>
+              {destFields.some((d) => d.isGlobal) && (
+                <optgroup label="Map to Library Field">
+                  {destFields.filter((d) => d.isGlobal).map((d) => {
+                    const inUse = usedFieldGids.has(d.gid) && d.gid !== entry.destFieldId;
+                    return (
+                      <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
+                        {d.name} ({d.type}){inUse ? ' — in use' : ''}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+              )}
+              {destFields.some((d) => !d.isGlobal) && (
+                <optgroup label="Map to Project Field">
+                  {destFields.filter((d) => !d.isGlobal).map((d) => {
+                    const inUse = usedFieldGids.has(d.gid) && d.gid !== entry.destFieldId;
+                    return (
+                      <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
+                        {d.name} ({d.type}){inUse ? ' — in use' : ''}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+              )}
               <optgroup label="Create New Field">
                 {NEW_FIELD_TYPES.map((t) => (
                   <option key={t.type} value={`${NEW_FIELD_PREFIX}${t.type}`}>{t.label}</option>
                 ))}
               </optgroup>
-              {destFields.length > 0 && (
-                <optgroup label="Map to Existing Field">
-                  {destFields.map((d) => (
-                    <option key={d.gid} value={d.gid}>{d.name} ({d.type})</option>
-                  ))}
-                </optgroup>
-              )}
             </select>
           </td>
           <td>{entry.omit ? <span className="badge badge-omit">Omitted</span> : confidenceBadge(entry.confidence)}</td>
@@ -677,8 +728,52 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
                 </tr>
               </thead>
               <tbody>
-                <SeparatorRow label="Native Asana Fields" colSpan={5} />
+                <SeparatorRow label="Non-Optional Fields" colSpan={5} />
                 <TitleRow colSpan={5} />
+                <tr>
+                  <td className="omit-cell">
+                    <input type="checkbox" disabled title="External ID is always migrated" />
+                  </td>
+                  <td>External ID</td>
+                  <td><span className="type-pill">text</span></td>
+                  <td>
+                    <select
+                      value={externalIdDestFieldGid ?? ''}
+                      onChange={(e) => handleExternalIdChange(e.target.value || null)}
+                    >
+                      {destFields.some((d) => d.type === 'text' && d.isGlobal) && (
+                        <optgroup label="Library Fields">
+                          {destFields.filter((d) => d.type === 'text' && d.isGlobal).map((d) => {
+                            const inUse = usedFieldGids.has(d.gid) && d.gid !== externalIdDestFieldGid;
+                            return (
+                              <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
+                                {d.name}{inUse ? ' — in use' : ''}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
+                      {destFields.some((d) => d.type === 'text' && !d.isGlobal) && (
+                        <optgroup label="Project Fields">
+                          {destFields.filter((d) => d.type === 'text' && !d.isGlobal).map((d) => {
+                            const inUse = usedFieldGids.has(d.gid) && d.gid !== externalIdDestFieldGid;
+                            return (
+                              <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
+                                {d.name}{inUse ? ' — in use' : ''}
+                              </option>
+                            );
+                          })}
+                        </optgroup>
+                      )}
+                      <option value="">↳ Create new field (m_External ID)</option>
+                    </select>
+                  </td>
+                  <td />
+                </tr>
+
+                {nativeEntries.length > 0 && (
+                  <SeparatorRow label="Native Asana Fields" colSpan={5} />
+                )}
                 {nativeEntries.map(renderRow)}
 
                 {mappedEntries.length > 0 && (

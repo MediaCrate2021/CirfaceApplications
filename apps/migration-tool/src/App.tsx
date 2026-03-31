@@ -109,6 +109,7 @@ export interface AppState {
   // Field mapping
   fieldMapping: FieldMappingEntry[];
   sectionMapping: SectionMappingEntry[];
+  externalIdDestFieldGid: string | null;
 
   // Report
   lastReport: MigrationReport | null;
@@ -123,7 +124,7 @@ type Action =
   | { type: 'SET_TRACKING'; gid: string; name: string; portfolioGid: string | null; portfolioName: string | null; ownerGid: string | null; ownerName: string | null }
   | { type: 'SET_USER_MAPPING'; mapping: UserMappingEntry[] }
   | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean }
-  | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[] }
+  | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[]; externalIdDestFieldGid: string | null }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
   | { type: 'RELOAD_MAPPING' };
@@ -163,12 +164,12 @@ function reducer(state: AppState, action: Action): AppState {
         isNewDestProject: action.isNew,
       };
     case 'SET_FIELD_MAPPING':
-      return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping };
+      return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping, externalIdDestFieldGid: action.externalIdDestFieldGid };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RELOAD_MAPPING':
       // Go back to field-mapping with fresh data; keep connections, tracking, users, project selection
-      return { ...state, step: 'field-mapping', fieldMapping: [], sectionMapping: [] };
+      return { ...state, step: 'field-mapping', fieldMapping: [], sectionMapping: [], externalIdDestFieldGid: null };
     case 'RUN_ANOTHER':
       // Go back to project selection; keep connectors + mappings
       return {
@@ -183,6 +184,7 @@ function reducer(state: AppState, action: Action): AppState {
         isNewDestProject: false,
         fieldMapping: [],
         sectionMapping: [],
+        externalIdDestFieldGid: null,
         lastReport: null,
       };
     default:
@@ -218,6 +220,7 @@ const initialState: AppState = {
   isNewDestProject: false,
   fieldMapping: [],
   sectionMapping: [],
+  externalIdDestFieldGid: null,
   lastReport: null,
 };
 
@@ -327,8 +330,8 @@ export default function App() {
           {state.step === 'field-mapping' && (
             <FieldMapping
               state={state}
-              onSave={(mapping, sectionMapping) => {
-                dispatch({ type: 'SET_FIELD_MAPPING', mapping, sectionMapping });
+              onSave={(mapping, sectionMapping, externalIdDestFieldGid) => {
+                dispatch({ type: 'SET_FIELD_MAPPING', mapping, sectionMapping, externalIdDestFieldGid });
                 next('review');
               }}
               onBack={() => next('select-projects')}
