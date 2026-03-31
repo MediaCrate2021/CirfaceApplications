@@ -32,8 +32,21 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [loadingTeams, setLoadingTeams]     = useState(true);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState('');
+  const [reloadCount, setReloadCount] = useState(0);
 
-  // Load source workspaces and Asana teams on mount
+  function handleReload() {
+    fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
+    setSelectedSource('');
+    setSelectedSourceWorkspace('');
+    setSelectedTeamGid('');
+    setSelectedDest('');
+    setProjectQuery('');
+    setNewProjectName('');
+    setError('');
+    setReloadCount((c) => c + 1);
+  }
+
+  // Load source workspaces and Asana teams on mount (and on reload)
   useEffect(() => {
     fetch('/api/source/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
@@ -47,9 +60,9 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
         // Teams endpoint may fail for non-org workspaces — fall back to all projects
         setLoadingTeams(false);
       });
-  }, []);
+  }, [reloadCount]);
 
-  // Reload source projects when workspace filter changes
+  // Reload source projects when workspace filter changes (or on reload)
   useEffect(() => {
     setLoadingSource(true);
     setSelectedSource('');
@@ -60,7 +73,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
       .then((r) => r.json() as Promise<SourceProject[]>)
       .then((src) => { setSourceProjects([...src].sort((a, b) => a.name.localeCompare(b.name))); setLoadingSource(false); })
       .catch(() => { setError('Failed to load source projects'); setLoadingSource(false); });
-  }, [selectedSourceWorkspace]);
+  }, [selectedSourceWorkspace, reloadCount]);
 
   // When source project changes or mode switches to 'new', default the new project name to the source name
   useEffect(() => {
@@ -318,6 +331,9 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
+        <button className="btn btn-ghost" onClick={handleReload} disabled={loading}>
+          ↺ Reload project lists
+        </button>
         <button className="btn btn-primary" onClick={handleContinue} disabled={!canProceed}>
           Continue
         </button>

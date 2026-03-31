@@ -130,16 +130,15 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
   const [error, setError] = useState('');
   const hasFired = useRef(false);
 
-  useEffect(() => {
-    if (hasFired.current) return;
-    hasFired.current = true;
-
+  function load(forceRemap = false) {
+    setLoading(true);
+    setError('');
     Promise.all([
       fetch(`/api/source/project-fields?projectId=${encodeURIComponent(state.selectedSourceProjectId ?? '')}`).then((r) => r.json() as Promise<NormalisedField[]>),
       fetch(`/api/source/project-sections?projectId=${encodeURIComponent(state.selectedSourceProjectId ?? '')}`).then((r) => r.json() as Promise<NormalisedSection[]>),
     ])
       .then(([src, sections]) => {
-        if (!state.fieldMapping.length) {
+        if (forceRemap || !state.fieldMapping.length) {
           setMapping(src.map((f) => {
             const nativeField = state.sourcePlatform === 'monday'
               ? mondayNativeField(f.name, f.type)
@@ -169,7 +168,18 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
         setLoading(false);
       })
       .catch(() => { setError('Failed to load source fields'); setLoading(false); });
+  }
+
+  useEffect(() => {
+    if (hasFired.current) return;
+    hasFired.current = true;
+    load();
   }, []);
+
+  function handleReload() {
+    fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
+    load(true);
+  }
 
   function setType(sourceFieldId: string, value: string) {
     setMapping((prev) => prev.map((m) => {
@@ -300,6 +310,9 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
 
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
+        <button className="btn btn-ghost" onClick={handleReload} disabled={loading}>
+          ↺ Reload source data
+        </button>
         <button className="btn btn-primary" onClick={handleSave} disabled={loading || !!error}>
           Save &amp; Continue
         </button>

@@ -125,7 +125,8 @@ type Action =
   | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean }
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[] }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
-  | { type: 'RUN_ANOTHER' };
+  | { type: 'RUN_ANOTHER' }
+  | { type: 'RELOAD_MAPPING' };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -165,6 +166,9 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
+    case 'RELOAD_MAPPING':
+      // Go back to field-mapping with fresh data; keep connections, tracking, users, project selection
+      return { ...state, step: 'field-mapping', fieldMapping: [], sectionMapping: [] };
     case 'RUN_ANOTHER':
       // Go back to project selection; keep connectors + mappings
       return {
@@ -335,6 +339,10 @@ export default function App() {
               state={state}
               onConfirm={() => next('running')}
               onBack={() => next('field-mapping')}
+              onReloadMapping={() => {
+                fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
+                dispatch({ type: 'RELOAD_MAPPING' });
+              }}
             />
           )}
           {state.step === 'running' && (

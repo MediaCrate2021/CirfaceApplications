@@ -13,9 +13,10 @@ interface Props {
   state: AppState;
   onConfirm: () => void;
   onBack: () => void;
+  onReloadMapping: () => void;
 }
 
-export default function ReviewConfirm({ state, onConfirm, onBack }: Props) {
+export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMapping }: Props) {
   const unmappedUsers = state.userMapping.filter((m) => !m.destId).length;
   const activeFields = state.fieldMapping.filter((f) => !f.omit);
   const mappedFields = activeFields.filter((f) => f.destFieldId || f.destNativeField).length;
@@ -108,6 +109,9 @@ export default function ReviewConfirm({ state, onConfirm, onBack }: Props) {
 
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
+        <button className="btn btn-ghost" onClick={onReloadMapping}>
+          ↺ Reload &amp; re-map
+        </button>
         <button className="btn btn-primary btn-danger" onClick={onConfirm}>
           Start Migration
         </button>
