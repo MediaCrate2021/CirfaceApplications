@@ -43,7 +43,7 @@ export class MondayConnector implements SourceConnector {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: this.token,
+        Authorization: this.token.startsWith('Bearer ') ? this.token : `Bearer ${this.token}`,
         'API-Version': '2024-01',
       },
       body: JSON.stringify({ query, variables }),
@@ -115,8 +115,8 @@ export class MondayConnector implements SourceConnector {
       boards: Array<{ id: string; name: string }>;
     }>(
       workspaceId
-        ? `query($wsId: [ID!]) { boards(limit: 200, board_kind: public, workspace_ids: $wsId) { id name } }`
-        : `query { boards(limit: 200, board_kind: public) { id name } }`,
+        ? `query($wsId: [ID!]) { boards(limit: 200, workspace_ids: $wsId) { id name } }`
+        : `query { boards(limit: 200) { id name } }`,
       workspaceId ? { wsId: [workspaceId] } : undefined,
     );
 
