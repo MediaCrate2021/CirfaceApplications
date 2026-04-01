@@ -55,6 +55,8 @@ export interface WriteOptions {
   writerName?: string;
   /** SSE writer — called with each progress event */
   onProgress?: (event: ProgressEvent) => void;
+  /** When aborted, the task loop stops after the current task and reporting still runs. */
+  cancelSignal?: AbortSignal;
 }
 
 export interface ProgressEvent {
@@ -362,6 +364,12 @@ export class AsanaDestination {
     const PROGRESS_INTERVAL = 25;
 
     for (let i = 0; i < project.tasks.length; i++) {
+      if (options.cancelSignal?.aborted) {
+        report.cancelled = true;
+        log(`Migration cancelled by user after ${i} of ${total} tasks.`, 'warning');
+        break;
+      }
+
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 

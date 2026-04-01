@@ -19,13 +19,12 @@ export default function RunMigration({ state, onComplete }: Props) {
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const hasFired = useRef(false);
 
   useEffect(() => {
     // Prevent React StrictMode's double-invoke from firing two migrations.
-    // We intentionally omit an AbortController: StrictMode's cleanup would abort
-    // the stream before any events arrive. Once a migration starts, it runs to completion.
     if (hasFired.current) return;
     hasFired.current = true;
 
@@ -94,7 +93,18 @@ export default function RunMigration({ state, onComplete }: Props) {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [log]);
 
+  async function handleCancel() {
+    setCancelling(true);
+    try {
+      await fetch('/api/migrate/cancel', { method: 'POST' });
+    } catch {
+      // If the request fails the migration will still complete normally
+      setCancelling(false);
+    }
+  }
+
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+  const isActive = !error && !cancelling;
 
   return (
     <div className="step-panel">
@@ -107,6 +117,10 @@ export default function RunMigration({ state, onComplete }: Props) {
           </div>
           <p className="progress-text">{done} / {total} tasks — {progress}%</p>
         </div>
+      )}
+
+      {cancelling && !error && (
+        <p className="warning-text">Cancelling — finishing current task and generating report…</p>
       )}
 
       {error && <p className="error-text error-banner">{error}</p>}
@@ -122,6 +136,14 @@ export default function RunMigration({ state, onComplete }: Props) {
         ))}
         <div ref={logEndRef} />
       </div>
+
+      {isActive && (
+        <div className="step-actions">
+          <button className="btn btn-ghost btn-danger" onClick={handleCancel}>
+            Cancel Migration
+          </button>
+        </div>
+      )}
     </div>
   );
 }

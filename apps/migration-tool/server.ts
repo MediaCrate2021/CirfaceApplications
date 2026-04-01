@@ -90,6 +90,12 @@ declare module 'express-session' {
 }
 
 // ---------------------------------------------------------------------------
+// In-memory cancel controllers — one per active migration session
+// ---------------------------------------------------------------------------
+
+const migrationControllers = new Map<string, AbortController>();
+
+// ---------------------------------------------------------------------------
 // App setup
 // ---------------------------------------------------------------------------
 
@@ -689,6 +695,8 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
   if (req.session.migrationInProgress) return res.status(409).json({ error: 'A migration is already running' });
 
   req.session.migrationInProgress = true;
+  const cancelController = new AbortController();
+  migrationControllers.set(req.sessionID, cancelController);
 
   // Switch to SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -733,15 +741,18 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       sourcePlatform: platform,
       writerName: req.session.destConfig.patUserName,
       onProgress: (event) => send(event.type, event),
+      cancelSignal: cancelController.signal,
     });
 
     req.session.lastReport = report;
     req.session.migrationInProgress = false;
+    migrationControllers.delete(req.sessionID);
     logger.info({
       user: req.session.user?.name,
       source: project.name,
       dest: destProjectName ?? destProjectGid,
       tasks: report.migratedTasks,
+      cancelled: report.cancelled ?? false,
       errors: report.errors,
     }, 'migration complete');
 
@@ -750,10 +761,18 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ err, user: req.session.user?.name }, 'migration failed');
     req.session.migrationInProgress = false;
+    migrationControllers.delete(req.sessionID);
     send('error', { message: msg });
   } finally {
     res.end();
   }
+});
+
+app.post('/api/migrate/cancel', requireAuth, (req, res) => {
+  const controller = migrationControllers.get(req.sessionID);
+  if (!controller) return res.status(404).json({ error: 'No active migration for this session' });
+  controller.abort();
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,12 @@ export default function Report({ report, onRunAnother }: Props) {
     <div className="step-panel">
       <h2 className="step-title">Migration Report</h2>
 
+      {report.cancelled && (
+        <p className="warning-text error-banner">
+          This migration was cancelled before completion. The report below reflects what was migrated before the stop.
+        </p>
+      )}
+
       <div className="report-summary">
         <div className="report-stat">
           <span className="report-stat-value">{report.migratedTasks}</span>

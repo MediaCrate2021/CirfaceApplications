@@ -198,6 +198,7 @@ export interface MigrationReport {
   errors: number;
   items: MigrationReportItem[];
   skippedSubitemFields: SkippedSubitemField[];
+  cancelled?: boolean;      // true if the migration was stopped by the user mid-run
   trackingTaskGid?: string; // GID of the report task created in Asana
 }
 
