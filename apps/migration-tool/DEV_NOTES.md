@@ -16,6 +16,14 @@ Subitem comments and attachments **are** migrated. The connector uses a two-phas
 
 The subitem data from Phase 2 is then processed by `normaliseSubitem()`, and `migrateSubtask()` in the Asana destination posts comments as stories and downloads/re-uploads attachments.
 
+### Subitem custom fields — column ID mismatch
+
+Monday subitems live on their own sub-board and have their **own column IDs**, separate from the parent board's column IDs. The field mapping step fetches columns from the parent board only, so `fieldGidMap` is keyed on parent board column IDs. When `migrateSubtask()` iterates `subtask.customFields`, any key that doesn't appear in `fieldGidMap` is silently skipped and counted in `report.skippedSubitemFields`.
+
+**Mitigation:** The Review & Confirm page calls `GET /api/source/subitem-field-warnings`, which fetches the subitem board's columns via `subitems_board { columns }` and diffs them against the current field mapping. Any subitem-only field is shown as a pre-flight warning so the user can go back and re-map before starting. The final migration report also lists skipped fields with a count of how many subitem values were dropped.
+
+**Known gap:** Standard columns that Monday duplicates on the subitem board (Status, People, Date) often share the same column ID as the parent — those will map correctly. Custom columns added only to the subitem board will not.
+
 ### Dependencies — same-board only
 
 **What migrates:** Dependencies between tasks on the same Monday board. The `dependency` column type stores `linkedPulseIds` in its JSON value; these IDs are extracted into `dependencyIds` and wired up in Asana after all tasks are created.
@@ -54,4 +62,4 @@ Binary attachment files are downloaded from the source URL and re-uploaded to As
 
 ---
 
-_Last updated: 2026-03-30_
+_Last updated: 2026-04-01_

@@ -175,6 +175,12 @@ export interface MigrationReportItem {
   message?: string;
 }
 
+export interface SkippedSubitemField {
+  fieldId: string;
+  fieldName: string;
+  count: number; // number of subitem field values that were skipped
+}
+
 export interface MigrationReport {
   startedAt: string;
   completedAt: string;
@@ -191,6 +197,7 @@ export interface MigrationReport {
   warnings: number;
   errors: number;
   items: MigrationReportItem[];
+  skippedSubitemFields: SkippedSubitemField[];
   trackingTaskGid?: string; // GID of the report task created in Asana
 }
 

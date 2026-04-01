@@ -1,4 +1,4 @@
-import type { MigrationReport, MigrationReportItem } from '../../types/index.ts';
+import type { MigrationReport, MigrationReportItem, SkippedSubitemField } from '../../types/index.ts';
 
 interface Props {
   report: MigrationReport;
@@ -72,6 +72,29 @@ export default function Report({ report, onRunAnother }: Props) {
           </p>
         )}
       </div>
+
+      {report.skippedSubitemFields?.length > 0 && (
+        <div className="report-issues">
+          <h3>Skipped subitem fields</h3>
+          <p className="step-desc">These subitem fields had no mapping and were not migrated.</p>
+          <table className="mapping-table">
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Values skipped</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.skippedSubitemFields.map((f: SkippedSubitemField) => (
+                <tr key={f.fieldId} className="row-warning">
+                  <td>{f.fieldName !== f.fieldId ? f.fieldName : `Unknown field (${f.fieldId})`}</td>
+                  <td>{f.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {report.items.some((i) => i.status !== 'success') && (
         <div className="report-issues">

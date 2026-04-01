@@ -422,6 +422,31 @@ app.get('/api/source/project-summary', requireAuth, async (req, res) => {
   }
 });
 
+// Returns subitem fields that have no matching entry in the current field mapping.
+// Only meaningful for Monday source (other connectors return []).
+app.get('/api/source/subitem-field-warnings', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  const { projectId } = req.query as { projectId?: string };
+  if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+  try {
+    const { platform, token } = req.session.sourceConfig;
+    if (platform !== 'monday') return res.json([]);
+
+    const { MondayConnector } = await import('./connectors/monday.js');
+    const connector = new MondayConnector(token);
+    const subitemFields = await connector.getSubitemFields(projectId);
+
+    const mappedSourceIds = new Set((req.session.fieldMapping ?? []).map((f) => f.sourceFieldId));
+    const warnings = subitemFields
+      .filter((f) => !mappedSourceIds.has(f.id))
+      .map((f) => ({ fieldId: f.id, fieldName: f.name, fieldType: f.type }));
+
+    res.json(warnings);
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'source/subitem-field-warnings' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Destination (Asana) routes
 // ---------------------------------------------------------------------------

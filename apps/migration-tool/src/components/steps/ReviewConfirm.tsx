@@ -9,6 +9,12 @@ interface ProjectSummary {
   dependencies: number;
 }
 
+interface SubitemFieldWarning {
+  fieldId: string;
+  fieldName: string;
+  fieldType: string;
+}
+
 interface Props {
   state: AppState;
   onConfirm: () => void;
@@ -25,13 +31,20 @@ export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMappin
 
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
+  const [subitemWarnings, setSubitemWarnings] = useState<SubitemFieldWarning[]>([]);
 
   useEffect(() => {
     if (!state.selectedSourceProjectId) return;
     setSummaryLoading(true);
-    fetch(`/api/source/project-summary?projectId=${encodeURIComponent(state.selectedSourceProjectId)}`)
-      .then((r) => r.json() as Promise<ProjectSummary>)
-      .then((data) => { setSummary(data); setSummaryLoading(false); })
+    Promise.all([
+      fetch(`/api/source/project-summary?projectId=${encodeURIComponent(state.selectedSourceProjectId)}`).then((r) => r.json() as Promise<ProjectSummary>),
+      fetch(`/api/source/subitem-field-warnings?projectId=${encodeURIComponent(state.selectedSourceProjectId)}`).then((r) => r.json() as Promise<SubitemFieldWarning[]>),
+    ])
+      .then(([summaryData, warnings]) => {
+        setSummary(summaryData);
+        setSubitemWarnings(warnings);
+        setSummaryLoading(false);
+      })
       .catch(() => setSummaryLoading(false));
   }, [state.selectedSourceProjectId]);
 
@@ -106,6 +119,29 @@ export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMappin
           )}
         </ReviewSection>
       </div>
+
+      {subitemWarnings.length > 0 && (
+        <div className="review-warnings">
+          <h3 className="review-warnings-title">⚠ Subitem fields that will not be migrated</h3>
+          <p className="review-warnings-desc">
+            These fields exist on subitems but have no matching entry in the field mapping.
+            Their values will be silently skipped. Go back and reload the mapping to include them.
+          </p>
+          <table className="mapping-table">
+            <thead>
+              <tr><th>Field Name</th><th>Type</th></tr>
+            </thead>
+            <tbody>
+              {subitemWarnings.map((w) => (
+                <tr key={w.fieldId} className="row-warning">
+                  <td>{w.fieldName}</td>
+                  <td><span className="type-pill">{w.fieldType}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>

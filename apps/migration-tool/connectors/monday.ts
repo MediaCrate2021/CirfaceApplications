@@ -134,6 +134,21 @@ export class MondayConnector implements SourceConnector {
     return this.normaliseColumns(data.boards[0]?.columns ?? []);
   }
 
+  /** Returns the custom fields defined on this board's subitem board (may be empty if no subitems exist). */
+  async getSubitemFields(boardId: string): Promise<NormalisedField[]> {
+    const data = await this.gql<{
+      boards: Array<{ subitems_board: { columns: MondayColumn[] } | null }>;
+    }>(`
+      query($boardId: [ID!]) {
+        boards(ids: $boardId) {
+          subitems_board { columns { id title type settings_str } }
+        }
+      }
+    `, { boardId: [boardId] });
+    const cols = data.boards[0]?.subitems_board?.columns ?? [];
+    return this.normaliseColumns(cols);
+  }
+
   async getProjectData(boardId: string): Promise<NormalisedProject> {
     // Phase 1: Fetch board structure — columns, groups, and items with column values
     // and subitem IDs only. updates/assets are intentionally excluded here because

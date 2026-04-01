@@ -23,6 +23,7 @@ import type {
   NormalisedProject,
   NormalisedTask,
   SectionMappingEntry,
+  SkippedSubitemField,
   UserMappingEntry,
 } from '../src/types/index.js';
 import logger from '../logger.js';
@@ -226,6 +227,7 @@ export class AsanaDestination {
       warnings: 0,
       errors: 0,
       items: [],
+      skippedSubitemFields: [],
       log: [],
     };
 
@@ -566,7 +568,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, userGidMap, taskGidMap, report);
+        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, taskGidMap, report);
       }
 
       // Comments
@@ -613,11 +615,52 @@ export class AsanaDestination {
     parentGid: string,
     sourceIdFieldGid: string | undefined,
     userGidMap: Map<string, string>,
+    fieldGidMap: Map<string, string>,
+    enumOptionMap: Map<string, Map<string, string>>,
+    fieldTypeMap: Map<string, AsanaFieldType>,
     taskGidMap: Map<string, string>,
     report: MigrationReport,
   ): Promise<void> {
     try {
       const customFields: Record<string, unknown> = {};
+
+      for (const [sourceFieldId, value] of Object.entries(subtask.customFields)) {
+        const destGid = fieldGidMap.get(sourceFieldId);
+        if (!destGid) {
+          // Field exists on the subitem board but has no entry in the field mapping — track it
+          if (value !== null && value !== '') {
+            const existing = report.skippedSubitemFields.find((s) => s.fieldId === sourceFieldId);
+            if (existing) {
+              existing.count++;
+            } else {
+              report.skippedSubitemFields.push({ fieldId: sourceFieldId, fieldName: sourceFieldId, count: 1 });
+            }
+          }
+          continue;
+        }
+        if (value === null || value === '') continue;
+
+        const optMap = enumOptionMap.get(sourceFieldId);
+        if (optMap) {
+          if (Array.isArray(value)) {
+            const gids = value.map((v) => optMap.get(v)).filter((g): g is string => g != null);
+            if (gids.length) customFields[destGid] = gids;
+          } else {
+            const gid = optMap.get(value);
+            if (gid) customFields[destGid] = gid;
+          }
+        } else if (fieldTypeMap.get(sourceFieldId) === 'date') {
+          const dateStr = Array.isArray(value) ? value[0] : value;
+          if (dateStr) customFields[destGid] = { date: String(dateStr).substring(0, 10) };
+        } else if (fieldTypeMap.get(sourceFieldId) === 'people') {
+          const ids = Array.isArray(value) ? value : [value];
+          const gids = ids.map((id) => userGidMap.get(String(id))).filter((g): g is string => g != null);
+          if (gids.length) customFields[destGid] = gids;
+        } else {
+          customFields[destGid] = value;
+        }
+      }
+
       if (sourceIdFieldGid) customFields[sourceIdFieldGid] = subtask.id;
 
       const payload: Record<string, unknown> = {
