@@ -849,9 +849,20 @@ export class AsanaDestination {
         if (entry.sourceFieldType === 'checkbox') {
           options = [{ name: 'True' }, { name: 'False' }];
         } else if (entry.sourceOptions?.length) {
+          // Always filter blank names; only deduplicate when the user has explicitly opted in.
+          // If duplicates remain and deduplicateOptions is false, Asana will reject the field
+          // and the failure will surface in the report — the user should fix the source data.
+          const seen = new Set<string>();
           options = entry.sourceOptions
             .map((opt) => ({ name: String(opt.name ?? '').trim() }))
-            .filter((opt) => opt.name.length > 0);
+            .filter((opt) => {
+              if (!opt.name) return false;
+              if (entry.deduplicateOptions) {
+                if (seen.has(opt.name.toLowerCase())) return false;
+                seen.add(opt.name.toLowerCase());
+              }
+              return true;
+            });
         } else {
           options = [];
         }

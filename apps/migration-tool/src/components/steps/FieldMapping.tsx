@@ -62,6 +62,8 @@ const ASANA_CREATABLE_TYPES: Array<{ value: AsanaFieldType | string; label: stri
 interface CheckIssue {
   severity: 'warning' | 'info';
   message: string;
+  /** If set, an "Enable auto-deduplicate" button is shown for this issue. */
+  dedupeFieldId?: string;
 }
 
 interface CheckResult {
@@ -72,7 +74,6 @@ interface CheckResult {
 function runMappingCheck(
   mapping: FieldMappingEntry[],
   sectionMapping: SectionMappingEntry[],
-  externalIdDestFieldGid: string | null | undefined,
   isExistingProject: boolean,
 ): CheckResult {
   const issues: CheckIssue[] = [];
@@ -97,6 +98,34 @@ function runMappingCheck(
       const unmatched = m.enumMapping.filter((e) => !e.destOptionGid);
       if (unmatched.length > 0) {
         issues.push({ severity: 'warning', message: `"${m.sourceFieldName}": ${unmatched.length} option${unmatched.length !== 1 ? 's' : ''} have no Asana match (${unmatched.map((e) => `"${e.sourceOption}"`).join(', ')}) and will be skipped.` });
+      }
+    }
+  }
+
+  // Enum fields with duplicate or blank option names (Asana will reject them)
+  for (const m of active) {
+    if (!m.sourceOptions?.length) continue;
+    const seen = new Set<string>();
+    const dupes: string[] = [];
+    const blanks: number[] = [];
+    m.sourceOptions.forEach((opt, idx) => {
+      const name = String(opt.name ?? '').trim();
+      if (!name) { blanks.push(idx + 1); return; }
+      if (seen.has(name.toLowerCase())) dupes.push(`"${name}"`);
+      else seen.add(name.toLowerCase());
+    });
+    if (blanks.length) {
+      issues.push({ severity: 'warning', message: `"${m.sourceFieldName}": ${blanks.length} blank option name${blanks.length !== 1 ? 's' : ''} — blank options will be skipped automatically.` });
+    }
+    if (dupes.length) {
+      if (m.deduplicateOptions) {
+        issues.push({ severity: 'info', message: `"${m.sourceFieldName}": duplicate option${dupes.length !== 1 ? 's' : ''} (${dupes.join(', ')}) will be auto-deduplicated.` });
+      } else {
+        issues.push({
+          severity: 'warning',
+          message: `"${m.sourceFieldName}": duplicate option name${dupes.length !== 1 ? 's' : ''} ${dupes.join(', ')} — fix in the source system, or enable auto-deduplication below.`,
+          dedupeFieldId: m.sourceFieldId,
+        });
       }
     }
   }
@@ -261,11 +290,25 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
     ));
   }
 
+  function toggleDedup(sourceFieldId: string) {
+    setMapping((prev) => prev.map((m) =>
+      m.sourceFieldId === sourceFieldId ? { ...m, deduplicateOptions: !m.deduplicateOptions } : m,
+    ));
+    // Re-run the check so the panel updates immediately
+    setCheckResult((prev) => {
+      if (!prev) return prev;
+      const updated = mapping.map((m) =>
+        m.sourceFieldId === sourceFieldId ? { ...m, deduplicateOptions: !m.deduplicateOptions } : m,
+      );
+      return runMappingCheck(updated, sectionMapping, false);
+    });
+  }
+
   const omittedCount = mapping.filter((m) => m.omit).length;
   const activeCount = mapping.length - omittedCount;
 
   function handleCheck() {
-    setCheckResult(runMappingCheck(mapping, sectionMapping, null, false));
+    setCheckResult(runMappingCheck(mapping, sectionMapping, false));
   }
 
   async function handleSave() {
@@ -381,7 +424,18 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
           {checkResult.issues.length > 0 && (
             <ul className="check-issue-list">
               {checkResult.issues.map((issue, i) => (
-                <li key={i} className={`check-issue check-issue-${issue.severity}`}>{issue.message}</li>
+                <li key={i} className={`check-issue check-issue-${issue.severity}`}>
+                  {issue.message}
+                  {issue.dedupeFieldId && (
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      style={{ marginLeft: 8 }}
+                      onClick={() => toggleDedup(issue.dedupeFieldId!)}
+                    >
+                      Enable auto-deduplicate
+                    </button>
+                  )}
+                </li>
               ))}
             </ul>
           )}
@@ -588,6 +642,20 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
     ));
   }
 
+  function toggleDedup(sourceFieldId: string) {
+    setMapping((prev) => prev.map((m) =>
+      m.sourceFieldId === sourceFieldId ? { ...m, deduplicateOptions: !m.deduplicateOptions } : m,
+    ));
+    // Re-run the check so the panel updates immediately
+    setCheckResult((prev) => {
+      if (!prev) return prev;
+      const updated = mapping.map((m) =>
+        m.sourceFieldId === sourceFieldId ? { ...m, deduplicateOptions: !m.deduplicateOptions } : m,
+      );
+      return runMappingCheck(updated, sectionMapping, true);
+    });
+  }
+
   function toggleEnumExpand(sourceFieldId: string) {
     setExpandedEnums((prev) => {
       const next = new Set(prev);
@@ -606,7 +674,7 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
   ]);
 
   function handleCheck() {
-    setCheckResult(runMappingCheck(mapping, sectionMapping, externalIdDestFieldGid, true));
+    setCheckResult(runMappingCheck(mapping, sectionMapping, true));
   }
 
   async function handleSave() {
@@ -900,7 +968,18 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
           {checkResult.issues.length > 0 && (
             <ul className="check-issue-list">
               {checkResult.issues.map((issue, i) => (
-                <li key={i} className={`check-issue check-issue-${issue.severity}`}>{issue.message}</li>
+                <li key={i} className={`check-issue check-issue-${issue.severity}`}>
+                  {issue.message}
+                  {issue.dedupeFieldId && (
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      style={{ marginLeft: 8 }}
+                      onClick={() => toggleDedup(issue.dedupeFieldId!)}
+                    >
+                      Enable auto-deduplicate
+                    </button>
+                  )}
+                </li>
               ))}
             </ul>
           )}

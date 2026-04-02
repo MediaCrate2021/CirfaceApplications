@@ -152,6 +152,12 @@ export interface FieldMappingEntry {
   enumMapping?: EnumMappingEntry[];
   /** When set, value is written to a native Asana task field instead of creating a custom field. */
   destNativeField?: 'due_on' | 'notes' | 'assignee' | 'followers';
+  /**
+   * When true, duplicate enum option names are automatically deduplicated before creating the
+   * Asana field (keeping the first occurrence). When false/unset, duplicates are sent as-is and
+   * Asana will reject the field creation — the user should fix them in the source system first.
+   */
+  deduplicateOptions?: boolean;
 }
 
 export interface SectionMappingEntry {
