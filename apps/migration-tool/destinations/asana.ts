@@ -284,11 +284,13 @@ export class AsanaDestination {
     const activeFields = options.fieldMapping.filter((f) => !f.omit);
     const omittedFields = options.fieldMapping.length - activeFields.length;
     log(`${options.fieldMapping.length} custom fields found in source. ${omittedFields > 0 ? omittedFields + ' omitted. ' : ''}Processing ${activeFields.length} fields.`);
-    const { fieldGidMap, enumOptionMap, fieldTypeMap } = await this.ensureCustomFields(
+    const { fieldGidMap, enumOptionMap, fieldTypeMap, fieldFailures } = await this.ensureCustomFields(
       projectGid,
       options.fieldMapping,
       log,
     );
+    report.warnings += fieldFailures.length;
+    report.items.push(...fieldFailures);
 
     // Step 4: resolve the External ID field — used to store each task's source platform item ID
     // so tasks can be traced back to their origin. If the user mapped this to an existing Asana
@@ -740,10 +742,12 @@ export class AsanaDestination {
     enumOptionMap: Map<string, Map<string, string>>;
     /** sourceFieldId → resolved Asana field type (for value formatting) */
     fieldTypeMap: Map<string, AsanaFieldType>;
+    fieldFailures: MigrationReportItem[];
   }> {
     const fieldGidMap = new Map<string, string>();
     const enumOptionMap = new Map<string, Map<string, string>>();
     const fieldTypeMap = new Map<string, AsanaFieldType>();
+    const fieldFailures: MigrationReportItem[] = [];
 
     for (const entry of fieldMapping) {
       if (entry.omit) continue;
@@ -786,8 +790,15 @@ export class AsanaDestination {
 
           log(`Field '${fieldName}' created.`);
         } catch (err) {
-          log(`Failed to create field 'm_${entry.sourceFieldName}': ${(err as Error).message}`, 'warning');
+          const msg = (err as Error).message ?? '';
+          log(`Failed to create field 'm_${entry.sourceFieldName}': ${msg}`, 'warning');
           logger.warn({ err, field: entry.sourceFieldName }, 'failed to create custom field');
+          fieldFailures.push({
+            taskId: `field:${entry.sourceFieldId}`,
+            taskName: `Custom field: ${entry.sourceFieldName}`,
+            status: 'warning',
+            message: `Failed to create field 'm_${entry.sourceFieldName}': ${msg}`,
+          });
         }
       } else {
         // Field is mapped to an existing Asana field. Attach it to the project in case
@@ -817,7 +828,7 @@ export class AsanaDestination {
       }
     }
 
-    return { fieldGidMap, enumOptionMap, fieldTypeMap };
+    return { fieldGidMap, enumOptionMap, fieldTypeMap, fieldFailures };
   }
 
   /** Build the inline custom_field definition for addCustomFieldSetting. */
