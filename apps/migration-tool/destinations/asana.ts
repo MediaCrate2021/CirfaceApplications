@@ -831,6 +831,15 @@ export class AsanaDestination {
     return { fieldGidMap, enumOptionMap, fieldTypeMap, fieldFailures };
   }
 
+  /**
+   * Asana's supported enum option color tokens, in a visually pleasing cycle order.
+   * 'none' and 'cool-gray' are omitted so every option gets a distinct colour.
+   */
+  private static readonly ENUM_COLORS = [
+    'aqua', 'blue', 'green', 'yellow-green', 'yellow', 'yellow-orange',
+    'orange', 'red', 'pink', 'hot-pink', 'magenta', 'purple', 'indigo', 'blue-green',
+  ] as const;
+
   /** Build the inline custom_field definition for addCustomFieldSetting. */
   private buildFieldDef(
     asanaType: AsanaFieldType,
@@ -845,14 +854,15 @@ export class AsanaDestination {
         break;
       case 'enum':
       case 'multi_enum': {
-        let options: Array<{ name: string }>;
+        let options: Array<{ name: string; color: string }>;
         if (entry.sourceFieldType === 'checkbox') {
-          options = [{ name: 'True' }, { name: 'False' }];
+          options = [{ name: 'True', color: 'green' }, { name: 'False', color: 'red' }];
         } else if (entry.sourceOptions?.length) {
           // Always filter blank names; only deduplicate when the user has explicitly opted in.
           // If duplicates remain and deduplicateOptions is false, Asana will reject the field
           // and the failure will surface in the report — the user should fix the source data.
           const seen = new Set<string>();
+          let colorIndex = 0;
           options = entry.sourceOptions
             .map((opt) => ({ name: String(opt.name ?? '').trim() }))
             .filter((opt) => {
@@ -862,7 +872,11 @@ export class AsanaDestination {
                 seen.add(opt.name.toLowerCase());
               }
               return true;
-            });
+            })
+            .map((opt) => ({
+              name: opt.name,
+              color: AsanaDestination.ENUM_COLORS[colorIndex++ % AsanaDestination.ENUM_COLORS.length],
+            }));
         } else {
           options = [];
         }
