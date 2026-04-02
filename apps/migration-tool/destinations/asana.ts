@@ -584,7 +584,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report);
+        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report);
       }
 
       // Comments
@@ -630,6 +630,9 @@ export class AsanaDestination {
     subtask: NormalisedTask,
     parentGid: string,
     sourceIdFieldGid: string | undefined,
+    nativeDueOnSourceId: string | undefined,
+    nativeNotesSourceId: string | undefined,
+    nativeAssigneeSourceId: string | undefined,
     userGidMap: Map<string, string>,
     fieldGidMap: Map<string, string>,
     enumOptionMap: Map<string, Map<string, string>>,
@@ -682,19 +685,39 @@ export class AsanaDestination {
 
       if (sourceIdFieldGid) customFields[sourceIdFieldGid] = subtask.id;
 
+      // Apply native field mappings — same logic as migrateTask.
+      // Prefer the mapped source column; fall back to the normalised task field.
+      let nativeDueOn: string | undefined = subtask.dueDate;
+      let nativeNotes: string | undefined = subtask.description;
+      if (nativeDueOnSourceId) {
+        const v = subtask.customFields[nativeDueOnSourceId];
+        if (typeof v === 'string' && v) nativeDueOn = v;
+      }
+      if (nativeNotesSourceId) {
+        const v = subtask.customFields[nativeNotesSourceId];
+        if (typeof v === 'string' && v) nativeNotes = v;
+      }
+
       const payload: Record<string, unknown> = {
         parent: parentGid,
         name: subtask.name,
+        notes: nativeNotes ?? '',
         completed: subtask.completed,
         custom_fields: customFields,
       };
 
-      if (subtask.assigneeId) {
+      // Assignee — prefer the explicitly-mapped people column, fall back to task.assigneeId
+      if (nativeAssigneeSourceId) {
+        const ids = subtask.customFields[nativeAssigneeSourceId];
+        const firstId = Array.isArray(ids) ? ids[0] : (ids ?? undefined);
+        const gid = firstId != null ? userGidMap.get(String(firstId)) : undefined;
+        if (gid) payload.assignee = gid;
+      } else if (subtask.assigneeId) {
         const asanaGid = userGidMap.get(subtask.assigneeId);
         if (asanaGid) payload.assignee = asanaGid;
       }
 
-      if (subtask.dueDate) payload.due_on = subtask.dueDate.substring(0, 10);
+      if (nativeDueOn) payload.due_on = nativeDueOn.substring(0, 10);
 
       const created = await this.request<{ gid: string }>('POST', '/tasks', payload);
       taskGidMap.set(subtask.id, created.gid);

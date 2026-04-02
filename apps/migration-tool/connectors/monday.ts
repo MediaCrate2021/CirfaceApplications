@@ -213,7 +213,7 @@ export class MondayConnector implements SourceConnector {
               name
               state
               group { id }
-              column_values { id type text value ... on DependencyValue { linked_items { id } } }
+              column_values { id type text value ... on DependencyValue { linked_items { id } } ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
               subitems { id }
             }
           }
@@ -244,7 +244,7 @@ export class MondayConnector implements SourceConnector {
             items {
               id name state
               group { id }
-              column_values { id type text value ... on DependencyValue { linked_items { id } } }
+              column_values { id type text value ... on DependencyValue { linked_items { id } } ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
               subitems { id }
             }
           }
@@ -316,8 +316,8 @@ export class MondayConnector implements SourceConnector {
         query($ids: [ID!]!) {
           items(ids: $ids) {
             id name state
-            column_values { id type text value }
-            updates(limit: 25) { id body created_at creator { id name email } }
+            column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
+            updates(limit: 25) { id body created_at creator { id name email } assets { id name public_url file_extension } }
             assets { id name public_url file_extension }
           }
         }
@@ -333,7 +333,8 @@ export class MondayConnector implements SourceConnector {
 
   private normaliseColumns(columns: MondayColumn[]): NormalisedField[] {
     return columns
-      .filter((c) => !['name', 'subitems', 'subtasks', 'board_relation'].includes(c.type))
+      // 'file' columns are always extracted as task attachments — never mapped as custom fields.
+      .filter((c) => !['name', 'subitems', 'subtasks', 'board_relation', 'file'].includes(c.type))
       .map((c) => {
         const type = this.mapColumnType(c.type);
         const field: NormalisedField = { id: c.id, name: c.title, type };
@@ -432,7 +433,10 @@ export class MondayConnector implements SourceConnector {
         const col = columns.find((c) => c.id === cv.id);
         if (!col) continue;
 
-        if (col.type === 'people' || col.type === 'team') {
+        if (col.type === 'file') {
+          // File columns are collected as attachments below — skip custom field storage.
+          continue;
+        } else if (col.type === 'people' || col.type === 'team') {
           // Extract all persons: first becomes the default assignee, all IDs are stored
           // in customFields so the user can map this column to native assignee or followers.
           if (cv.value) {
@@ -449,8 +453,25 @@ export class MondayConnector implements SourceConnector {
               // ignore
             }
           }
+        } else if (col.type === 'long_text') {
+          // LongTextValue inline fragment gives us the canonical text; fall back to cv.text.
+          // Store as custom field so the user can map it to native Notes if desired.
+          customFields[cv.id] = cv.text || null;
         } else {
           customFields[cv.id] = cv.text || null;
+        }
+      }
+
+      // Collect file attachments from Files columns (via FileValue inline fragment).
+      // These are in addition to any files directly attached to the item (item.assets).
+      const fileColAttachments: NormalisedAttachment[] = [];
+      for (const cv of item.column_values) {
+        if (cv.type === 'file' && cv.files?.length) {
+          for (const f of cv.files) {
+            if (f.asset?.public_url) {
+              fileColAttachments.push({ id: f.asset.id, name: f.asset.name, url: f.asset.public_url });
+            }
+          }
         }
       }
 
@@ -470,7 +491,7 @@ export class MondayConnector implements SourceConnector {
         customFields,
         subtasks,
         comments: this.normaliseUpdates(item.updates ?? [], usersMap),
-        attachments: this.normaliseAssets(item.assets ?? []),
+        attachments: [...this.normaliseAssets(item.assets ?? []), ...fileColAttachments, ...this.normaliseUpdateAssets(item.updates ?? [])],
         dependencyIds,
       };
     });
@@ -490,7 +511,10 @@ export class MondayConnector implements SourceConnector {
     for (const cv of sub.column_values) {
       if (cv.type === 'name' || cv.type === 'subitems' || cv.type === 'subtasks') continue;
 
-      if (cv.type === 'people' || cv.type === 'team') {
+      if (cv.type === 'file') {
+        // Collected as attachments below.
+        continue;
+      } else if (cv.type === 'people' || cv.type === 'team') {
         if (cv.value) {
           try {
             const parsed = JSON.parse(cv.value) as {
@@ -512,6 +536,18 @@ export class MondayConnector implements SourceConnector {
       }
     }
 
+    // Collect file attachments from Files columns.
+    const fileColAttachments: NormalisedAttachment[] = [];
+    for (const cv of sub.column_values) {
+      if (cv.type === 'file' && cv.files?.length) {
+        for (const f of cv.files) {
+          if (f.asset?.public_url) {
+            fileColAttachments.push({ id: f.asset.id, name: f.asset.name, url: f.asset.public_url });
+          }
+        }
+      }
+    }
+
     return {
       id: sub.id,
       name: sub.name,
@@ -521,7 +557,7 @@ export class MondayConnector implements SourceConnector {
       customFields,
       subtasks: [],
       comments: this.normaliseUpdates(sub.updates ?? [], usersMap),
-      attachments: this.normaliseAssets(sub.assets ?? []),
+      attachments: [...this.normaliseAssets(sub.assets ?? []), ...fileColAttachments, ...this.normaliseUpdateAssets(sub.updates ?? [])],
       dependencyIds: [],
       parentId,
     };
@@ -560,6 +596,18 @@ export class MondayConnector implements SourceConnector {
     }));
   }
 
+  /** Collect all assets attached within updates (comments) as task-level attachments. */
+  private normaliseUpdateAssets(updates: MondayUpdate[]): NormalisedAttachment[] {
+    return updates.flatMap((u) =>
+      (u.assets ?? []).map((a) => ({
+        id: a.id,
+        name: a.name,
+        url: a.public_url,
+        mimeType: this.mimeFromExtension(a.file_extension),
+      })),
+    );
+  }
+
   private mimeFromExtension(ext: string): string | undefined {
     const map: Record<string, string> = {
       pdf: 'application/pdf',
@@ -594,6 +642,7 @@ interface MondayColumnValue {
   text: string;
   value: string | null;
   linked_items?: Array<{ id: string }>; // populated for DependencyValue via inline fragment
+  files?: Array<{ asset?: { id: string; public_url: string; name: string } }>; // FileAssetValue items from FileValue columns
 }
 
 interface MondayUpdate {
@@ -601,6 +650,7 @@ interface MondayUpdate {
   body: string;
   created_at: string;
   creator?: { id: string; name: string; email: string };
+  assets?: MondayAsset[]; // files attached within this update
 }
 
 interface MondayAsset {
