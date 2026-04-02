@@ -129,7 +129,17 @@ export default function Report({ report, onRunAnother }: Props) {
       )}
 
       <div className="step-actions">
-        <button className="btn btn-primary" onClick={onRunAnother}>
+        {report.destProject && (
+          <a
+            className="btn btn-primary"
+            href={`https://app.asana.com/0/${report.destProject}/list`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View Project in Asana
+          </a>
+        )}
+        <button className="btn btn-ghost" onClick={onRunAnother}>
           Migrate Another Project
         </button>
       </div>

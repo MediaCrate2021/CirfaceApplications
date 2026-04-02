@@ -134,18 +134,52 @@ export class MondayConnector implements SourceConnector {
     return this.normaliseColumns(data.boards[0]?.columns ?? []);
   }
 
-  /** Returns the custom fields defined on this board's subitem board (may be empty if no subitems exist). */
+  /** Returns the custom fields defined on this board's subitem board (may be empty if no subitems exist).
+   *  Strategy: find the subitems column on the parent board, parse its settings_str to get the
+   *  sub-board ID, then query that board directly. This is more reliable than subitems_board
+   *  which is not available in all API versions.
+   */
   async getSubitemFields(boardId: string): Promise<NormalisedField[]> {
-    const data = await this.gql<{
-      boards: Array<{ subitems_board: { columns: MondayColumn[] } | null }>;
+    // Step 1: get raw parent columns (unfiltered) to find the subitems column
+    const parentData = await this.gql<{
+      boards: Array<{ columns: MondayColumn[] }>;
     }>(`
       query($boardId: [ID!]) {
         boards(ids: $boardId) {
-          subitems_board { columns { id title type settings_str } }
+          columns { id title type settings_str }
         }
       }
     `, { boardId: [boardId] });
-    const cols = data.boards[0]?.subitems_board?.columns ?? [];
+
+    const parentCols = parentData.boards[0]?.columns ?? [];
+    const subitemsCol = parentCols.find((c) => c.type === 'subitems' || c.type === 'subtasks');
+    logger.info({ boardId, parentColTypes: parentCols.map((c) => c.type), foundSubitemsCol: !!subitemsCol, settings_str: subitemsCol?.settings_str }, 'getSubitemFields: parent columns');
+    if (!subitemsCol) return [];
+
+    // Step 2: parse the subitem board ID from settings_str
+    let subBoardId: string | undefined;
+    try {
+      const settings = JSON.parse(subitemsCol.settings_str ?? '{}') as { boardIds?: number[] };
+      subBoardId = settings.boardIds?.[0] != null ? String(settings.boardIds[0]) : undefined;
+      logger.info({ boardId, settings, subBoardId }, 'getSubitemFields: parsed settings_str');
+    } catch (err) {
+      logger.warn({ err, settings_str: subitemsCol.settings_str }, 'getSubitemFields: failed to parse settings_str');
+      return [];
+    }
+    if (!subBoardId) return [];
+
+    // Step 3: query the subitem board for its columns
+    const subData = await this.gql<{
+      boards: Array<{ columns: MondayColumn[] }>;
+    }>(`
+      query($subBoardId: [ID!]) {
+        boards(ids: $subBoardId) {
+          columns { id title type settings_str }
+        }
+      }
+    `, { subBoardId: [subBoardId!] });
+
+    const cols = subData.boards[0]?.columns ?? [];
     return this.normaliseColumns(cols);
   }
 
@@ -299,7 +333,7 @@ export class MondayConnector implements SourceConnector {
 
   private normaliseColumns(columns: MondayColumn[]): NormalisedField[] {
     return columns
-      .filter((c) => !['name', 'subitems', 'board_relation'].includes(c.type))
+      .filter((c) => !['name', 'subitems', 'subtasks', 'board_relation'].includes(c.type))
       .map((c) => {
         const type = this.mapColumnType(c.type);
         const field: NormalisedField = { id: c.id, name: c.title, type };
@@ -454,7 +488,7 @@ export class MondayConnector implements SourceConnector {
     let dueDate: string | undefined;
 
     for (const cv of sub.column_values) {
-      if (cv.type === 'name' || cv.type === 'subitems') continue;
+      if (cv.type === 'name' || cv.type === 'subitems' || cv.type === 'subtasks') continue;
 
       if (cv.type === 'people' || cv.type === 'team') {
         if (cv.value) {

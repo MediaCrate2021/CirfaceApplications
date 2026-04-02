@@ -21,6 +21,7 @@ interface AsanaField {
 interface Props {
   state: AppState;
   onSave: (fieldMapping: FieldMappingEntry[], sectionMapping: SectionMappingEntry[], externalIdDestFieldGid: string | null) => void;
+  onDraftChange: (fieldMapping: FieldMappingEntry[], sectionMapping: SectionMappingEntry[], externalIdDestFieldGid: string | null) => void;
   onBack: () => void;
 }
 
@@ -57,6 +58,57 @@ const ASANA_CREATABLE_TYPES: Array<{ value: AsanaFieldType | string; label: stri
   { value: 'multi_enum',      label: 'New Field Type: Dropdown (multi)' },
   { value: 'people',          label: 'New Field Type: People' },
 ];
+
+interface CheckIssue {
+  severity: 'warning' | 'info';
+  message: string;
+}
+
+interface CheckResult {
+  issues: CheckIssue[];
+  ok: boolean; // no warnings
+}
+
+function runMappingCheck(
+  mapping: FieldMappingEntry[],
+  sectionMapping: SectionMappingEntry[],
+  externalIdDestFieldGid: string | null | undefined,
+  isExistingProject: boolean,
+): CheckResult {
+  const issues: CheckIssue[] = [];
+
+  const active = mapping.filter((m) => !m.omit);
+
+  // Fields with no type and no native mapping
+  const untyped = active.filter((m) => !m.destFieldType && !m.destNativeField && !m.destFieldId);
+  for (const m of untyped) {
+    issues.push({ severity: 'warning', message: `"${m.sourceFieldName}" has no destination type — it will be created as text.` });
+  }
+
+  // Existing project: unmapped fields (no dest field, no type chosen) will be created new
+  if (isExistingProject) {
+    const willCreate = active.filter((m) => !m.destFieldId && !m.destNativeField);
+    if (willCreate.length > 0) {
+      issues.push({ severity: 'info', message: `${willCreate.length} field${willCreate.length !== 1 ? 's' : ''} have no existing Asana field selected and will be created new (m_ prefix).` });
+    }
+    // Enum fields mapped to existing dest but with unmatched options
+    for (const m of active) {
+      if (!m.enumMapping?.length) continue;
+      const unmatched = m.enumMapping.filter((e) => !e.destOptionGid);
+      if (unmatched.length > 0) {
+        issues.push({ severity: 'warning', message: `"${m.sourceFieldName}": ${unmatched.length} option${unmatched.length !== 1 ? 's' : ''} have no Asana match (${unmatched.map((e) => `"${e.sourceOption}"`).join(', ')}) and will be skipped.` });
+      }
+    }
+  }
+
+  // Sections with blank destination names
+  const blankSections = sectionMapping.filter((s) => !s.omit && !s.destName?.trim());
+  for (const s of blankSections) {
+    issues.push({ severity: 'warning', message: `Section "${s.sourceName}" has no destination name.` });
+  }
+
+  return { issues, ok: !issues.some((i) => i.severity === 'warning') };
+}
 
 function defaultAsanaType(src: NormalisedFieldType): AsanaFieldType {
   const map: Record<NormalisedFieldType, AsanaFieldType> = {
@@ -124,12 +176,22 @@ function TitleRow({ colSpan }: { colSpan: number }) {
 // New-project mode — type selector, no dest field picker
 // ---------------------------------------------------------------------------
 
-function NewProjectMapping({ state, onSave, onBack }: Props) {
+function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
   const [mapping, setMapping] = useState<FieldMappingEntry[]>(state.fieldMapping);
   const [sectionMapping, setSectionMapping] = useState<SectionMappingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
   const hasFired = useRef(false);
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist draft to AppState so changes survive navigation
+  useEffect(() => {
+    if (loading) return;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => onDraftChange(mapping, sectionMapping, null), 400);
+    return () => { if (draftTimer.current) clearTimeout(draftTimer.current); };
+  }, [mapping, sectionMapping]);
 
   function load(forceRemap = false) {
     setLoading(true);
@@ -201,6 +263,10 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
 
   const omittedCount = mapping.filter((m) => m.omit).length;
   const activeCount = mapping.length - omittedCount;
+
+  function handleCheck() {
+    setCheckResult(runMappingCheck(mapping, sectionMapping, null, false));
+  }
 
   async function handleSave() {
     await fetch('/api/session/field-mapping', {
@@ -309,10 +375,26 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
         </>
       )}
 
+      {checkResult && (
+        <div className={`check-result-panel ${checkResult.ok ? 'check-ok' : 'check-warnings'}`}>
+          <strong>{checkResult.ok ? '✓ Mapping looks good' : `⚠ ${checkResult.issues.filter(i => i.severity === 'warning').length} warning(s) found`}</strong>
+          {checkResult.issues.length > 0 && (
+            <ul className="check-issue-list">
+              {checkResult.issues.map((issue, i) => (
+                <li key={i} className={`check-issue check-issue-${issue.severity}`}>{issue.message}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
         <button className="btn btn-ghost" onClick={handleReload} disabled={loading}>
           ↺ Reload source data
+        </button>
+        <button className="btn btn-ghost" onClick={handleCheck} disabled={loading || !!error}>
+          ✓ Check Mapping
         </button>
         <button className="btn btn-primary" onClick={handleSave} disabled={loading || !!error}>
           Save &amp; Continue
@@ -326,7 +408,7 @@ function NewProjectMapping({ state, onSave, onBack }: Props) {
 // Existing-project mode — map to dest fields, enum value mapping, reload
 // ---------------------------------------------------------------------------
 
-function ExistingProjectMapping({ state, onSave, onBack }: Props) {
+function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
   const [destFields, setDestFields] = useState<AsanaField[]>([]);
   const [destSections, setDestSections] = useState<Array<{ gid: string; name: string }>>([]);
   const [mapping, setMapping] = useState<FieldMappingEntry[]>(state.fieldMapping);
@@ -335,7 +417,17 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
   const [expandedEnums, setExpandedEnums] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
   const hasFired = useRef(false);
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist draft to AppState so changes survive navigation
+  useEffect(() => {
+    if (loading) return;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => onDraftChange(mapping, sectionMapping, externalIdDestFieldGid), 400);
+    return () => { if (draftTimer.current) clearTimeout(draftTimer.current); };
+  }, [mapping, sectionMapping, externalIdDestFieldGid]);
 
   function load(isReload = false) {
     setLoading(true);
@@ -512,6 +604,10 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
     ...mapping.map((m) => m.destFieldId).filter(Boolean) as string[],
     ...(externalIdDestFieldGid ? [externalIdDestFieldGid] : []),
   ]);
+
+  function handleCheck() {
+    setCheckResult(runMappingCheck(mapping, sectionMapping, externalIdDestFieldGid, true));
+  }
 
   async function handleSave() {
     await fetch('/api/session/field-mapping', {
@@ -798,8 +894,24 @@ function ExistingProjectMapping({ state, onSave, onBack }: Props) {
         </div>
       )}
 
+      {checkResult && (
+        <div className={`check-result-panel ${checkResult.ok ? 'check-ok' : 'check-warnings'}`}>
+          <strong>{checkResult.ok ? '✓ Mapping looks good' : `⚠ ${checkResult.issues.filter(i => i.severity === 'warning').length} warning(s) found`}</strong>
+          {checkResult.issues.length > 0 && (
+            <ul className="check-issue-list">
+              {checkResult.issues.map((issue, i) => (
+                <li key={i} className={`check-issue check-issue-${issue.severity}`}>{issue.message}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
+        <button className="btn btn-ghost" onClick={handleCheck} disabled={loading || !!error}>
+          ✓ Check Mapping
+        </button>
         <button className="btn btn-primary" onClick={handleSave} disabled={loading || !!error}>
           Save &amp; Continue
         </button>

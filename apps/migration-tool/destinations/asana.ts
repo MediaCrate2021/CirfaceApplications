@@ -23,7 +23,6 @@ import type {
   NormalisedProject,
   NormalisedTask,
   SectionMappingEntry,
-  SkippedSubitemField,
   UserMappingEntry,
 } from '../src/types/index.js';
 import logger from '../logger.js';
@@ -57,6 +56,12 @@ export interface WriteOptions {
   onProgress?: (event: ProgressEvent) => void;
   /** When aborted, the task loop stops after the current task and reporting still runs. */
   cancelSignal?: AbortSignal;
+  /**
+   * Maps subitem-board column IDs → parent-board column IDs for fields that share the same name.
+   * Used by migrateSubtask to resolve custom fields when the subitem column ID differs from the
+   * parent board column ID (common in Monday — subitems live on their own sub-board).
+   */
+  subitemFieldIdRemap?: Record<string, string>;
 }
 
 export interface ProgressEvent {
@@ -373,7 +378,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, taskGidMap, report);
+      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report);
       report.items.push(item);
 
       const processed = i + 1;
@@ -485,6 +490,7 @@ export class AsanaDestination {
     fieldGidMap: Map<string, string>,
     enumOptionMap: Map<string, Map<string, string>>,
     fieldTypeMap: Map<string, AsanaFieldType>,
+    subitemFieldIdRemap: Record<string, string>,
     taskGidMap: Map<string, string>,
     report: MigrationReport,
   ): Promise<MigrationReportItem> {
@@ -576,7 +582,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, taskGidMap, report);
+        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report);
       }
 
       // Comments
@@ -626,6 +632,7 @@ export class AsanaDestination {
     fieldGidMap: Map<string, string>,
     enumOptionMap: Map<string, Map<string, string>>,
     fieldTypeMap: Map<string, AsanaFieldType>,
+    subitemFieldIdRemap: Record<string, string>,
     taskGidMap: Map<string, string>,
     report: MigrationReport,
   ): Promise<void> {
@@ -633,7 +640,9 @@ export class AsanaDestination {
       const customFields: Record<string, unknown> = {};
 
       for (const [sourceFieldId, value] of Object.entries(subtask.customFields)) {
-        const destGid = fieldGidMap.get(sourceFieldId);
+        // Remap subitem-board column ID → parent-board column ID if they differ
+        const resolvedFieldId = subitemFieldIdRemap[sourceFieldId] ?? sourceFieldId;
+        const destGid = fieldGidMap.get(resolvedFieldId);
         if (!destGid) {
           // Field exists on the subitem board but has no entry in the field mapping — track it
           if (value !== null && value !== '') {
@@ -648,7 +657,7 @@ export class AsanaDestination {
         }
         if (value === null || value === '') continue;
 
-        const optMap = enumOptionMap.get(sourceFieldId);
+        const optMap = enumOptionMap.get(resolvedFieldId);
         if (optMap) {
           if (Array.isArray(value)) {
             const gids = value.map((v) => optMap.get(v)).filter((g): g is string => g != null);
@@ -657,10 +666,10 @@ export class AsanaDestination {
             const gid = optMap.get(value);
             if (gid) customFields[destGid] = gid;
           }
-        } else if (fieldTypeMap.get(sourceFieldId) === 'date') {
+        } else if (fieldTypeMap.get(resolvedFieldId) === 'date') {
           const dateStr = Array.isArray(value) ? value[0] : value;
           if (dateStr) customFields[destGid] = { date: String(dateStr).substring(0, 10) };
-        } else if (fieldTypeMap.get(sourceFieldId) === 'people') {
+        } else if (fieldTypeMap.get(resolvedFieldId) === 'people') {
           const ids = Array.isArray(value) ? value : [value];
           const gids = ids.map((id) => userGidMap.get(String(id))).filter((g): g is string => g != null);
           if (gids.length) customFields[destGid] = gids;
@@ -829,7 +838,9 @@ export class AsanaDestination {
         if (entry.sourceFieldType === 'checkbox') {
           options = [{ name: 'True' }, { name: 'False' }];
         } else if (entry.sourceOptions?.length) {
-          options = entry.sourceOptions.map((opt) => ({ name: String(opt.name) }));
+          options = entry.sourceOptions
+            .map((opt) => ({ name: String(opt.name ?? '').trim() }))
+            .filter((opt) => opt.name.length > 0);
         } else {
           options = [];
         }

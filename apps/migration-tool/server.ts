@@ -367,7 +367,8 @@ app.get('/api/source/projects', requireAuth, async (req, res) => {
   }
 });
 
-// Returns the normalised field list for a specific source project (used by FieldMapping step)
+// Returns the normalised field list for a specific source project (used by FieldMapping step).
+// For Monday, also fetches subitem fields and merges in any that don't already exist by name.
 app.get('/api/source/project-fields', requireAuth, async (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   const { projectId } = req.query as { projectId?: string };
@@ -376,6 +377,24 @@ app.get('/api/source/project-fields', requireAuth, async (req, res) => {
     const { platform, token } = req.session.sourceConfig;
     const connector = makeConnector(platform, token);
     const fields = await connector.getProjectFields(projectId);
+
+    if (platform === 'monday') {
+      try {
+        const { MondayConnector } = await import('./connectors/monday.js');
+        const mondayConnector = new MondayConnector(token);
+        const subitemFields = await mondayConnector.getSubitemFields(projectId);
+        logger.info({ projectId, subitemFieldCount: subitemFields.length, subitemFields }, 'subitem fields fetched');
+        const existingNames = new Set(fields.map((f) => f.name.toLowerCase()));
+        for (const sf of subitemFields) {
+          if (!existingNames.has(sf.name.toLowerCase())) {
+            fields.push(sf);
+          }
+        }
+      } catch (err) {
+        logger.warn({ err, projectId }, 'failed to fetch subitem fields');
+      }
+    }
+
     res.json(fields);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/project-fields' });
@@ -724,6 +743,29 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     }
     req.session.cachedProject = undefined; // clear after use
 
+    // For Monday boards, build a subitem column ID → parent column ID remap by matching on name.
+    // Subitems live on their own sub-board and may have different column IDs for the same field.
+    let subitemFieldIdRemap: Record<string, string> = {};
+    if (platform === 'monday') {
+      try {
+        const { MondayConnector } = await import('./connectors/monday.js');
+        const mondayConnector = new MondayConnector(sourceToken);
+        const [parentFields, subitemFields] = await Promise.all([
+          mondayConnector.getProjectFields(sourceProjectId),
+          mondayConnector.getSubitemFields(sourceProjectId),
+        ]);
+        const parentByName = new Map(parentFields.map((f) => [f.name.toLowerCase(), f.id]));
+        for (const sf of subitemFields) {
+          const parentId = parentByName.get(sf.name.toLowerCase());
+          if (parentId && parentId !== sf.id) {
+            subitemFieldIdRemap[sf.id] = parentId;
+          }
+        }
+      } catch {
+        // Non-fatal — migration proceeds without the remap
+      }
+    }
+
     const dest = new AsanaDestination(destToken);
     const report = await dest.migrate(project, {
       destProjectGid: isNewProject ? '' : destProjectGid,
@@ -742,6 +784,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       writerName: req.session.destConfig.patUserName,
       onProgress: (event) => send(event.type, event),
       cancelSignal: cancelController.signal,
+      subitemFieldIdRemap,
     });
 
     req.session.lastReport = report;

@@ -330,6 +330,9 @@ export default function App() {
           {state.step === 'field-mapping' && (
             <FieldMapping
               state={state}
+              onDraftChange={(mapping, sectionMapping, externalIdDestFieldGid) => {
+                dispatch({ type: 'SET_FIELD_MAPPING', mapping, sectionMapping, externalIdDestFieldGid });
+              }}
               onSave={(mapping, sectionMapping, externalIdDestFieldGid) => {
                 dispatch({ type: 'SET_FIELD_MAPPING', mapping, sectionMapping, externalIdDestFieldGid });
                 next('review');
