@@ -247,6 +247,7 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
               isOrgWide: false,
               confidence: nativeField ? 'exact' : 'none',
               omit: false,
+              isSubitemField: f.isSubitemField,
             };
           }));
         }
@@ -548,6 +549,7 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
         confidence,
         omit: false,
         enumMapping,
+        isSubitemField: field.isSubitemField,
       };
     });
   }

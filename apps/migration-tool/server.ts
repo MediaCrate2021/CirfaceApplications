@@ -387,7 +387,7 @@ app.get('/api/source/project-fields', requireAuth, async (req, res) => {
         const existingNames = new Set(fields.map((f) => f.name.toLowerCase()));
         for (const sf of subitemFields) {
           if (!existingNames.has(sf.name.toLowerCase())) {
-            fields.push(sf);
+            fields.push({ ...sf, isSubitemField: true });
           }
         }
       } catch (err) {
@@ -462,8 +462,12 @@ app.get('/api/source/subitem-field-warnings', requireAuth, async (req, res) => {
     const subitemFields = await connector.getSubitemFields(projectId);
 
     const mappedSourceIds = new Set((req.session.fieldMapping ?? []).map((f) => f.sourceFieldId));
+    // Also consider name-matched fields as covered: at migration time, subitemFieldIdRemap
+    // remaps sub-board column IDs → parent column IDs by matching on name, so a subitem
+    // field named "Status" that shares a name with a mapped parent field is NOT a gap.
+    const mappedSourceNames = new Set((req.session.fieldMapping ?? []).map((f) => f.sourceFieldName.toLowerCase()));
     const warnings = subitemFields
-      .filter((f) => !mappedSourceIds.has(f.id))
+      .filter((f) => !mappedSourceIds.has(f.id) && !mappedSourceNames.has(f.name.toLowerCase()))
       .map((f) => ({ fieldId: f.id, fieldName: f.name, fieldType: f.type }));
 
     res.json(warnings);

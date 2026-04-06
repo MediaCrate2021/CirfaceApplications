@@ -44,6 +44,8 @@ export interface NormalisedField {
   type: NormalisedFieldType;
   options?: NormalisedFieldOption[]; // for dropdown fields
   description?: string;
+  /** True when this field exists only on the subitem sub-board (not on the parent board). */
+  isSubitemField?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +160,8 @@ export interface FieldMappingEntry {
    * Asana will reject the field creation — the user should fix them in the source system first.
    */
   deduplicateOptions?: boolean;
+  /** True when this field originates from the subitem sub-board only (not the parent board). */
+  isSubitemField?: boolean;
 }
 
 export interface SectionMappingEntry {

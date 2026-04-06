@@ -254,66 +254,46 @@ export class MondayConnector implements SourceConnector {
       cursor = page.next_items_page.cursor;
     }
 
-    // Phase 1b: fetch ALL subitems from the sub-board using paginated items_page.
-    // This is more reliable than subitems { id } inline on each parent item, which
-    // has an implicit cap and cannot be paginated.
-    const subitemIdToParentId = new Map<string, string>();
+    // Phase 1b: fetch ALL subitems with full data directly from the sub-board.
+    // We paginate the sub-board (not use the root items() query) because Monday's
+    // root items(ids:[...]) endpoint does NOT return subitem-board items — only
+    // top-level board items. Full column_values/updates/assets are fetched here
+    // so subitems are never passed to fetchItemsByIds.
+    const subitemMap = new Map<string, MondaySubitem>();
     const subBoardId = this.parseSubBoardId(board.columns);
     if (subBoardId) {
-      const subitemRefs = await this.fetchAllSubitemRefs(subBoardId);
-      for (const ref of subitemRefs) {
-        if (ref.parent_item?.id) {
-          subitemIdToParentId.set(ref.id, ref.parent_item.id);
-        }
-      }
-      // Populate item.subitems so normaliseBoardItems can build the subtask tree
+      const allSubitemData = await this.fetchAllSubitemData(subBoardId);
       const parentToSubitems = new Map<string, Array<{ id: string }>>();
-      for (const [subId, parentId] of subitemIdToParentId) {
-        if (!parentToSubitems.has(parentId)) parentToSubitems.set(parentId, []);
-        parentToSubitems.get(parentId)!.push({ id: subId });
+      for (const sub of allSubitemData) {
+        if (sub.parent_item?.id) {
+          subitemMap.set(sub.id, sub);
+          if (!parentToSubitems.has(sub.parent_item.id)) parentToSubitems.set(sub.parent_item.id, []);
+          parentToSubitems.get(sub.parent_item.id)!.push({ id: sub.id });
+        }
       }
       for (const item of allItems) {
         item.subitems = parentToSubitems.get(item.id) ?? [];
       }
-      const nullParentCount = subitemRefs.length - subitemIdToParentId.size;
-      logger.info({ boardId, subBoardId, subitemRefsTotal: subitemRefs.length, subitemCount: subitemIdToParentId.size, nullParentCount }, 'Phase 1b: fetched all subitems from sub-board');
+      const nullParentCount = allSubitemData.length - subitemMap.size;
+      logger.info({ boardId, subBoardId, subitemTotal: allSubitemData.length, subitemMapped: subitemMap.size, nullParentCount }, 'Phase 1b: fetched all subitem data from sub-board');
     }
 
-    const subitemIds = Array.from(subitemIdToParentId.keys());
-    const allIds = [
-      ...allItems.map((i) => i.id),
-      ...subitemIds,
-    ];
-    logger.info({ boardId, parentItemCount: allItems.length, subitemIdCount: subitemIds.length, totalIdsToFetch: allIds.length }, 'Phase 2: fetching full item data');
-    const fullDataMap = new Map<string, MondaySubitem>();
-    if (allIds.length > 0) {
-      const fetched = await this.fetchItemsByIds(allIds);
-      for (const item of fetched) {
-        fullDataMap.set(item.id, item);
-      }
-      logger.info({ fetched: fetched.length, fullDataMapSize: fullDataMap.size }, 'Phase 2: fetchItemsByIds complete');
-    }
-
-    // Merge updates and assets back into parent items from the full data map
-    for (const item of allItems) {
-      const full = fullDataMap.get(item.id);
-      if (full) {
-        item.updates = full.updates;
-        item.assets = full.assets;
+    // Phase 2: fetch full data (updates + assets) for PARENT items only.
+    // Subitem full data was already fetched in Phase 1b via the sub-board.
+    const parentIds = allItems.map((i) => i.id);
+    logger.info({ boardId, parentItemCount: parentIds.length }, 'Phase 2: fetching parent item updates/assets');
+    if (parentIds.length > 0) {
+      const fetched = await this.fetchItemsByIds(parentIds);
+      const fullDataMap = new Map(fetched.map((i) => [i.id, i]));
+      logger.info({ fetched: fetched.length }, 'Phase 2: fetchItemsByIds complete');
+      for (const item of allItems) {
+        const full = fullDataMap.get(item.id);
+        if (full) {
+          item.updates = full.updates;
+          item.assets = full.assets;
+        }
       }
     }
-
-    // Build subitem map from the same full data fetch
-    const subitemMap = new Map<string, MondaySubitem>();
-    for (const subId of subitemIdToParentId.keys()) {
-      const full = fullDataMap.get(subId);
-      if (full) {
-        subitemMap.set(subId, full);
-      } else {
-        logger.warn({ subId, parentId: subitemIdToParentId.get(subId) }, 'Phase 2: subitem ID was not returned by fetchItemsByIds — will be missing from migration');
-      }
-    }
-    logger.info({ subitemMapSize: subitemMap.size, subitemIdCount: subitemIds.length }, 'Phase 2: subitemMap built');
 
     const tasks = this.normaliseBoardItems(allItems, board.columns, usersMap, subitemMap);
 
@@ -367,20 +347,31 @@ export class MondayConnector implements SourceConnector {
 
   /**
    * Paginate through ALL items on the subitem board, returning id + parent_item for each.
-   * For any items where the board-level query returns parent_item=null, a root-level
-   * items(ids:[...]) query is used as a fallback — it more reliably populates parent_item.
+   * Full column_values, updates, and assets are fetched here so subitems never need
+   * to go through the root items(ids:[...]) query, which does not return subitem-board items.
+   * For any items where parent_item is still null after the board query, a root-level
+   * items(ids:[...]) fallback is attempted to resolve the parent relationship.
    */
-  private async fetchAllSubitemRefs(subBoardId: string): Promise<Array<{ id: string; parent_item: { id: string } | null }>> {
-    const results: Array<{ id: string; parent_item: { id: string } | null }> = [];
+  private async fetchAllSubitemData(
+    subBoardId: string,
+  ): Promise<Array<MondaySubitem & { parent_item: { id: string } | null }>> {
+    type SubData = MondaySubitem & { parent_item: { id: string } | null };
+    const results: SubData[] = [];
 
     const initial = await this.gql<{
-      boards: Array<{ items_page: { cursor: string | null; items: Array<{ id: string; parent_item: { id: string } | null }> } }>;
+      boards: Array<{ items_page: { cursor: string | null; items: SubData[] } }>;
     }>(`
       query($subBoardId: [ID!]) {
         boards(ids: $subBoardId) {
           items_page(limit: 100) {
             cursor
-            items { id parent_item { id } }
+            items {
+              id name state
+              parent_item { id }
+              column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
+              updates(limit: 25) { id body created_at creator { id name email } assets { id name public_url file_extension } }
+              assets { id name public_url file_extension }
+            }
           }
         }
       }
@@ -394,12 +385,18 @@ export class MondayConnector implements SourceConnector {
 
     while (cursor) {
       const page = await this.gql<{
-        next_items_page: { cursor: string | null; items: Array<{ id: string; parent_item: { id: string } | null }> };
+        next_items_page: { cursor: string | null; items: SubData[] };
       }>(`
         query($cursor: String!) {
           next_items_page(limit: 100, cursor: $cursor) {
             cursor
-            items { id parent_item { id } }
+            items {
+              id name state
+              parent_item { id }
+              column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
+              updates(limit: 25) { id body created_at creator { id name email } assets { id name public_url file_extension } }
+              assets { id name public_url file_extension }
+            }
           }
         }
       `, { cursor });
@@ -408,13 +405,11 @@ export class MondayConnector implements SourceConnector {
       cursor = page.next_items_page.cursor;
     }
 
-    logger.info({ subBoardId, total: results.length, withParent: results.filter((r) => r.parent_item?.id).length, withoutParent: results.filter((r) => !r.parent_item?.id).length }, 'fetchAllSubitemRefs: board-level results');
-
     // Fallback: for items where parent_item came back null from the board-level query,
-    // try the root-level items() query which more reliably returns parent_item.
+    // try the root-level items() query to resolve the parent relationship only.
     const orphanIds = results.filter((r) => !r.parent_item?.id).map((r) => r.id);
     if (orphanIds.length > 0) {
-      logger.warn({ orphanIds }, 'fetchAllSubitemRefs: subitems missing parent_item in board query, retrying via root items query');
+      logger.warn({ subBoardId, orphanCount: orphanIds.length }, 'fetchAllSubitemData: subitems missing parent_item, retrying via root items query');
       const BATCH = 100;
       const rootParentMap = new Map<string, string>();
       for (let i = 0; i < orphanIds.length; i += BATCH) {
@@ -425,20 +420,18 @@ export class MondayConnector implements SourceConnector {
           }
         `, { ids: batch });
         for (const item of rootData.items ?? []) {
-          if (item.parent_item?.id) {
-            rootParentMap.set(item.id, item.parent_item.id);
-          }
+          if (item.parent_item?.id) rootParentMap.set(item.id, item.parent_item.id);
         }
       }
-      logger.info({ resolved: rootParentMap.size, stillOrphaned: orphanIds.length - rootParentMap.size }, 'fetchAllSubitemRefs: fallback root query resolved orphans');
-      // Patch the results with the resolved parent IDs
       for (const result of results) {
         if (!result.parent_item?.id && rootParentMap.has(result.id)) {
           result.parent_item = { id: rootParentMap.get(result.id)! };
         }
       }
+      logger.info({ resolved: rootParentMap.size, stillOrphaned: orphanIds.length - rootParentMap.size }, 'fetchAllSubitemData: fallback root query');
     }
 
+    logger.info({ subBoardId, total: results.length, withParent: results.filter((r) => r.parent_item?.id).length }, 'fetchAllSubitemData: complete');
     return results;
   }
 

@@ -781,7 +781,8 @@ export class AsanaDestination {
         // This scopes the field to the project only — it won't appear in the workspace
         // field library and won't conflict across migrations.
         const asanaType = entry.destFieldType ?? this.mapToAsanaFieldType(entry.sourceFieldType);
-        const fieldName = `m_${entry.sourceFieldName}`;
+        const prefix = entry.isSubitemField ? 'ms_' : 'm_';
+        const fieldName = `${prefix}${entry.sourceFieldName}`;
         log(`Creating project-level field '${fieldName}' (type: ${asanaType}).`);
         try {
           const fieldDef = this.buildFieldDef(asanaType, fieldName, entry);
@@ -814,13 +815,13 @@ export class AsanaDestination {
           log(`Field '${fieldName}' created.`);
         } catch (err) {
           const msg = (err as Error).message ?? '';
-          log(`Failed to create field 'm_${entry.sourceFieldName}': ${msg}`, 'warning');
+          log(`Failed to create field '${fieldName}': ${msg}`, 'warning');
           logger.warn({ err, field: entry.sourceFieldName }, 'failed to create custom field');
           fieldFailures.push({
             taskId: `field:${entry.sourceFieldId}`,
             taskName: `Custom field: ${entry.sourceFieldName}`,
             status: 'warning',
-            message: `Failed to create field 'm_${entry.sourceFieldName}': ${msg}`,
+            message: `Failed to create field '${fieldName}': ${msg}`,
           });
         }
       } else {
