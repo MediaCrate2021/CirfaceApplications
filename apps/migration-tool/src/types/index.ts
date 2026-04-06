@@ -201,6 +201,14 @@ export interface SkippedSubitemField {
   count: number; // number of subitem field values that were skipped
 }
 
+export interface FailedAttachment {
+  taskId: string;
+  taskName: string;
+  attachmentId: string;
+  attachmentName: string;
+  url: string;
+}
+
 export interface MigrationReport {
   startedAt: string;
   completedAt: string;
@@ -218,6 +226,7 @@ export interface MigrationReport {
   errors: number;
   items: MigrationReportItem[];
   skippedSubitemFields: SkippedSubitemField[];
+  failedAttachments: FailedAttachment[];
   cancelled?: boolean;      // true if the migration was stopped by the user mid-run
   trackingTaskGid?: string; // GID of the report task created in Asana
 }

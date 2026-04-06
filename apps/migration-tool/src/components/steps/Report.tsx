@@ -1,4 +1,4 @@
-import type { MigrationReport, MigrationReportItem, SkippedSubitemField } from '../../types/index.ts';
+import type { FailedAttachment, MigrationReport, MigrationReportItem, SkippedSubitemField } from '../../types/index.ts';
 
 interface Props {
   report: MigrationReport;
@@ -95,6 +95,36 @@ export default function Report({ report, onRunAnother }: Props) {
                 <tr key={f.fieldId} className="row-warning">
                   <td>{f.fieldName !== f.fieldId ? f.fieldName : `Unknown field (${f.fieldId})`}</td>
                   <td>{f.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {report.failedAttachments?.length > 0 && (
+        <div className="report-issues">
+          <h3>Failed Attachments</h3>
+          <p className="step-desc">
+            These attachments could not be transferred after multiple retries. A link was posted as a comment on the task.
+            Download them manually and re-attach if needed.
+          </p>
+          <table className="mapping-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Attachment</th>
+                <th>Source URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.failedAttachments.map((a: FailedAttachment) => (
+                <tr key={`${a.taskId}-${a.attachmentId}`} className="row-warning">
+                  <td>{a.taskName}</td>
+                  <td>{a.attachmentName}</td>
+                  <td>
+                    <a href={a.url} target="_blank" rel="noopener noreferrer">Download</a>
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -235,6 +235,7 @@ export class AsanaDestination {
       errors: 0,
       items: [],
       skippedSubitemFields: [],
+      failedAttachments: [],
       log: [],
     };
 
@@ -608,6 +609,7 @@ export class AsanaDestination {
           report.migratedAttachments++;
         } catch (err) {
           logger.warn({ err, attachmentId: attachment.id }, 'attachment transfer failed, falling back to URL comment');
+          report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url });
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
               text: `Attachment (transfer failed): [${attachment.name}](${attachment.url})`,
@@ -741,6 +743,7 @@ export class AsanaDestination {
           report.migratedAttachments++;
         } catch (err) {
           logger.warn({ err, attachmentId: attachment.id }, 'subtask attachment transfer failed, falling back to URL comment');
+          report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url });
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
               text: `Attachment (transfer failed): [${attachment.name}](${attachment.url})`,
@@ -1018,30 +1021,51 @@ export class AsanaDestination {
     return lines.join('\n');
   }
 
-  /** Download a file from the source URL and upload it as a native Asana attachment. */
+  /** Download a file from the source URL and upload it as a native Asana attachment.
+   *  Retries up to 3 times with exponential backoff on transient network errors (ECONNRESET, etc.). */
   private async downloadAndAttach(taskGid: string, attachment: NormalisedAttachment): Promise<void> {
-    const dlRes = await fetch(attachment.url, { signal: AbortSignal.timeout(60_000) });
-    if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${attachment.url}`);
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const dlRes = await fetch(attachment.url, { signal: AbortSignal.timeout(90_000) });
+        if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${attachment.url}`);
 
-    const arrayBuffer = await dlRes.arrayBuffer();
-    const mimeType = attachment.mimeType ?? dlRes.headers.get('content-type') ?? 'application/octet-stream';
-    const blob = new Blob([arrayBuffer], { type: mimeType });
+        const arrayBuffer = await dlRes.arrayBuffer();
+        const mimeType = attachment.mimeType ?? dlRes.headers.get('content-type') ?? 'application/octet-stream';
+        const blob = new Blob([arrayBuffer], { type: mimeType });
 
-    const formData = new FormData();
-    formData.append('parent', taskGid);
-    formData.append('file', blob, attachment.name);
+        const formData = new FormData();
+        formData.append('parent', taskGid);
+        formData.append('file', blob, attachment.name);
 
-    const upRes = await fetch(`${ASANA_BASE}/attachments`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.token}` },
-      body: formData,
-      signal: AbortSignal.timeout(60_000),
-    });
+        const upRes = await fetch(`${ASANA_BASE}/attachments`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+          body: formData,
+          signal: AbortSignal.timeout(90_000),
+        });
 
-    if (!upRes.ok) {
-      const json = await upRes.json().catch(() => ({})) as { errors?: Array<{ message: string }> };
-      throw new Error(json.errors?.[0]?.message ?? `Upload failed (${upRes.status})`);
+        if (!upRes.ok) {
+          const json = await upRes.json().catch(() => ({})) as { errors?: Array<{ message: string }> };
+          throw new Error(json.errors?.[0]?.message ?? `Upload failed (${upRes.status})`);
+        }
+        return; // success
+      } catch (err) {
+        lastErr = err;
+        const isTransient = err instanceof Error && (
+          err.message.includes('ECONNRESET') ||
+          err.message.includes('ETIMEDOUT') ||
+          err.message.includes('fetch failed') ||
+          err.message.includes('network')
+        );
+        if (!isTransient || attempt === MAX_ATTEMPTS) throw err;
+        // Exponential backoff: 2s, 4s before retries 2 and 3
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+        logger.info({ attachmentId: attachment.id, attempt }, 'retrying attachment download after transient error');
+      }
     }
+    throw lastErr;
   }
 
   /** Upload a plain-text string as a file attachment on a task. */
