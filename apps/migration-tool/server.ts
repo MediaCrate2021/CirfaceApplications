@@ -384,9 +384,13 @@ app.get('/api/source/project-fields', requireAuth, async (req, res) => {
         const mondayConnector = new MondayConnector(token);
         const subitemFields = await mondayConnector.getSubitemFields(projectId);
         logger.info({ projectId, subitemFieldCount: subitemFields.length, subitemFields }, 'subitem fields fetched');
-        const existingNames = new Set(fields.map((f) => f.name.toLowerCase()));
+        // Deduplicate by ID only — if the sub-board reuses the exact same column ID as the
+        // parent board, skip it (same field, already present). If the sub-board has a field
+        // with the same NAME but a different ID (Monday creates a parallel column), include it
+        // as a separate entry marked isSubitemField so the user can map it explicitly.
+        const existingIds = new Set(fields.map((f) => f.id));
         for (const sf of subitemFields) {
-          if (!existingNames.has(sf.name.toLowerCase())) {
+          if (!existingIds.has(sf.id)) {
             fields.push({ ...sf, isSubitemField: true });
           }
         }

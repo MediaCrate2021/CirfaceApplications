@@ -231,9 +231,18 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
     ])
       .then(([src, sections]) => {
         if (forceRemap || !state.fieldMapping.length) {
+          // Build a name → sourceFieldId map for parent fields so subitem fields
+          // with the same name can be linked to their parent.
+          const parentFieldByName = new Map<string, string>();
+          for (const f of src) {
+            if (!f.isSubitemField) parentFieldByName.set(f.name.toLowerCase(), f.id);
+          }
           setMapping(src.map((f) => {
             const nativeField = state.sourcePlatform === 'monday'
               ? mondayNativeField(f.name, f.type)
+              : undefined;
+            const linkedToParentSourceFieldId = f.isSubitemField
+              ? (parentFieldByName.get(f.name.toLowerCase()) ?? undefined)
               : undefined;
             return {
               sourceFieldId: f.id,
@@ -245,9 +254,11 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
               destFieldType: nativeField ? null : defaultAsanaType(f.type),
               destNativeField: nativeField,
               isOrgWide: false,
-              confidence: nativeField ? 'exact' : 'none',
-              omit: false,
+              confidence: linkedToParentSourceFieldId ? 'exact' : nativeField ? 'exact' : 'none',
+              omit: f.nonMigratable ? true : false,
               isSubitemField: f.isSubitemField,
+              nonMigratable: f.nonMigratable,
+              linkedToParentSourceFieldId,
             };
           }));
         }
@@ -323,28 +334,41 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
 
   // Group entries for sectioned display
   const nativeEntries = mapping
-    .filter((e) => e.destNativeField)
+    .filter((e) => e.destNativeField && !e.nonMigratable)
     .sort((a, b) => NATIVE_ORDER.indexOf(a.destNativeField!) - NATIVE_ORDER.indexOf(b.destNativeField!));
-  const newEntries = mapping.filter((e) => !e.destNativeField);
+  const activeEntries  = mapping.filter((e) => !e.destNativeField && !e.omit && !e.nonMigratable);
+  const omittedEntries = mapping.filter((e) => !e.nonMigratable && e.omit);
+  const nonMigratableEntries = mapping.filter((e) => e.nonMigratable);
 
   function renderRow(entry: FieldMappingEntry) {
     return (
-      <tr key={entry.sourceFieldId} className={entry.omit ? 'row-omitted' : ''}>
+      <tr key={entry.sourceFieldId} className={entry.nonMigratable || entry.omit ? 'row-omitted' : ''}>
         <td className="omit-cell">
-          <input type="checkbox" checked={entry.omit} onChange={() => toggleOmit(entry.sourceFieldId)} title="Omit — do not create this field" />
+          <input type="checkbox" checked={entry.omit} disabled={entry.nonMigratable}
+            onChange={() => toggleOmit(entry.sourceFieldId)}
+            title={entry.nonMigratable ? 'This field type cannot be migrated' : 'Omit — do not create this field'} />
         </td>
-        <td>{entry.sourceFieldName}</td>
+        <td>
+          {entry.sourceFieldName}
+          {entry.isSubitemField && <span className="subitem-badge">Subitem</span>}
+        </td>
         <td><span className="type-pill">{entry.sourceFieldType}</span></td>
         <td>
-          <select
-            value={entry.destNativeField ? `__native:${entry.destNativeField}` : (entry.destFieldType ?? 'text')}
-            onChange={(e) => setType(entry.sourceFieldId, e.target.value)}
-            disabled={entry.omit}
-          >
-            {ASANA_CREATABLE_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
+          {entry.nonMigratable ? (
+            <span className="linked-to-parent-label">Cannot be migrated to Asana</span>
+          ) : entry.linkedToParentSourceFieldId ? (
+            <span className="linked-to-parent-label">→ Same as parent field</span>
+          ) : (
+            <select
+              value={entry.destNativeField ? `__native:${entry.destNativeField}` : (entry.destFieldType ?? 'text')}
+              onChange={(e) => setType(entry.sourceFieldId, e.target.value)}
+              disabled={entry.omit}
+            >
+              {ASANA_CREATABLE_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          )}
         </td>
       </tr>
     );
@@ -353,6 +377,13 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
   return (
     <div className="step-panel">
       <h2 className="step-title">Project Mapping</h2>
+      <div className="project-name-banner">
+        <span className="project-name-label">From:</span>
+        <strong>{state.selectedSourceProjectName}</strong>
+        <span className="project-name-arrow">→</span>
+        <span className="project-name-label">To:</span>
+        <strong>{state.selectedDestProjectName ?? 'New Asana project'}</strong>
+      </div>
       <p className="step-desc">
         These fields will be created as <strong>project-level custom fields</strong> in the new Asana project.
         Choose the Asana type for each field.
@@ -409,10 +440,20 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
                 <TitleRow colSpan={4} />
                 {nativeEntries.map(renderRow)}
 
-                {newEntries.length > 0 && (
+                {activeEntries.length > 0 && (
                   <SeparatorRow label="Custom Fields to Create" colSpan={4} />
                 )}
-                {newEntries.map(renderRow)}
+                {activeEntries.map(renderRow)}
+
+                {omittedEntries.length > 0 && (
+                  <SeparatorRow label="Omitted Fields" colSpan={4} />
+                )}
+                {omittedEntries.map(renderRow)}
+
+                {nonMigratableEntries.length > 0 && (
+                  <SeparatorRow label="Non-Migratable Field Types" colSpan={4} />
+                )}
+                {nonMigratableEntries.map(renderRow)}
               </tbody>
             </table>
           </div>
@@ -501,6 +542,14 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
         if (!isReload && !state.fieldMapping.length) {
           setMapping(autoMap(src, sortedDest));
         }
+        // Auto-select the External ID destination field if a library field named
+        // "External ID" exists and no selection has been made yet.
+        if (!isReload && !state.externalIdDestFieldGid) {
+          const libraryExtId = sortedDest.find(
+            (d) => d.type === 'text' && d.isGlobal && d.name.toLowerCase() === 'external id',
+          );
+          if (libraryExtId) setExternalIdDestFieldGid(libraryExtId.gid);
+        }
         setSectionMapping(srcSections.map((s) => {
           const match = dstSections.find((d) => d.name.toLowerCase() === s.name.toLowerCase()) ?? null;
           return {
@@ -524,8 +573,32 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
 
   function autoMap(src: NormalisedField[], dest: AsanaField[]): FieldMappingEntry[] {
     const usedDestGids = new Set<string>();
+    // Build parent name → entry for linking subitem fields that share a name
+    const parentEntryByName = new Map<string, FieldMappingEntry>();
 
-    return src.map((field) => {
+    const entries = src.map((field) => {
+      // For subitem fields that share a name with a parent, link to the parent's destination
+      const parentEntry = field.isSubitemField
+        ? parentEntryByName.get(field.name.toLowerCase())
+        : undefined;
+      if (parentEntry) {
+        return {
+          sourceFieldId: field.id,
+          sourceFieldName: field.name,
+          sourceFieldType: field.type,
+          sourceOptions: field.options,
+          destFieldId: parentEntry.destFieldId,
+          destFieldName: parentEntry.destFieldName,
+          destFieldType: parentEntry.destFieldType,
+          isOrgWide: false,
+          confidence: 'exact' as const,
+          omit: false,
+          enumMapping: parentEntry.enumMapping,
+          isSubitemField: true,
+          linkedToParentSourceFieldId: parentEntry.sourceFieldId,
+        };
+      }
+
       const exactName = dest.find((d) => !usedDestGids.has(d.gid) && d.name.toLowerCase() === field.name.toLowerCase());
       const typeMatch = !exactName ? dest.find((d) => {
         if (usedDestGids.has(d.gid)) return false;
@@ -537,21 +610,26 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
       const confidence: FieldMappingEntry['confidence'] = exactName ? 'exact' : typeMatch ? 'type' : 'none';
 
       const enumMapping = buildEnumMapping(field, match);
-      return {
+      const entry: FieldMappingEntry = {
         sourceFieldId: field.id,
         sourceFieldName: field.name,
         sourceFieldType: field.type,
         sourceOptions: field.options,
-        destFieldId: match?.gid ?? null,
-        destFieldName: match?.name ?? null,
-        destFieldType: match ? (match.type as AsanaFieldType) : null,
+        destFieldId: field.nonMigratable ? null : (match?.gid ?? null),
+        destFieldName: field.nonMigratable ? null : (match?.name ?? null),
+        destFieldType: field.nonMigratable ? null : (match ? (match.type as AsanaFieldType) : null),
         isOrgWide: false,
-        confidence,
-        omit: false,
-        enumMapping,
+        confidence: field.nonMigratable ? 'none' : confidence,
+        omit: field.nonMigratable ? true : false,
+        enumMapping: field.nonMigratable ? undefined : enumMapping,
         isSubitemField: field.isSubitemField,
+        nonMigratable: field.nonMigratable,
       };
+      if (!field.isSubitemField) parentEntryByName.set(field.name.toLowerCase(), entry);
+      return entry;
     });
+
+    return entries;
   }
 
   function buildEnumMapping(src: NormalisedField, dest: AsanaField | null): EnumMappingEntry[] | undefined {
@@ -700,11 +778,13 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
   }
 
   // Group entries for sectioned display
-  const nativeEntries = mapping
-    .filter((e) => e.destNativeField)
+  const nativeEntries      = mapping
+    .filter((e) => e.destNativeField && !e.nonMigratable)
     .sort((a, b) => NATIVE_ORDER.indexOf(a.destNativeField!) - NATIVE_ORDER.indexOf(b.destNativeField!));
-  const mappedEntries = mapping.filter((e) => !e.destNativeField && e.destFieldId);
-  const newEntries    = mapping.filter((e) => !e.destNativeField && !e.destFieldId);
+  const mappedEntries      = mapping.filter((e) => !e.destNativeField && !e.omit && !e.nonMigratable && e.destFieldId);
+  const newEntries         = mapping.filter((e) => !e.destNativeField && !e.omit && !e.nonMigratable && !e.destFieldId);
+  const omittedEntries     = mapping.filter((e) => !e.nonMigratable && e.omit);
+  const nonMigratableEntries = mapping.filter((e) => e.nonMigratable);
 
   function renderRow(entry: FieldMappingEntry) {
     const showEnumToggle = !entry.omit && entry.sourceOptions?.length && entry.destFieldId &&
@@ -714,12 +794,15 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
 
     return (
       <React.Fragment key={entry.sourceFieldId}>
-        <tr className={entry.omit ? 'row-omitted' : entry.confidence === 'none' && !entry.destNativeField ? 'row-warning' : ''}>
+        <tr className={entry.nonMigratable ? 'row-omitted' : entry.omit ? 'row-omitted' : entry.confidence === 'none' && !entry.destNativeField && !entry.linkedToParentSourceFieldId ? 'row-warning' : ''}>
           <td className="omit-cell">
-            <input type="checkbox" checked={entry.omit} onChange={() => toggleOmit(entry.sourceFieldId)} title="Omit — skip this field" />
+            <input type="checkbox" checked={entry.omit} disabled={entry.nonMigratable}
+              onChange={() => toggleOmit(entry.sourceFieldId)}
+              title={entry.nonMigratable ? 'This field type cannot be migrated' : 'Omit — skip this field'} />
           </td>
           <td>
             {entry.sourceFieldName}
+            {entry.isSubitemField && <span className="subitem-badge">Subitem</span>}
             {showEnumToggle && (
               <button className="enum-toggle" onClick={() => toggleEnumExpand(entry.sourceFieldId)}>
                 {isExpanded ? '▲' : '▼'} options
@@ -728,58 +811,64 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
           </td>
           <td><span className="type-pill">{entry.sourceFieldType}</span></td>
           <td>
-            <select
-              value={
-                entry.destNativeField
-                  ? `__native:${entry.destNativeField}`
-                  : entry.destFieldId
-                    ? entry.destFieldId
-                    : entry.destFieldType
-                      ? `${NEW_FIELD_PREFIX}${entry.destFieldType}`
-                      : ''
-              }
-              onChange={(e) => updateMapping(entry.sourceFieldId, e.target.value)}
-              disabled={entry.omit}
-            >
-              <option value="">— Not mapped —</option>
-              <optgroup label="Native Asana Fields">
-                <option value={NATIVE_ASSIGNEE}>→ Assignee</option>
-                <option value={NATIVE_DUE_ON}>→ Due Date</option>
-                <option value={NATIVE_NOTES}>→ Notes / Description</option>
-                <option value={NATIVE_FOLLOWERS}>→ Followers / Members</option>
-              </optgroup>
-              {destFields.some((d) => d.isGlobal) && (
-                <optgroup label="Map to Library Field">
-                  {destFields.filter((d) => d.isGlobal).map((d) => {
-                    const inUse = usedFieldGids.has(d.gid) && d.gid !== entry.destFieldId;
-                    return (
-                      <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
-                        {d.name} ({d.type}){inUse ? ' — in use' : ''}
-                      </option>
-                    );
-                  })}
+            {entry.nonMigratable ? (
+              <span className="linked-to-parent-label">Cannot be migrated to Asana</span>
+            ) : entry.linkedToParentSourceFieldId ? (
+              <span className="linked-to-parent-label">→ Same as parent field</span>
+            ) : (
+              <select
+                value={
+                  entry.destNativeField
+                    ? `__native:${entry.destNativeField}`
+                    : entry.destFieldId
+                      ? entry.destFieldId
+                      : entry.destFieldType
+                        ? `${NEW_FIELD_PREFIX}${entry.destFieldType}`
+                        : ''
+                }
+                onChange={(e) => updateMapping(entry.sourceFieldId, e.target.value)}
+                disabled={entry.omit}
+              >
+                <option value="">— Not mapped —</option>
+                <optgroup label="Native Asana Fields">
+                  <option value={NATIVE_ASSIGNEE}>→ Assignee</option>
+                  <option value={NATIVE_DUE_ON}>→ Due Date</option>
+                  <option value={NATIVE_NOTES}>→ Notes / Description</option>
+                  <option value={NATIVE_FOLLOWERS}>→ Followers / Members</option>
                 </optgroup>
-              )}
-              {destFields.some((d) => !d.isGlobal) && (
-                <optgroup label="Map to Project Field">
-                  {destFields.filter((d) => !d.isGlobal).map((d) => {
-                    const inUse = usedFieldGids.has(d.gid) && d.gid !== entry.destFieldId;
-                    return (
-                      <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
-                        {d.name} ({d.type}){inUse ? ' — in use' : ''}
-                      </option>
-                    );
-                  })}
+                {destFields.some((d) => d.isGlobal) && (
+                  <optgroup label="Map to Library Field">
+                    {destFields.filter((d) => d.isGlobal).map((d) => {
+                      const inUse = usedFieldGids.has(d.gid) && d.gid !== entry.destFieldId;
+                      return (
+                        <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
+                          {d.name} ({d.type}){inUse ? ' — in use' : ''}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+                {destFields.some((d) => !d.isGlobal) && (
+                  <optgroup label="Map to Project Field">
+                    {destFields.filter((d) => !d.isGlobal).map((d) => {
+                      const inUse = usedFieldGids.has(d.gid) && d.gid !== entry.destFieldId;
+                      return (
+                        <option key={d.gid} value={d.gid} style={inUse ? { color: '#aaa' } : undefined}>
+                          {d.name} ({d.type}){inUse ? ' — in use' : ''}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                )}
+                <optgroup label="Create New Field">
+                  {NEW_FIELD_TYPES.map((t) => (
+                    <option key={t.type} value={`${NEW_FIELD_PREFIX}${t.type}`}>{t.label}</option>
+                  ))}
                 </optgroup>
-              )}
-              <optgroup label="Create New Field">
-                {NEW_FIELD_TYPES.map((t) => (
-                  <option key={t.type} value={`${NEW_FIELD_PREFIX}${t.type}`}>{t.label}</option>
-                ))}
-              </optgroup>
-            </select>
+              </select>
+            )}
           </td>
-          <td>{entry.omit ? <span className="badge badge-omit">Omitted</span> : confidenceBadge(entry.confidence)}</td>
+          <td>{entry.nonMigratable ? <span className="badge badge-omit">Not migratable</span> : entry.omit ? <span className="badge badge-omit">Omitted</span> : entry.linkedToParentSourceFieldId ? <span className="badge badge-success">Linked</span> : confidenceBadge(entry.confidence)}</td>
         </tr>
 
         {showEnumToggle && isExpanded && (
@@ -821,6 +910,13 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
   return (
     <div className="step-panel">
       <h2 className="step-title">Project Mapping</h2>
+      <div className="project-name-banner">
+        <span className="project-name-label">From:</span>
+        <strong>{state.selectedSourceProjectName}</strong>
+        <span className="project-name-arrow">→</span>
+        <span className="project-name-label">To:</span>
+        <strong>{state.selectedDestProjectName}</strong>
+      </div>
       <p className="step-desc">
         Map source fields to the custom fields on <strong>{state.selectedDestProjectName}</strong>.
         Fields with no match will be created at project level.
@@ -898,9 +994,9 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
                 <TitleRow colSpan={5} />
                 <tr>
                   <td className="omit-cell">
-                    <input type="checkbox" disabled title="External ID is always migrated" />
+                    <input type="checkbox" disabled title="Item ID is always migrated" />
                   </td>
-                  <td>External ID</td>
+                  <td>Item ID</td>
                   <td><span className="type-pill">text</span></td>
                   <td>
                     <select
@@ -951,6 +1047,16 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
                   <SeparatorRow label="New Fields to Create" colSpan={5} />
                 )}
                 {newEntries.map(renderRow)}
+
+                {omittedEntries.length > 0 && (
+                  <SeparatorRow label="Omitted Fields" colSpan={5} />
+                )}
+                {omittedEntries.map(renderRow)}
+
+                {nonMigratableEntries.length > 0 && (
+                  <SeparatorRow label="Non-Migratable Field Types" colSpan={5} />
+                )}
+                {nonMigratableEntries.map(renderRow)}
               </tbody>
             </table>
           </div>

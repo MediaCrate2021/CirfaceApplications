@@ -46,6 +46,8 @@ export interface NormalisedField {
   description?: string;
   /** True when this field exists only on the subitem sub-board (not on the parent board). */
   isSubitemField?: boolean;
+  /** True when this field type cannot be meaningfully migrated (e.g. pulse_id, button, autonumber). */
+  nonMigratable?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +164,14 @@ export interface FieldMappingEntry {
   deduplicateOptions?: boolean;
   /** True when this field originates from the subitem sub-board only (not the parent board). */
   isSubitemField?: boolean;
+  /** True when this field type cannot be meaningfully migrated. It is shown for awareness but always omitted. */
+  nonMigratable?: boolean;
+  /**
+   * When set, this subitem field shares the same destination as the parent field with this ID.
+   * In new-project mode: no separate Asana field is created — the parent field's GID is reused.
+   * In existing-project mode: the same destination field is pre-selected.
+   */
+  linkedToParentSourceFieldId?: string;
 }
 
 export interface SectionMappingEntry {

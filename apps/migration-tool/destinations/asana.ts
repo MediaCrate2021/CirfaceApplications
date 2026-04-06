@@ -776,6 +776,20 @@ export class AsanaDestination {
       if (entry.omit) continue;
       if (entry.destNativeField) continue; // value goes to native Asana field, not a custom field
 
+      // Subitem field linked to a parent field — reuse the parent's destination GID.
+      // The parent entry must have been processed earlier in the loop.
+      if (entry.linkedToParentSourceFieldId) {
+        const parentGid = fieldGidMap.get(entry.linkedToParentSourceFieldId);
+        const parentType = fieldTypeMap.get(entry.linkedToParentSourceFieldId);
+        const parentOptMap = enumOptionMap.get(entry.linkedToParentSourceFieldId);
+        if (parentGid) {
+          fieldGidMap.set(entry.sourceFieldId, parentGid);
+          if (parentType) fieldTypeMap.set(entry.sourceFieldId, parentType);
+          if (parentOptMap) enumOptionMap.set(entry.sourceFieldId, parentOptMap);
+        }
+        continue;
+      }
+
       if (!entry.destFieldId) {
         // Create a project-level field via inline addCustomFieldSetting.
         // This scopes the field to the project only — it won't appear in the workspace

@@ -437,11 +437,29 @@ export class MondayConnector implements SourceConnector {
 
   private normaliseColumns(columns: MondayColumn[]): NormalisedField[] {
     return columns
-      // 'file' columns are always extracted as task attachments — never mapped as custom fields.
+      // Exclude purely structural columns that have no data value at all.
       .filter((c) => !['name', 'subitems', 'subtasks', 'board_relation', 'file'].includes(c.type))
       .map((c) => {
         const type = this.mapColumnType(c.type);
         const field: NormalisedField = { id: c.id, name: c.title, type };
+
+        // Mark column types that cannot be meaningfully migrated to Asana.
+        // These are shown in the UI for awareness but are always omitted from migration.
+        const NON_MIGRATABLE_TYPES = new Set([
+          'pulse_id',     // Monday's built-in Item ID — already captured as External ID
+          'item_id',      // alias for pulse_id in some API versions
+          'autonumber',   // auto-generated row number
+          'creation_log', // system-managed creation timestamp/user
+          'last_updated', // system-managed last-updated timestamp/user
+          'button',       // action buttons — no data value
+          'vote',         // voting widget — no direct Asana equivalent
+          'rating',       // star/rating widget
+          'world_clock',  // time zone display
+          'color_picker', // colour swatch, no equivalent
+        ]);
+        if (NON_MIGRATABLE_TYPES.has(c.type)) {
+          field.nonMigratable = true;
+        }
 
         // Parse dropdown options from settings_str.
         // Monday dropdown columns: labels is an array of {id, name} objects.
