@@ -406,7 +406,7 @@ export class AsanaDestination {
     log(`${report.migratedTasks} tasks processed out of ${total}`);
     if (report.migratedSubtasks > 0) log(`${report.migratedSubtasks} subtasks migrated.`);
     if (report.migratedComments > 0) log(`${report.migratedComments} comments migrated.`);
-    if (report.migratedAttachments > 0) log(`${report.migratedAttachments} attachments linked.`);
+    if (report.migratedAttachments > 0) log(`${report.migratedAttachments} attachments transferred.`);
 
     // Step 6: wire up dependencies
     let depAttempts = 0;
@@ -602,9 +602,10 @@ export class AsanaDestination {
 
       // Comments
       for (const comment of task.comments) {
+        const body = this.htmlToText(comment.text) || '(image — see task attachments)';
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${this.htmlToText(comment.text)}`,
+            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${body}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -739,9 +740,10 @@ export class AsanaDestination {
       report.migratedSubtasks++;
 
       for (const comment of subtask.comments) {
+        const body = this.htmlToText(comment.text) || '(image — see task attachments)';
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${this.htmlToText(comment.text)}`,
+            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${body}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -998,7 +1000,7 @@ export class AsanaDestination {
       `Tasks migrated:       ${report.migratedTasks} / ${report.totalTasks}`,
       `Subtasks migrated:    ${report.migratedSubtasks}`,
       `Comments migrated:    ${report.migratedComments}`,
-      `Attachments linked:   ${report.migratedAttachments}`,
+      `Attachments transferred:   ${report.migratedAttachments}`,
       `Dependencies wired:   ${report.migratedDependencies}`,
       `Warnings:             ${report.warnings}`,
       `Errors:               ${report.errors}`,
@@ -1022,7 +1024,7 @@ export class AsanaDestination {
     lines.push(`Tasks migrated:     ${report.migratedTasks} / ${report.totalTasks}`);
     lines.push(`Subtasks migrated:  ${report.migratedSubtasks}`);
     lines.push(`Comments migrated:  ${report.migratedComments}`);
-    lines.push(`Attachments linked: ${report.migratedAttachments}`);
+    lines.push(`Attachments transferred: ${report.migratedAttachments}`);
     lines.push(`Dependencies wired: ${report.migratedDependencies}`);
     lines.push(`Warnings:           ${report.warnings}`);
     lines.push(`Errors:             ${report.errors}`);

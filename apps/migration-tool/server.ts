@@ -80,6 +80,7 @@ declare module 'express-session' {
     trackingProject?: { gid: string; name: string; tokenSource: 'pat' | 'oauth' };
     trackingPortfolio?: { gid: string; name: string };
     trackingOwner?: { gid: string; name: string };
+    projectOwner?: { gid: string; name: string }; // owner assigned after creating a new project
     userMapping?: UserMappingEntry[];
     fieldMapping?: FieldMappingEntry[];
     sectionMapping?: SectionMappingEntry[];
@@ -643,10 +644,17 @@ app.post('/api/session/tracking-owner', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/session/project-owner', requireAuth, (req, res) => {
+  const { gid, name } = req.body as { gid: string | null; name: string | null };
+  req.session.projectOwner = gid && name ? { gid, name } : undefined;
+  res.json({ ok: true });
+});
+
 app.post('/api/session/reset-project', requireAuth, (req, res) => {
   req.session.cachedProject = undefined;
   req.session.fieldMapping = undefined;
   req.session.sectionMapping = undefined;
+  req.session.projectOwner = undefined;
   res.json({ ok: true });
 });
 
@@ -787,7 +795,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       trackingProjectGid: req.session.trackingProject?.gid,
       trackingToken: req.session.trackingProject?.tokenSource === 'oauth' ? req.session.accessToken : undefined,
       trackingPortfolioGid: req.session.trackingPortfolio?.gid,
-      projectOwnerGid: req.session.trackingOwner?.gid,
+      projectOwnerGid: isNewProject ? req.session.projectOwner?.gid : undefined,
       sourcePlatform: platform,
       writerName: req.session.destConfig.patUserName,
       onProgress: (event) => send(event.type, event),

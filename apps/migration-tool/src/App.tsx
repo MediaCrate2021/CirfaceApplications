@@ -105,6 +105,8 @@ export interface AppState {
   selectedDestTeamGid: string | null;
   selectedDestTeamName: string | null;
   isNewDestProject: boolean;
+  projectOwnerGid: string | null;
+  projectOwnerName: string | null;
 
   // Field mapping
   fieldMapping: FieldMappingEntry[];
@@ -123,7 +125,7 @@ type Action =
   | { type: 'DEST_CONNECTED'; workspaceGid: string; workspaceName: string }
   | { type: 'SET_TRACKING'; gid: string; name: string; portfolioGid: string | null; portfolioName: string | null; ownerGid: string | null; ownerName: string | null }
   | { type: 'SET_USER_MAPPING'; mapping: UserMappingEntry[] }
-  | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean }
+  | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean; ownerGid: string | null; ownerName: string | null }
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[]; externalIdDestFieldGid: string | null }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
@@ -162,6 +164,8 @@ function reducer(state: AppState, action: Action): AppState {
         selectedDestTeamGid: action.teamGid,
         selectedDestTeamName: action.teamName,
         isNewDestProject: action.isNew,
+        projectOwnerGid: action.isNew ? action.ownerGid : null,
+        projectOwnerName: action.isNew ? action.ownerName : null,
       };
     case 'SET_FIELD_MAPPING':
       return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping, externalIdDestFieldGid: action.externalIdDestFieldGid };
@@ -182,6 +186,8 @@ function reducer(state: AppState, action: Action): AppState {
         selectedDestTeamGid: null,
         selectedDestTeamName: null,
         isNewDestProject: false,
+        projectOwnerGid: null,
+        projectOwnerName: null,
         fieldMapping: [],
         sectionMapping: [],
         externalIdDestFieldGid: null,

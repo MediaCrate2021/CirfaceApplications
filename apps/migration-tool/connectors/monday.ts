@@ -319,7 +319,7 @@ export class MondayConnector implements SourceConnector {
           items(ids: $ids) {
             id name state
             column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
-            updates(limit: 25) { id body created_at creator { id name email } assets { id name public_url file_extension } }
+            updates(limit: 100) { id body created_at creator { id name email } assets { id name public_url file_extension } }
             assets { id name public_url file_extension }
           }
         }
@@ -369,7 +369,7 @@ export class MondayConnector implements SourceConnector {
               id name state
               parent_item { id }
               column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
-              updates(limit: 25) { id body created_at creator { id name email } assets { id name public_url file_extension } }
+              updates(limit: 100) { id body created_at creator { id name email } assets { id name public_url file_extension } }
               assets { id name public_url file_extension }
             }
           }
@@ -394,7 +394,7 @@ export class MondayConnector implements SourceConnector {
               id name state
               parent_item { id }
               column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
-              updates(limit: 25) { id body created_at creator { id name email } assets { id name public_url file_extension } }
+              updates(limit: 100) { id body created_at creator { id name email } assets { id name public_url file_extension } }
               assets { id name public_url file_extension }
             }
           }
@@ -694,7 +694,7 @@ export class MondayConnector implements SourceConnector {
     usersMap: Map<string, NormalisedUser>,
   ): NormalisedComment[] {
     return updates
-      .filter((u) => u.body?.trim())
+      .filter((u) => u.body?.trim() || u.assets?.length)
       .map((u) => {
         if (u.creator && !usersMap.has(u.creator.id)) {
           usersMap.set(u.creator.id, {
