@@ -146,8 +146,8 @@ export default function Report({ report, onRunAnother }: Props) {
             <tbody>
               {report.items
                 .filter((i) => i.status !== 'success')
-                .map((item: MigrationReportItem) => (
-                  <tr key={item.taskId} className={item.status === 'error' ? 'row-error' : 'row-warning'}>
+                .map((item: MigrationReportItem, idx: number) => (
+                  <tr key={`${item.taskId}-${idx}`} className={item.status === 'error' ? 'row-error' : 'row-warning'}>
                     <td>{item.taskName}</td>
                     <td><span className={`badge badge-${item.status}`}>{item.status}</span></td>
                     <td>{item.message ?? '—'}</td>
