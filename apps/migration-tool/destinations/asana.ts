@@ -366,10 +366,16 @@ export class AsanaDestination {
 
     // Derive source field IDs that map to native Asana task fields.
     // These are applied directly to the task payload instead of creating custom fields.
-    const nativeDueOnSourceId   = options.fieldMapping.find((f) => f.destNativeField === 'due_on')?.sourceFieldId;
-    const nativeNotesSourceId   = options.fieldMapping.find((f) => f.destNativeField === 'notes')?.sourceFieldId;
-    const nativeAssigneeSourceId  = options.fieldMapping.find((f) => f.destNativeField === 'assignee')?.sourceFieldId;
-    const nativeFollowersSourceId = options.fieldMapping.find((f) => f.destNativeField === 'followers')?.sourceFieldId;
+    const nativeDueOnSourceId     = options.fieldMapping.find((f) => f.destNativeField === 'due_on'    && !f.omit)?.sourceFieldId;
+    const nativeNotesSourceId     = options.fieldMapping.find((f) => f.destNativeField === 'notes'     && !f.omit)?.sourceFieldId;
+    const nativeFollowersSourceId = options.fieldMapping.find((f) => f.destNativeField === 'followers' && !f.omit)?.sourceFieldId;
+    // Assignee: the synthetic '__assignee__' entry controls the task.assigneeId fallback.
+    // A real people column mapped to 'assignee' (not the synthetic row) provides the source field ID.
+    const assigneeEntry       = options.fieldMapping.find((f) => f.destNativeField === 'assignee');
+    const nativeAssigneeSourceId = assigneeEntry && !assigneeEntry.omit && assigneeEntry.sourceFieldId !== '__assignee__'
+      ? assigneeEntry.sourceFieldId
+      : undefined;
+    const assigneeOmitted     = assigneeEntry?.omit === true;
 
     // Step 5: migrate tasks
     const taskGidMap = new Map<string, string>();
@@ -388,7 +394,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn);
+      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn);
       report.items.push(item);
 
       const processed = i + 1;
@@ -492,6 +498,7 @@ export class AsanaDestination {
     nativeDueOnSourceId: string | undefined,
     nativeNotesSourceId: string | undefined,
     nativeAssigneeSourceId: string | undefined,
+    assigneeOmitted: boolean,
     nativeFollowersSourceId: string | undefined,
     userGidMap: Map<string, string>,
     fieldGidMap: Map<string, string>,
@@ -569,7 +576,7 @@ export class AsanaDestination {
         const firstId = Array.isArray(ids) ? ids[0] : (ids ?? undefined);
         const gid = firstId != null ? userGidMap.get(String(firstId)) : undefined;
         if (gid) payload.assignee = gid;
-      } else if (task.assigneeId) {
+      } else if (!assigneeOmitted && task.assigneeId) {
         const asanaGid = userGidMap.get(String(task.assigneeId));
         if (asanaGid) payload.assignee = asanaGid;
       }
@@ -590,7 +597,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn);
+        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn);
       }
 
       // Comments
@@ -639,6 +646,7 @@ export class AsanaDestination {
     nativeDueOnSourceId: string | undefined,
     nativeNotesSourceId: string | undefined,
     nativeAssigneeSourceId: string | undefined,
+    assigneeOmitted: boolean,
     userGidMap: Map<string, string>,
     fieldGidMap: Map<string, string>,
     enumOptionMap: Map<string, Map<string, string>>,
@@ -719,7 +727,7 @@ export class AsanaDestination {
         const firstId = Array.isArray(ids) ? ids[0] : (ids ?? undefined);
         const gid = firstId != null ? userGidMap.get(String(firstId)) : undefined;
         if (gid) payload.assignee = gid;
-      } else if (subtask.assigneeId) {
+      } else if (!assigneeOmitted && subtask.assigneeId) {
         const asanaGid = userGidMap.get(subtask.assigneeId);
         if (asanaGid) payload.assignee = asanaGid;
       }

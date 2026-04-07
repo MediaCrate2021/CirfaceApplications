@@ -237,7 +237,7 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
           for (const f of src) {
             if (!f.isSubitemField) parentFieldByName.set(f.name.toLowerCase(), f.id);
           }
-          setMapping(src.map((f) => {
+          const fieldEntries: FieldMappingEntry[] = src.map((f) => {
             const nativeField = state.sourcePlatform === 'monday'
               ? mondayNativeField(f.name, f.type)
               : undefined;
@@ -260,7 +260,23 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
               nonMigratable: f.nonMigratable,
               linkedToParentSourceFieldId,
             };
-          }));
+          });
+          // Inject synthetic Assignee row if no real field already maps to assignee
+          if (!fieldEntries.some((e) => e.destNativeField === 'assignee')) {
+            fieldEntries.unshift({
+              sourceFieldId: '__assignee__',
+              sourceFieldName: 'Assignee',
+              sourceFieldType: 'people',
+              destFieldId: null,
+              destFieldName: null,
+              destFieldType: null,
+              destNativeField: 'assignee',
+              isOrgWide: false,
+              confidence: 'exact',
+              omit: false,
+            });
+          }
+          setMapping(fieldEntries);
         }
         setSectionMapping(sections.map((s) => ({
           sourceId: s.id,
@@ -341,12 +357,13 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
   const nonMigratableEntries = mapping.filter((e) => e.nonMigratable);
 
   function renderRow(entry: FieldMappingEntry) {
+    const isSynthetic = entry.sourceFieldId === '__assignee__';
     return (
       <tr key={entry.sourceFieldId} className={entry.nonMigratable || entry.omit ? 'row-omitted' : ''}>
         <td className="omit-cell">
           <input type="checkbox" checked={entry.omit} disabled={entry.nonMigratable}
             onChange={() => toggleOmit(entry.sourceFieldId)}
-            title={entry.nonMigratable ? 'This field type cannot be migrated' : 'Omit — do not create this field'} />
+            title={entry.nonMigratable ? 'This field type cannot be migrated' : 'Omit — skip assignee migration'} />
         </td>
         <td>
           {entry.sourceFieldName}
@@ -358,6 +375,8 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
             <span className="linked-to-parent-label">Cannot be migrated to Asana</span>
           ) : entry.linkedToParentSourceFieldId ? (
             <span className="linked-to-parent-label">→ Same as parent field</span>
+          ) : isSynthetic ? (
+            <span style={{ color: 'var(--text-muted, #888)', fontStyle: 'italic' }}>Assignee — native Asana field</span>
           ) : (
             <select
               value={entry.destNativeField ? `__native:${entry.destNativeField}` : (entry.destFieldType ?? 'text')}
@@ -629,6 +648,22 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
       return entry;
     });
 
+    // Inject synthetic Assignee row if no real field already maps to assignee
+    if (!entries.some((e) => e.destNativeField === 'assignee')) {
+      entries.unshift({
+        sourceFieldId: '__assignee__',
+        sourceFieldName: 'Assignee',
+        sourceFieldType: 'people',
+        destFieldId: null,
+        destFieldName: null,
+        destFieldType: null,
+        destNativeField: 'assignee',
+        isOrgWide: false,
+        confidence: 'exact',
+        omit: false,
+      });
+    }
+
     return entries;
   }
 
@@ -787,6 +822,7 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
   const nonMigratableEntries = mapping.filter((e) => e.nonMigratable);
 
   function renderRow(entry: FieldMappingEntry) {
+    const isSynthetic = entry.sourceFieldId === '__assignee__';
     const showEnumToggle = !entry.omit && entry.sourceOptions?.length && entry.destFieldId &&
       (entry.destFieldType === 'enum' || entry.destFieldType === 'multi_enum');
     const destEnumOptions = destFields.find((d) => d.gid === entry.destFieldId)?.enum_options ?? [];
@@ -815,6 +851,8 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
               <span className="linked-to-parent-label">Cannot be migrated to Asana</span>
             ) : entry.linkedToParentSourceFieldId ? (
               <span className="linked-to-parent-label">→ Same as parent field</span>
+            ) : isSynthetic ? (
+              <span style={{ color: 'var(--text-muted, #888)', fontStyle: 'italic' }}>Assignee — native Asana field</span>
             ) : (
               <select
                 value={
