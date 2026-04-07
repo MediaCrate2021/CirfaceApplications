@@ -7,7 +7,7 @@ interface AsanaProject { gid: string; name: string; }
 
 interface Props {
   state: AppState;
-  onSelect: (sourceId: string, sourceName: string, destGid: string, destName: string, teamGid: string | null, teamName: string | null, isNew: boolean) => void;
+  onSelect: (sourceId: string, sourceName: string, destGid: string, destName: string, teamGid: string | null, teamName: string | null, isNew: boolean, ownerGid: string | null, ownerName: string | null) => void;
   onBack: () => void;
 }
 
@@ -21,6 +21,14 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [destMode, setDestMode]               = useState<'existing' | 'new'>(state.isNewDestProject ? 'new' : 'existing');
   const [selectedTeamGid, setSelectedTeamGid] = useState(state.selectedDestTeamGid ?? '');
   const [newProjectName, setNewProjectName]   = useState(state.isNewDestProject ? (state.selectedDestProjectName ?? '') : '');
+
+  // Project owner (new projects only)
+  const [ownerInput, setOwnerInput]           = useState('');
+  const [validatedOwner, setValidatedOwner]   = useState<{ gid: string; name: string } | null>(
+    state.projectOwnerGid && state.projectOwnerName ? { gid: state.projectOwnerGid, name: state.projectOwnerName } : null,
+  );
+  const [ownerChecking, setOwnerChecking]     = useState(false);
+  const [ownerError, setOwnerError]           = useState('');
 
   // Typeahead state for existing project
   const [projectQuery, setProjectQuery]       = useState(!state.isNewDestProject ? (state.selectedDestProjectName ?? '') : '');
@@ -149,7 +157,30 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     setShowSuggestions(false);
   }
 
-  function handleContinue() {
+  async function handleCheckOwner() {
+    setOwnerError('');
+    const query = ownerInput.trim();
+    if (!query) return;
+    setOwnerChecking(true);
+    try {
+      const res = await fetch(`/api/destination/user?q=${encodeURIComponent(query)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setOwnerError(body.error ?? `User not found (${res.status}).`);
+        setValidatedOwner(null);
+      } else {
+        const user = await res.json() as { gid: string; name: string };
+        setValidatedOwner(user);
+        setOwnerInput('');
+      }
+    } catch {
+      setOwnerError('Failed to reach the server. Please try again.');
+    } finally {
+      setOwnerChecking(false);
+    }
+  }
+
+  async function handleContinue() {
     const srcProject = sourceProjects.find((p) => p.id === selectedSource);
     if (!srcProject) return;
 
@@ -157,17 +188,27 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     const teamName = teams.find((t) => t.gid === selectedTeamGid)?.name ?? null;
 
     if (destMode === 'new') {
-      onSelect(srcProject.id, srcProject.name, '', newProjectName.trim(), teamGid, teamName, true);
+      await fetch('/api/session/project-owner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validatedOwner ?? { gid: null, name: null }),
+      });
+      onSelect(srcProject.id, srcProject.name, '', newProjectName.trim(), teamGid, teamName, true, validatedOwner?.gid ?? null, validatedOwner?.name ?? null);
     } else {
       const destProject = destProjects.find((p) => p.gid === selectedDest);
       if (!destProject) return;
-      onSelect(srcProject.id, srcProject.name, destProject.gid, destProject.name, teamGid, teamName, false);
+      await fetch('/api/session/project-owner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gid: null, name: null }),
+      });
+      onSelect(srcProject.id, srcProject.name, destProject.gid, destProject.name, teamGid, teamName, false, null, null);
     }
   }
 
   const loading = loadingSource || loadingTeams;
   const canProceed = !!selectedSource && (
-    destMode === 'new' ? !!newProjectName.trim() : !!selectedDest
+    destMode === 'new' ? !!newProjectName.trim() && !!validatedOwner : !!selectedDest
   );
 
   return (
@@ -273,16 +314,51 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
             </div>
 
             {destMode === 'new' && (
-              <div className="field-group">
-                <label htmlFor="new-project-name">New Project Name</label>
-                <input
-                  id="new-project-name"
-                  type="text"
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  placeholder="Enter project name"
-                />
-              </div>
+              <>
+                <div className="field-group">
+                  <label htmlFor="new-project-name">New Project Name</label>
+                  <input
+                    id="new-project-name"
+                    type="text"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    placeholder="Enter project name"
+                  />
+                </div>
+                <div className="field-group">
+                  <label>Project Owner <span className="required-star">*</span></label>
+                  <p className="field-hint">The Asana user who will own this project after migration. Search by name or email address.</p>
+                  {validatedOwner ? (
+                    <div className="validated-project">
+                      <span className="validated-icon">✓</span>
+                      <span className="validated-name">{validatedOwner.name}</span>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setValidatedOwner(null)}>Change</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="input-with-button">
+                        <input
+                          type="text"
+                          value={ownerInput}
+                          onChange={(e) => { setOwnerInput(e.target.value); setOwnerError(''); }}
+                          onKeyDown={(e) => e.key === 'Enter' && !ownerChecking && ownerInput.trim() && handleCheckOwner()}
+                          placeholder="jane@example.com  or  Jane Smith  or  1234567890"
+                          disabled={ownerChecking}
+                          autoComplete="off"
+                        />
+                        <button
+                          className="btn btn-primary"
+                          onClick={handleCheckOwner}
+                          disabled={!ownerInput.trim() || ownerChecking}
+                        >
+                          {ownerChecking ? 'Looking up…' : 'Find'}
+                        </button>
+                      </div>
+                      {ownerError && <p className="error-text">{ownerError}</p>}
+                    </>
+                  )}
+                </div>
+              </>
             )}
 
             {destMode === 'existing' && (

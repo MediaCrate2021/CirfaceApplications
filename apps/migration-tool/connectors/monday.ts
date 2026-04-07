@@ -278,21 +278,35 @@ export class MondayConnector implements SourceConnector {
       logger.info({ boardId, subBoardId, subitemTotal: allSubitemData.length, subitemMapped: subitemMap.size, nullParentCount }, 'Phase 1b: fetched all subitem data from sub-board');
     }
 
-    // Phase 2: fetch full data (updates + assets) for PARENT items only.
-    // Subitem full data was already fetched in Phase 1b via the sub-board.
+    // Phase 2: fetch column values and item-level assets for PARENT items.
+    // Subitem column values were already fetched in Phase 1b via the sub-board.
     const parentIds = allItems.map((i) => i.id);
-    logger.info({ boardId, parentItemCount: parentIds.length }, 'Phase 2: fetching parent item updates/assets');
+    logger.info({ boardId, parentItemCount: parentIds.length }, 'Phase 2: fetching parent item column values/assets');
     if (parentIds.length > 0) {
       const fetched = await this.fetchItemsByIds(parentIds);
       const fullDataMap = new Map(fetched.map((i) => [i.id, i]));
-      logger.info({ fetched: fetched.length }, 'Phase 2: fetchItemsByIds complete');
       for (const item of allItems) {
         const full = fullDataMap.get(item.id);
-        if (full) {
-          item.updates = full.updates;
-          item.assets = full.assets;
-        }
+        if (full) item.assets = full.assets;
       }
+    }
+
+    // Phase 3: fetch updates (comments) for ALL items — parents and subitems — separately.
+    // Combining updates with column-value queries causes Monday to silently truncate results
+    // due to query complexity limits. Fetching them in a dedicated pass with small batches
+    // and per-item pagination guarantees every comment is captured.
+    const allIds = [...parentIds, ...Array.from(subitemMap.keys())];
+    logger.info({ boardId, totalItems: allIds.length }, 'Phase 3: fetching updates for all items');
+    if (allIds.length > 0) {
+      const updatesMap = await this.fetchUpdatesForItems(allIds);
+      for (const item of allItems) {
+        item.updates = updatesMap.get(item.id) ?? [];
+      }
+      for (const [id, sub] of subitemMap) {
+        sub.updates = updatesMap.get(id) ?? [];
+      }
+      const totalUpdates = [...updatesMap.values()].reduce((n, u) => n + u.length, 0);
+      logger.info({ boardId, totalUpdates }, 'Phase 3: updates complete');
     }
 
     const tasks = this.normaliseBoardItems(allItems, board.columns, usersMap, subitemMap);
@@ -308,7 +322,8 @@ export class MondayConnector implements SourceConnector {
     };
   }
 
-  /** Batch-fetch full item data by ID (used for subitems). Handles Monday's 100-item limit. */
+  /** Batch-fetch column values and item-level assets by ID. Updates are fetched separately
+   *  via fetchUpdatesForItems to avoid Monday's query complexity limits. */
   private async fetchItemsByIds(ids: string[]): Promise<MondaySubitem[]> {
     const BATCH = 100;
     const results: MondaySubitem[] = [];
@@ -319,7 +334,6 @@ export class MondayConnector implements SourceConnector {
           items(ids: $ids) {
             id name state
             column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
-            updates(limit: 100) { id body created_at creator { id name email } assets { id name public_url file_extension } }
             assets { id name public_url file_extension }
           }
         }
@@ -327,6 +341,62 @@ export class MondayConnector implements SourceConnector {
       results.push(...(data.items ?? []));
     }
     return results;
+  }
+
+  /**
+   * Phase 3: fetch ALL updates (comments) for the given item IDs.
+   * Updates are fetched separately from column values to avoid Monday's query complexity
+   * limits — combining updates with items_page or large ID batches causes silent truncation.
+   * Items are queried in small batches (BATCH_SIZE). Within each batch, we paginate until
+   * every item returns fewer updates than PAGE_LIMIT, guaranteeing completeness.
+   * Returns a map of itemId → MondayUpdate[].
+   */
+  private async fetchUpdatesForItems(ids: string[]): Promise<Map<string, MondayUpdate[]>> {
+    const PAGE_LIMIT = 50;  // conservative — 10 items × 50 updates is well within budget
+    const BATCH_SIZE = 10;
+    const result = new Map<string, MondayUpdate[]>(ids.map((id) => [id, []]));
+
+    const fetchPage = async (batch: string[], page: number): Promise<Map<string, MondayUpdate[]>> => {
+      const data = await this.gql<{ items: Array<{ id: string; updates: MondayUpdate[] }> }>(`
+        query($ids: [ID!]!, $limit: Int!, $page: Int!) {
+          items(ids: $ids) {
+            id
+            updates(limit: $limit, page: $page) {
+              id body created_at
+              creator { id name email }
+              assets { id name public_url file_extension }
+            }
+          }
+        }
+      `, { ids: batch, limit: PAGE_LIMIT, page });
+      const pageMap = new Map<string, MondayUpdate[]>();
+      for (const item of data.items ?? []) {
+        pageMap.set(item.id, item.updates ?? []);
+      }
+      return pageMap;
+    };
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      let page = 1;
+      const page1 = await fetchPage(batch, page);
+      for (const [id, updates] of page1) result.get(id)!.push(...updates);
+
+      // Any item that returned a full page may have more — paginate until exhausted
+      let needMore = batch.filter((id) => (page1.get(id)?.length ?? 0) >= PAGE_LIMIT);
+      while (needMore.length > 0) {
+        page++;
+        const next = await fetchPage(needMore, page);
+        const stillMore: string[] = [];
+        for (const [id, updates] of next) {
+          result.get(id)!.push(...updates);
+          if (updates.length >= PAGE_LIMIT) stillMore.push(id);
+        }
+        needMore = stillMore;
+      }
+    }
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -369,7 +439,6 @@ export class MondayConnector implements SourceConnector {
               id name state
               parent_item { id }
               column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
-              updates(limit: 100) { id body created_at creator { id name email } assets { id name public_url file_extension } }
               assets { id name public_url file_extension }
             }
           }
@@ -394,7 +463,6 @@ export class MondayConnector implements SourceConnector {
               id name state
               parent_item { id }
               column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
-              updates(limit: 100) { id body created_at creator { id name email } assets { id name public_url file_extension } }
               assets { id name public_url file_extension }
             }
           }

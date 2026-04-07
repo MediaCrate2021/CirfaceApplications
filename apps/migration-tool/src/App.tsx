@@ -224,6 +224,8 @@ const initialState: AppState = {
   selectedDestTeamGid: null,
   selectedDestTeamName: null,
   isNewDestProject: false,
+  projectOwnerGid: null,
+  projectOwnerName: null,
   fieldMapping: [],
   sectionMapping: [],
   externalIdDestFieldGid: null,
@@ -304,10 +306,8 @@ export default function App() {
               currentName={state.trackingProjectName}
               currentPortfolioGid={state.trackingPortfolioGid}
               currentPortfolioName={state.trackingPortfolioName}
-              currentOwnerGid={state.trackingOwnerGid}
-              currentOwnerName={state.trackingOwnerName}
-              onSet={(gid, name, portfolioGid, portfolioName, ownerGid, ownerName) => {
-                dispatch({ type: 'SET_TRACKING', gid, name, portfolioGid, portfolioName, ownerGid, ownerName });
+              onSet={(gid, name, portfolioGid, portfolioName) => {
+                dispatch({ type: 'SET_TRACKING', gid, name, portfolioGid, portfolioName, ownerGid: null, ownerName: null });
                 next('user-mapping');
               }}
               onBack={() => next('connect')}
@@ -326,8 +326,8 @@ export default function App() {
           {state.step === 'select-projects' && (
             <SelectProjects
               state={state}
-              onSelect={(sourceId, sourceName, destGid, destName, teamGid, teamName, isNew) => {
-                dispatch({ type: 'SET_PROJECT_SELECTION', sourceId, sourceName, destGid, destName, teamGid, teamName, isNew });
+              onSelect={(sourceId, sourceName, destGid, destName, teamGid, teamName, isNew, ownerGid, ownerName) => {
+                dispatch({ type: 'SET_PROJECT_SELECTION', sourceId, sourceName, destGid, destName, teamGid, teamName, isNew, ownerGid, ownerName });
                 next('field-mapping');
               }}
               onBack={() => next('user-mapping')}
