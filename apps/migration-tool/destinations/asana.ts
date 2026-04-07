@@ -980,11 +980,12 @@ export class AsanaDestination {
 
   /** Short summary written to the task notes field (visible without opening the attachment). */
   private formatReportSummary(report: MigrationReport, writerName?: string): string {
-    return [
+    const lines = [
       `Migration Report — ${report.sourceProject}`,
       writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool',
       `Started:   ${report.startedAt}`,
       `Completed: ${report.completedAt}`,
+      report.cancelled ? `STATUS: CANCELLED — migration was stopped before completion.` : '',
       ``,
       `Tasks migrated:       ${report.migratedTasks} / ${report.totalTasks}`,
       `Subtasks migrated:    ${report.migratedSubtasks}`,
@@ -993,32 +994,72 @@ export class AsanaDestination {
       `Dependencies wired:   ${report.migratedDependencies}`,
       `Warnings:             ${report.warnings}`,
       `Errors:               ${report.errors}`,
+      `Failed attachments:   ${report.failedAttachments?.length ?? 0}`,
       ``,
-      `Full activity log is in the attached report file.`,
-    ].join('\n');
+      `Full activity log with details is in the attached report file.`,
+    ].filter((l) => l !== '');
+    return lines.join('\n');
   }
 
   /** Full timestamped activity log, written to the attached .txt file. */
   private formatReportLog(report: MigrationReport): string {
-    const title = `${report.sourceProject} migration report`;
-    const lines = [title];
+    const sep = (label: string) => `\n${'='.repeat(60)}\n${label}\n${'='.repeat(60)}`;
+    const lines: string[] = [];
 
-    // Chronological activity log
-    for (const entry of report.log) {
-      lines.push(`${entry.message}\t${entry.time}`);
+    lines.push(`MIGRATION REPORT — ${report.sourceProject}`);
+    lines.push(`Started:   ${report.startedAt}`);
+    lines.push(`Completed: ${report.completedAt}`);
+    if (report.cancelled) lines.push(`STATUS: CANCELLED — migration was stopped before completion.`);
+    lines.push('');
+    lines.push(`Tasks migrated:     ${report.migratedTasks} / ${report.totalTasks}`);
+    lines.push(`Subtasks migrated:  ${report.migratedSubtasks}`);
+    lines.push(`Comments migrated:  ${report.migratedComments}`);
+    lines.push(`Attachments linked: ${report.migratedAttachments}`);
+    lines.push(`Dependencies wired: ${report.migratedDependencies}`);
+    lines.push(`Warnings:           ${report.warnings}`);
+    lines.push(`Errors:             ${report.errors}`);
+    lines.push(`Failed attachments: ${report.failedAttachments?.length ?? 0}`);
+
+    // Errors
+    const errors = report.items.filter((i) => i.status === 'error');
+    if (errors.length) {
+      lines.push(sep(`ERRORS (${errors.length})`));
+      for (const item of errors) {
+        lines.push(`  Task: ${item.taskName}`);
+        if (item.message) lines.push(`  Detail: ${item.message}`);
+        lines.push('');
+      }
     }
 
-    // Task-level detail section
-    const errors = report.items.filter((i) => i.status === 'error');
+    // Warnings
     const warnings = report.items.filter((i) => i.status === 'warning');
-
-    if (errors.length || warnings.length) {
-      lines.push('');
-      lines.push('--- Issues ---');
-      for (const item of [...errors, ...warnings]) {
-        const tag = item.status === 'error' ? 'ERROR' : 'WARN ';
-        lines.push(`[${tag}] ${item.taskName}${item.message ? ': ' + item.message : ''}`);
+    if (warnings.length) {
+      lines.push(sep(`WARNINGS (${warnings.length})`));
+      for (const item of warnings) {
+        lines.push(`  Task: ${item.taskName}`);
+        if (item.message) lines.push(`  Detail: ${item.message}`);
+        lines.push('');
       }
+    }
+
+    // Failed attachments
+    if (report.failedAttachments?.length) {
+      lines.push(sep(`FAILED ATTACHMENTS (${report.failedAttachments.length})`));
+      lines.push(`These attachments could not be transferred after multiple retries.`);
+      lines.push(`Download each file manually and re-attach it to the task in Asana.`);
+      lines.push('');
+      for (const fa of report.failedAttachments) {
+        lines.push(`  Task:       ${fa.taskName} (ID: ${fa.taskId})`);
+        lines.push(`  Attachment: ${fa.attachmentName} (ID: ${fa.attachmentId})`);
+        lines.push(`  Source URL: ${fa.url}`);
+        lines.push('');
+      }
+    }
+
+    // Chronological activity log
+    lines.push(sep('ACTIVITY LOG'));
+    for (const entry of report.log) {
+      lines.push(`[${entry.time}] ${entry.message}`);
     }
 
     return lines.join('\n');
