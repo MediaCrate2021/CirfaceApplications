@@ -247,6 +247,13 @@ export class AsanaDestination {
       emit({ type, message });
     };
 
+    /** Record a warning in the counter, the items list, and the logger so it appears in the UI report. */
+    const warn = (taskId: string, taskName: string, message: string) => {
+      report.warnings++;
+      report.items.push({ taskId, taskName, status: 'warning', message });
+      logger.warn({ taskId, taskName }, message);
+    };
+
     const sourcePlatform = options.sourcePlatform ?? 'source';
 
     log('Migration job started.');
@@ -308,8 +315,8 @@ export class AsanaDestination {
         const msg = (err as Error).message ?? '';
         // "already exists" means the field is already on the project — that's fine
         if (!msg.toLowerCase().includes('already exists')) {
+          warn('setup', 'External ID field', `Could not attach External ID field: ${msg}`);
           log(`Could not attach External ID field: ${msg}`, 'warning');
-          report.warnings++;
         }
       }
       sourceIdFieldGid = options.externalIdDestFieldGid;
@@ -324,8 +331,8 @@ export class AsanaDestination {
         sourceIdFieldGid = setting.custom_field.gid;
         log(`'m_External ID' field created.`);
       } catch (err) {
+        warn('setup', 'External ID field', `Could not create External ID field: ${(err as Error).message}`);
         log(`Could not create External ID field: ${(err as Error).message}`, 'warning');
-        report.warnings++;
       }
     }
 
@@ -351,8 +358,8 @@ export class AsanaDestination {
           });
           sectionGidMap.set(section.id, created.gid);
         } catch (err) {
+          warn('setup', `Section: ${sectionName}`, `Failed to create section '${sectionName}': ${(err as Error).message}`);
           log(`Failed to create section '${sectionName}': ${(err as Error).message}`, 'warning');
-          report.warnings++;
         }
       }
     }
@@ -381,7 +388,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report);
+      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn);
       report.items.push(item);
 
       const processed = i + 1;
@@ -409,8 +416,7 @@ export class AsanaDestination {
           await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/addDependencies`, { dependencies: [depGid] });
           report.migratedDependencies++;
         } catch (err) {
-          logger.warn({ err, taskGid, depGid }, 'failed to add dependency');
-          report.warnings++;
+          warn('dependency', `Dependency: ${task.name}`, `Failed to add dependency: ${(err as Error).message}`);
         }
       }
     }
@@ -441,8 +447,7 @@ export class AsanaDestination {
 
         emit({ type: 'info', message: 'Report saved to tracking project' });
       } catch (err) {
-        logger.warn({ err }, 'failed to save report to tracking project');
-        report.warnings++;
+        warn('setup', 'Tracking project report', `Failed to save report to tracking project: ${(err as Error).message}`);
       }
     }
 
@@ -453,8 +458,7 @@ export class AsanaDestination {
         log('Migrated project added to tracking portfolio.');
         emit({ type: 'info', message: 'Project added to tracking portfolio' });
       } catch (err) {
-        logger.warn({ err }, 'failed to add project to tracking portfolio');
-        report.warnings++;
+        warn('setup', 'Tracking portfolio', `Failed to add project to tracking portfolio: ${(err as Error).message}`);
       }
     }
 
@@ -467,8 +471,8 @@ export class AsanaDestination {
         log('Project ownership transferred to specified user.');
         emit({ type: 'info', message: 'Project ownership transferred' });
       } catch (err) {
+        warn('setup', 'Project ownership', `Failed to transfer project ownership: ${(err as Error).message}`);
         log(`Failed to transfer project ownership: ${(err as Error).message}`, 'warning');
-        report.warnings++;
       }
     }
 
@@ -496,6 +500,7 @@ export class AsanaDestination {
     subitemFieldIdRemap: Record<string, string>,
     taskGidMap: Map<string, string>,
     report: MigrationReport,
+    warn: (taskId: string, taskName: string, message: string) => void,
   ): Promise<MigrationReportItem> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -585,7 +590,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report);
+        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn);
       }
 
       // Comments
@@ -596,8 +601,7 @@ export class AsanaDestination {
           });
           report.migratedComments++;
         } catch (err) {
-          logger.warn({ err, commentId: comment.id, taskId: task.id }, 'failed to migrate comment');
-          report.warnings++;
+          warn(task.id, task.name, `Failed to migrate comment (id: ${comment.id}): ${(err as Error).message}`);
         }
       }
 
@@ -610,12 +614,12 @@ export class AsanaDestination {
         } catch (err) {
           logger.warn({ err, attachmentId: attachment.id }, 'attachment transfer failed, falling back to URL comment');
           report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url });
+          warn(task.id, task.name, `Attachment '${attachment.name}' could not be transferred — URL posted as comment instead.`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
               text: `Attachment (transfer failed): [${attachment.name}](${attachment.url})`,
             });
           } catch { /* ignore story failure */ }
-          report.warnings++;
         }
       }
 
@@ -642,6 +646,7 @@ export class AsanaDestination {
     subitemFieldIdRemap: Record<string, string>,
     taskGidMap: Map<string, string>,
     report: MigrationReport,
+    warn: (taskId: string, taskName: string, message: string) => void,
   ): Promise<void> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -732,8 +737,7 @@ export class AsanaDestination {
           });
           report.migratedComments++;
         } catch (err) {
-          logger.warn({ err, commentId: comment.id, subtaskId: subtask.id }, 'failed to migrate subtask comment');
-          report.warnings++;
+          warn(subtask.id, subtask.name, `Failed to migrate comment (id: ${comment.id}): ${(err as Error).message}`);
         }
       }
 
@@ -744,17 +748,16 @@ export class AsanaDestination {
         } catch (err) {
           logger.warn({ err, attachmentId: attachment.id }, 'subtask attachment transfer failed, falling back to URL comment');
           report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url });
+          warn(subtask.id, subtask.name, `Attachment '${attachment.name}' could not be transferred — URL posted as comment instead.`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
               text: `Attachment (transfer failed): [${attachment.name}](${attachment.url})`,
             });
           } catch { /* ignore story failure */ }
-          report.warnings++;
         }
       }
     } catch (err) {
-      logger.warn({ err, subtaskId: subtask.id }, 'failed to migrate subtask');
-      report.warnings++;
+      warn(subtask.id, subtask.name, `Failed to migrate subtask: ${(err as Error).message}`);
     }
   }
 
