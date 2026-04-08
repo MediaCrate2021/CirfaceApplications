@@ -747,13 +747,13 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     const { platform, token: sourceToken } = req.session.sourceConfig;
     const { token: destToken, workspaceGid } = req.session.destConfig;
 
+    const connector = makeConnector(platform, sourceToken);
     let project: NormalisedProject;
     if (req.session.cachedProject?.id === sourceProjectId) {
       project = req.session.cachedProject.data;
       send('info', { message: `Loaded ${project.tasks.length} tasks from cache` });
     } else {
       send('info', { message: `Fetching source project from ${platform}...` });
-      const connector = makeConnector(platform, sourceToken);
       project = await connector.getProjectData(sourceProjectId);
       send('info', { message: `Loaded ${project.tasks.length} tasks` });
     }
@@ -801,6 +801,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       onProgress: (event) => send(event.type, event),
       cancelSignal: cancelController.signal,
       subitemFieldIdRemap,
+      refreshAttachmentUrl: connector.refreshAttachmentUrl?.bind(connector),
     });
 
     req.session.lastReport = report;

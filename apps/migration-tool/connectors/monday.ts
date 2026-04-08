@@ -183,6 +183,20 @@ export class MondayConnector implements SourceConnector {
     return this.normaliseColumns(cols);
   }
 
+  /** Fetch a fresh pre-signed download URL for a Monday asset by its ID. */
+  async refreshAttachmentUrl(assetId: string): Promise<string | null> {
+    try {
+      const data = await this.gql<{ assets: Array<{ id: string; public_url: string }> }>(`
+        query($ids: [ID!]!) {
+          assets(ids: $ids) { id public_url }
+        }
+      `, { ids: [assetId] });
+      return data.assets?.[0]?.public_url ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async getProjectData(boardId: string): Promise<NormalisedProject> {
     // Phase 1: Fetch board structure — columns, groups, and items with column values.
     // updates/assets are excluded here because combining them in a single items_page

@@ -46,4 +46,11 @@ export interface SourceConnector {
    * dependencies, custom fields, and users.
    */
   getProjectData(projectId: string): Promise<NormalisedProject>;
+
+  /**
+   * Return a fresh download URL for a given asset ID.
+   * Used when a cached pre-signed URL has expired (e.g. Monday S3 URLs expire after 1 hour).
+   * Returns null if the platform does not support URL refresh or the asset cannot be found.
+   */
+  refreshAttachmentUrl?(assetId: string): Promise<string | null>;
 }

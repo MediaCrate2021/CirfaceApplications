@@ -57,6 +57,11 @@ export interface WriteOptions {
   /** When aborted, the task loop stops after the current task and reporting still runs. */
   cancelSignal?: AbortSignal;
   /**
+   * Called when a download fails with a 403 to get a fresh URL for the asset.
+   * Only provided when the source connector supports URL refresh (e.g. Monday S3 URLs expire after 1 hour).
+   */
+  refreshAttachmentUrl?: (assetId: string) => Promise<string | null>;
+  /**
    * Maps subitem-board column IDs → parent-board column IDs for fields that share the same name.
    * Used by migrateSubtask to resolve custom fields when the subitem column ID differs from the
    * parent board column ID (common in Monday — subitems live on their own sub-board).
@@ -394,7 +399,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl);
       report.items.push(item);
 
       const processed = i + 1;
@@ -493,6 +498,7 @@ export class AsanaDestination {
   private async migrateTask(
     task: NormalisedTask,
     projectGid: string,
+    sourceBoardId: string,
     sectionGidMap: Map<string, string>,
     sourceIdFieldGid: string | undefined,
     nativeDueOnSourceId: string | undefined,
@@ -508,6 +514,7 @@ export class AsanaDestination {
     taskGidMap: Map<string, string>,
     report: MigrationReport,
     warn: (taskId: string, taskName: string, message: string) => void,
+    refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
   ): Promise<MigrationReportItem> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -597,7 +604,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn);
+        await this.migrateSubtask(subtask, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl);
       }
 
       // Comments
@@ -617,15 +624,17 @@ export class AsanaDestination {
       // Falls back to posting the URL as a comment if the download or upload fails.
       for (const attachment of task.attachments) {
         try {
-          await this.downloadAndAttach(created.gid, attachment);
+          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl);
           report.migratedAttachments++;
         } catch (err) {
-          logger.warn({ err, attachmentId: attachment.id }, 'attachment transfer failed, falling back to URL comment');
-          report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url });
-          warn(task.id, task.name, `Attachment '${attachment.name}' could not be transferred — URL posted as comment instead.`);
+          const reason = err instanceof Error ? err.message : String(err);
+          const mondayItemUrl = `https://monday.com/boards/${sourceBoardId}/pulses/${task.id}`;
+          logger.warn({ err, attachmentId: attachment.id, reason }, 'attachment transfer failed, falling back to URL comment');
+          report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
+          warn(task.id, task.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: `Attachment (transfer failed): [${attachment.name}](${attachment.url})`,
+              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nFind it in Monday: ${mondayItemUrl}`,
             });
           } catch { /* ignore story failure */ }
         }
@@ -643,6 +652,7 @@ export class AsanaDestination {
   private async migrateSubtask(
     subtask: NormalisedTask,
     parentGid: string,
+    sourceBoardId: string,
     sourceIdFieldGid: string | undefined,
     nativeDueOnSourceId: string | undefined,
     nativeNotesSourceId: string | undefined,
@@ -656,6 +666,7 @@ export class AsanaDestination {
     taskGidMap: Map<string, string>,
     report: MigrationReport,
     warn: (taskId: string, taskName: string, message: string) => void,
+    refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
   ): Promise<void> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -753,15 +764,17 @@ export class AsanaDestination {
 
       for (const attachment of subtask.attachments) {
         try {
-          await this.downloadAndAttach(created.gid, attachment);
+          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl);
           report.migratedAttachments++;
         } catch (err) {
-          logger.warn({ err, attachmentId: attachment.id }, 'subtask attachment transfer failed, falling back to URL comment');
-          report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url });
-          warn(subtask.id, subtask.name, `Attachment '${attachment.name}' could not be transferred — URL posted as comment instead.`);
+          const reason = err instanceof Error ? err.message : String(err);
+          const mondayItemUrl = `https://monday.com/boards/${sourceBoardId}/pulses/${subtask.id}`;
+          logger.warn({ err, attachmentId: attachment.id, reason }, 'subtask attachment transfer failed, falling back to URL comment');
+          report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
+          warn(subtask.id, subtask.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: `Attachment (transfer failed): [${attachment.name}](${attachment.url})`,
+              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nFind it in Monday: ${mondayItemUrl}`,
             });
           } catch { /* ignore story failure */ }
         }
@@ -1061,7 +1074,8 @@ export class AsanaDestination {
       for (const fa of report.failedAttachments) {
         lines.push(`  Task:       ${fa.taskName} (ID: ${fa.taskId})`);
         lines.push(`  Attachment: ${fa.attachmentName} (ID: ${fa.attachmentId})`);
-        lines.push(`  Source URL: ${fa.url}`);
+        lines.push(`  Reason:     ${fa.reason}`);
+        lines.push(`  Monday:     https://monday.com/boards/${fa.boardId}/pulses/${fa.taskId}`);
         lines.push('');
       }
     }
@@ -1076,14 +1090,29 @@ export class AsanaDestination {
   }
 
   /** Download a file from the source URL and upload it as a native Asana attachment.
-   *  Retries up to 3 times with exponential backoff on transient network errors (ECONNRESET, etc.). */
-  private async downloadAndAttach(taskGid: string, attachment: NormalisedAttachment): Promise<void> {
+   *  Retries up to 3 times with exponential backoff on transient network errors (ECONNRESET, etc.).
+   *  On a 403, attempts a one-time URL refresh via refreshAttachmentUrl before giving up. */
+  private async downloadAndAttach(
+    taskGid: string,
+    attachment: NormalisedAttachment,
+    refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
+  ): Promise<void> {
     const MAX_ATTEMPTS = 3;
     let lastErr: unknown;
+    let currentUrl = attachment.url;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const dlRes = await fetch(attachment.url, { signal: AbortSignal.timeout(90_000) });
-        if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${attachment.url}`);
+        const dlRes = await fetch(currentUrl, { signal: AbortSignal.timeout(90_000) });
+        if (dlRes.status === 403 && refreshAttachmentUrl && attempt === 1) {
+          // Pre-signed URL likely expired — fetch a fresh one and retry immediately
+          const freshUrl = await refreshAttachmentUrl(attachment.id);
+          if (freshUrl) {
+            currentUrl = freshUrl;
+            logger.info({ attachmentId: attachment.id }, 'refreshed expired attachment URL, retrying');
+            continue;
+          }
+        }
+        if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${currentUrl}`);
 
         const arrayBuffer = await dlRes.arrayBuffer();
         const mimeType = attachment.mimeType ?? dlRes.headers.get('content-type') ?? 'application/octet-stream';

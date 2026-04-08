@@ -114,7 +114,8 @@ export default function Report({ report, onRunAnother }: Props) {
               <tr>
                 <th>Task</th>
                 <th>Attachment</th>
-                <th>Source URL</th>
+                <th>Reason</th>
+                <th>Find in Monday</th>
               </tr>
             </thead>
             <tbody>
@@ -122,8 +123,9 @@ export default function Report({ report, onRunAnother }: Props) {
                 <tr key={`${a.taskId}-${a.attachmentId}`} className="row-warning">
                   <td>{a.taskName}</td>
                   <td>{a.attachmentName}</td>
+                  <td>{a.reason}</td>
                   <td>
-                    <a href={a.url} target="_blank" rel="noopener noreferrer">Download</a>
+                    <a href={`https://monday.com/boards/${a.boardId}/pulses/${a.taskId}`} target="_blank" rel="noopener noreferrer">Open in Monday</a>
                   </td>
                 </tr>
               ))}

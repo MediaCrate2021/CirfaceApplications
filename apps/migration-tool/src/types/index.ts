@@ -207,6 +207,8 @@ export interface FailedAttachment {
   attachmentId: string;
   attachmentName: string;
   url: string;
+  boardId: string;   // source board ID — used to construct a Monday item link
+  reason: string;    // error message from the failed transfer
 }
 
 export interface MigrationReport {
