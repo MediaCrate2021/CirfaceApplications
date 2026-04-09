@@ -31,6 +31,7 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 import logger from './logger.js';
 import { MondayConnector } from './connectors/monday.js';
 import { TrelloConnector } from './connectors/trello.js';
+import { SmartsheetConnector } from './connectors/smartsheet.js';
 import { AsanaDestination } from './destinations/asana.js';
 import type { SourceConnector } from './connectors/base.js';
 import type {
@@ -184,6 +185,7 @@ function apiError(res: express.Response, err: unknown, context: Record<string, u
 function makeConnector(platform: SourcePlatform, token: string): SourceConnector {
   if (platform === 'monday') return new MondayConnector(token);
   if (platform === 'trello') return new TrelloConnector(token);
+  if (platform === 'smartsheet') return new SmartsheetConnector(token);
   throw new Error(`Unknown platform: ${platform}`);
 }
 

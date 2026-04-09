@@ -85,6 +85,7 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                   onChange={(e) => setSourcePlatform(e.target.value as SourcePlatform)}
                 >
                   <option value="monday">Monday.com</option>
+                  <option value="smartsheet">Smartsheet</option>
                   <option value="trello">Trello (coming soon)</option>
                 </select>
               </div>
@@ -98,6 +99,8 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                   placeholder={
                     sourcePlatform === 'monday'
                       ? 'Monday.com API token'
+                      : sourcePlatform === 'smartsheet'
+                      ? 'Smartsheet Personal Access Token'
                       : 'apiKey:token  (get both from trello.com/app-key)'
                   }
                   value={sourceToken}
@@ -107,6 +110,11 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                 {sourcePlatform === 'trello' && (
                   <p className="field-hint">
                     Paste your API key and token separated by a colon, e.g. <code>abc123:xyz789</code>
+                  </p>
+                )}
+                {sourcePlatform === 'smartsheet' && (
+                  <p className="field-hint">
+                    Generate a token in Smartsheet under Account &gt; Apps &amp; Integrations &gt; API Access.
                   </p>
                 )}
               </div>
