@@ -72,6 +72,11 @@ export default function RunMigration({ state, onComplete }: Props) {
         isNewProject: state.isNewDestProject,
       }),
     }).then(async (res) => {
+      if (res.status === 409) {
+        // Migration already running (e.g. user refreshed mid-migration) — poll for completion.
+        startPolling('page was refreshed while migration was running');
+        return;
+      }
       if (!res.body) throw new Error('No response body');
 
       const reader = res.body.getReader();
