@@ -830,6 +830,13 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/migrate/status', requireAuth, (req, res) => {
+  res.json({
+    inProgress: req.session.migrationInProgress ?? false,
+    report: req.session.lastReport ?? null,
+  });
+});
+
 app.post('/api/migrate/cancel', requireAuth, (req, res) => {
   const controller = migrationControllers.get(req.sessionID);
   if (!controller) return res.status(404).json({ error: 'No active migration for this session' });

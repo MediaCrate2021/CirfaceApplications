@@ -14,14 +14,47 @@ interface Props {
   onComplete: (report: MigrationReport) => void;
 }
 
+const POLL_INTERVAL_MS = 4_000;
+
 export default function RunMigration({ state, onComplete }: Props) {
   const [log, setLog] = useState<LogLine[]>([]);
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState('');
+  const [reconnecting, setReconnecting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const hasFired = useRef(false);
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Poll /api/migrate/status until the migration finishes, then hand off the report. */
+  function startPolling(reason: string) {
+    setReconnecting(true);
+    setLog((prev) => [...prev, { type: 'warning', message: `Connection lost (${reason}) — waiting for migration to finish…` }]);
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/migrate/status');
+        if (res.ok) {
+          const { inProgress, report } = await res.json() as { inProgress: boolean; report: MigrationReport | null };
+          if (!inProgress) {
+            setReconnecting(false);
+            if (report) {
+              onComplete(report);
+            } else {
+              setError('Migration finished but no report was found. Check the Asana tracking task for details.');
+            }
+            return;
+          }
+        }
+      } catch {
+        // network still down — keep polling
+      }
+      pollTimer.current = setTimeout(poll, POLL_INTERVAL_MS);
+    };
+
+    pollTimer.current = setTimeout(poll, POLL_INTERVAL_MS);
+  }
 
   useEffect(() => {
     // Prevent React StrictMode's double-invoke from firing two migrations.
@@ -83,9 +116,15 @@ export default function RunMigration({ state, onComplete }: Props) {
           if (payload.total) setTotal(payload.total);
         }
       }
-    }).catch((err) => {
-      setError(err.message);
+    }).catch((err: Error) => {
+      // Network error mid-stream — migration may still be running server-side.
+      // Poll for completion rather than showing a hard failure.
+      startPolling(err.message);
     });
+
+    return () => {
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+    };
   }, []);
 
   // Auto-scroll log
@@ -104,7 +143,7 @@ export default function RunMigration({ state, onComplete }: Props) {
   }
 
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-  const isActive = !error && !cancelling;
+  const isActive = !error && !cancelling && !reconnecting;
 
   return (
     <div className="step-panel">
@@ -121,6 +160,10 @@ export default function RunMigration({ state, onComplete }: Props) {
 
       {cancelling && !error && (
         <p className="warning-text">Cancelling — finishing current task and generating report…</p>
+      )}
+
+      {reconnecting && (
+        <p className="warning-text">Connection lost — migration is still running. Checking for completion every {POLL_INTERVAL_MS / 1000}s…</p>
       )}
 
       {error && <p className="error-text error-banner">{error}</p>}
