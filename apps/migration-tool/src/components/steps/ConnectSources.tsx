@@ -92,6 +92,33 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
               <div className="field-group">
                 <label htmlFor="source-token">
                   {sourcePlatform === 'trello' ? 'API Key & Token' : 'API Token'}
+                  {sourcePlatform === 'monday' && (
+                    <a
+                      className="info-icon"
+                      href="https://developer.monday.com/apps/docs/mondaycode"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-tooltip="How to get your Monday.com API token"
+                    >i</a>
+                  )}
+                  {sourcePlatform === 'smartsheet' && (
+                    <a
+                      className="info-icon"
+                      href="https://help.smartsheet.com/articles/2482389-generate-api-key"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-tooltip="How to generate a Smartsheet API key"
+                    >i</a>
+                  )}
+                  {sourcePlatform === 'trello' && (
+                    <a
+                      className="info-icon"
+                      href="https://developer.atlassian.com/cloud/trello/guides/rest-api/authorization/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-tooltip="How to get your Trello API key & token"
+                    >i</a>
+                  )}
                 </label>
                 <input
                   id="source-token"
@@ -101,21 +128,14 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                       ? 'Monday.com API token'
                       : sourcePlatform === 'smartsheet'
                       ? 'Smartsheet Personal Access Token'
-                      : 'apiKey:token  (get both from trello.com/app-key)'
+                      : 'apiKey:token'
                   }
                   value={sourceToken}
                   onChange={(e) => setSourceToken(e.target.value)}
                   autoComplete="off"
                 />
                 {sourcePlatform === 'trello' && (
-                  <p className="field-hint">
-                    Paste your API key and token separated by a colon, e.g. <code>abc123:xyz789</code>
-                  </p>
-                )}
-                {sourcePlatform === 'smartsheet' && (
-                  <p className="field-hint">
-                    Generate a token in Smartsheet under Account &gt; Apps &amp; Integrations &gt; API Access.
-                  </p>
+                  <p className="field-hint">Paste your API key and token separated by a colon: <code>apiKey:token</code></p>
                 )}
               </div>
               {sourceError && <p className="error-text">{sourceError}</p>}
@@ -142,7 +162,16 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
           {!state.destConnected && (
             <>
               <div className="field-group">
-                <label htmlFor="dest-token">Asana Personal Access Token</label>
+                <label htmlFor="dest-token">
+                  Asana Personal Access Token
+                  <a
+                    className="info-icon"
+                    href="https://developers.asana.com/docs/personal-access-token"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-tooltip="How to create an Asana Personal Access Token"
+                  >i</a>
+                </label>
                 <input
                   id="dest-token"
                   type="password"
