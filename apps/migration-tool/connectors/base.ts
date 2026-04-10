@@ -53,4 +53,11 @@ export interface SourceConnector {
    * Returns null if the platform does not support URL refresh or the asset cannot be found.
    */
   refreshAttachmentUrl?(assetId: string): Promise<string | null>;
+
+  /**
+   * Authenticate a download URL before fetching.
+   * Used when the platform requires credentials appended to the URL (e.g. Trello API key/token).
+   * Returns the URL unchanged if no authentication is needed.
+   */
+  authenticateAttachmentUrl?(url: string) => string;
 }
