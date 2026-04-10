@@ -235,7 +235,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
             {sourceWorkspaces.length > 0 && (
               <div className="field-group">
                 <label htmlFor="source-workspace">
-                  Monday Workspace <span className="field-hint-inline">(filters board list)</span>
+                  {state.sourceWorkspaceName ?? 'Source'} Workspace <span className="field-hint-inline">(filters list)</span>
                 </label>
                 <select
                   id="source-workspace"
@@ -252,7 +252,9 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
             <div className="field-group">
               <label htmlFor="source-project">
-                {state.sourcePlatform === 'monday' ? 'Monday.com board' : 'Trello board'}
+                {state.sourcePlatform === 'monday' ? 'Monday.com board'
+                  : state.sourcePlatform === 'smartsheet' ? 'Smartsheet sheet'
+                  : 'Trello board'}
               </label>
               <select
                 id="source-project"

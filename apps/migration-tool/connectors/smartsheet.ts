@@ -110,6 +110,7 @@ interface SmAttachment {
   id: number;
   name: string;
   attachmentType: string; // 'FILE', 'BOX_COM', 'DROPBOX', 'GOOGLE_DRIVE', 'LINK', etc.
+  // url is only present on the individual GET /attachments/{id} response, not the list
   url?: string;
   mimeType?: string;
   parentType: string; // 'ROW', 'SHEET', 'COMMENT'
@@ -284,17 +285,47 @@ export class SmartsheetConnector implements SourceConnector {
 
     logger.info({ sheetId, rows: sheet.rows.length }, 'Smartsheet: sheet loaded');
 
-    // Phase 2: all ROW-level attachments for the sheet
+    // Phase 2: all ROW-level attachments for the sheet.
+    // The list endpoint returns metadata only — no download URL.
+    // We must fetch each FILE attachment individually to get its url.
     const allAttachments = await this.getAllPages<SmAttachment>(`/sheets/${sheetId}/attachments`);
+    const rowFileAttachments = allAttachments.filter(
+      (a) => a.parentType === 'ROW' && a.attachmentType === 'FILE',
+    );
+
+    // Resolve download URLs in parallel (capped to avoid hammering the API)
+    const CONCURRENCY = 5;
+    const resolvedAttachments: SmAttachment[] = [];
+    for (let i = 0; i < rowFileAttachments.length; i += CONCURRENCY) {
+      const batch = rowFileAttachments.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        batch.map(async (att) => {
+          try {
+            const detail = await this.get<SmAttachment>(`/sheets/${sheetId}/attachments/${att.id}`);
+            return { ...att, url: detail.url, mimeType: detail.mimeType ?? att.mimeType };
+          } catch (err) {
+            logger.warn({ attachmentId: att.id, err }, 'Smartsheet: failed to resolve attachment URL, skipping');
+            return null;
+          }
+        }),
+      );
+      for (const r of results) {
+        if (r) resolvedAttachments.push(r);
+      }
+    }
+
     const attachmentsByRow = new Map<number, SmAttachment[]>();
-    for (const att of allAttachments) {
-      if (att.parentType === 'ROW') {
+    for (const att of resolvedAttachments) {
+      if (att.url) {
         const existing = attachmentsByRow.get(att.parentId) ?? [];
         existing.push(att);
         attachmentsByRow.set(att.parentId, existing);
       }
     }
-    logger.info({ sheetId, attachments: allAttachments.length }, 'Smartsheet: attachments loaded');
+    logger.info(
+      { sheetId, total: allAttachments.length, resolved: resolvedAttachments.length },
+      'Smartsheet: attachments loaded',
+    );
 
     // Phase 3: all discussions with inline comments
     const allDiscussions = await this.getAllPages<SmDiscussion>(
