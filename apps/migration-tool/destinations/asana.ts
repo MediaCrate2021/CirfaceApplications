@@ -826,6 +826,15 @@ export class AsanaDestination {
         const asanaType = entry.destFieldType ?? this.mapToAsanaFieldType(entry.sourceFieldType);
         const prefix = entry.isSubitemField ? 'ms_' : 'm_';
         const fieldName = `${prefix}${entry.sourceFieldName}`;
+        // Enum fields with no options cannot be created in Asana — skip and warn.
+        if ((asanaType === 'enum' || asanaType === 'multi_enum') && entry.sourceFieldType !== 'checkbox') {
+          const validOptions = (entry.sourceOptions ?? []).filter((o) => String(o.name ?? '').trim());
+          if (!validOptions.length) {
+            log(`Skipping field '${fieldName}' — no valid options to create an enum field.`, 'warning');
+            fieldFailures.push({ taskId: '', taskName: fieldName, status: 'warning', message: 'No valid enum options — all options were blank or missing.' });
+            continue;
+          }
+        }
         log(`Creating project-level field '${fieldName}' (type: ${asanaType}).`);
         try {
           const fieldDef = this.buildFieldDef(asanaType, fieldName, entry);
