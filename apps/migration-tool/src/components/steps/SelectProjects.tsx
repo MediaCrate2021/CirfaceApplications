@@ -254,7 +254,8 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
               <label htmlFor="source-project">
                 {state.sourcePlatform === 'monday' ? 'Monday.com board'
                   : state.sourcePlatform === 'smartsheet' ? 'Smartsheet sheet'
-                  : 'Trello board'}
+                  : state.sourcePlatform === 'trello' ? 'Trello board'
+                  : 'Project'}
               </label>
               <select
                 id="source-project"

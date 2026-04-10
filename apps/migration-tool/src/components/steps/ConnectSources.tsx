@@ -86,7 +86,7 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                 >
                   <option value="monday">Monday.com</option>
                   <option value="smartsheet">Smartsheet</option>
-                  <option value="trello">Trello (coming soon)</option>
+                  <option value="trello">Trello</option>
                 </select>
               </div>
               <div className="field-group">
