@@ -59,5 +59,5 @@ export interface SourceConnector {
    * Used when the platform requires credentials appended to the URL (e.g. Trello API key/token).
    * Returns the URL unchanged if no authentication is needed.
    */
-  authenticateAttachmentUrl?(url: string) => string;
+  authenticateAttachmentUrl?(url: string): string;
 }

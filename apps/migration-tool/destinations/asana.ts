@@ -62,6 +62,11 @@ export interface WriteOptions {
    */
   refreshAttachmentUrl?: (assetId: string) => Promise<string | null>;
   /**
+   * Authenticate a download URL before fetching (e.g. append Trello key/token query params).
+   * Called on every attachment download when provided.
+   */
+  authenticateAttachmentUrl?: (url: string) => string;
+  /**
    * Maps subitem-board column IDs → parent-board column IDs for fields that share the same name.
    * Used by migrateSubtask to resolve custom fields when the subitem column ID differs from the
    * parent board column ID (common in Monday — subitems live on their own sub-board).
@@ -515,6 +520,7 @@ export class AsanaDestination {
     report: MigrationReport,
     warn: (taskId: string, taskName: string, message: string) => void,
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
+    authenticateAttachmentUrl?: (url: string) => string,
   ): Promise<MigrationReportItem> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -1105,10 +1111,13 @@ export class AsanaDestination {
     taskGid: string,
     attachment: NormalisedAttachment,
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
+    authenticateAttachmentUrl?: (url: string) => string,
   ): Promise<void> {
     const MAX_ATTEMPTS = 3;
     let lastErr: unknown;
-    let currentUrl = attachment.url;
+    let currentUrl = authenticateAttachmentUrl
+      ? authenticateAttachmentUrl(attachment.url)
+      : attachment.url;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         const dlRes = await fetch(currentUrl, { signal: AbortSignal.timeout(90_000) });

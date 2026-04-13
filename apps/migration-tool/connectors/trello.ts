@@ -61,6 +61,13 @@ export class TrelloConnector implements SourceConnector {
     return { key: this.key, token: this.token };
   }
 
+  authenticateAttachmentUrl(url: string): string {
+    const u = new URL(url);
+    u.searchParams.set('key', this.key);
+    u.searchParams.set('token', this.token);
+    return u.toString();
+  }
+
   private async get<T = unknown>(path: string, params: Record<string, string> = {}): Promise<T> {
     const url = new URL(`${TRELLO_BASE}${path}`);
     const allParams = { ...this.auth(), ...params };
