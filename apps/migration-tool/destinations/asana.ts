@@ -630,7 +630,7 @@ export class AsanaDestination {
       // Falls back to posting the URL as a comment if the download or upload fails.
       for (const attachment of task.attachments) {
         try {
-          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl);
+          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
           report.migratedAttachments++;
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
@@ -673,6 +673,7 @@ export class AsanaDestination {
     report: MigrationReport,
     warn: (taskId: string, taskName: string, message: string) => void,
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
+    authenticateAttachmentUrl?: (url: string) => string,
   ): Promise<void> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -770,7 +771,7 @@ export class AsanaDestination {
 
       for (const attachment of subtask.attachments) {
         try {
-          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl);
+          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
           report.migratedAttachments++;
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
