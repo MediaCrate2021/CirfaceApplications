@@ -804,6 +804,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       cancelSignal: cancelController.signal,
       subitemFieldIdRemap,
       refreshAttachmentUrl: connector.refreshAttachmentUrl?.bind(connector),
+      authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
     });
 
     req.session.lastReport = report;
