@@ -634,13 +634,12 @@ export class AsanaDestination {
           report.migratedAttachments++;
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          const mondayItemUrl = `https://monday.com/boards/${sourceBoardId}/pulses/${task.id}`;
           logger.warn({ err, attachmentId: attachment.id, reason }, 'attachment transfer failed, falling back to URL comment');
           report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
           warn(task.id, task.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nFind it in Monday: ${mondayItemUrl}`,
+              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nSource URL: ${attachment.url}`,
             });
           } catch { /* ignore story failure */ }
         }
@@ -775,13 +774,12 @@ export class AsanaDestination {
           report.migratedAttachments++;
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          const mondayItemUrl = `https://monday.com/boards/${sourceBoardId}/pulses/${subtask.id}`;
           logger.warn({ err, attachmentId: attachment.id, reason }, 'subtask attachment transfer failed, falling back to URL comment');
           report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
           warn(subtask.id, subtask.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nFind it in Monday: ${mondayItemUrl}`,
+              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nSource URL: ${attachment.url}`,
             });
           } catch { /* ignore story failure */ }
         }
@@ -1091,7 +1089,7 @@ export class AsanaDestination {
         lines.push(`  Task:       ${fa.taskName} (ID: ${fa.taskId})`);
         lines.push(`  Attachment: ${fa.attachmentName} (ID: ${fa.attachmentId})`);
         lines.push(`  Reason:     ${fa.reason}`);
-        lines.push(`  Monday:     https://monday.com/boards/${fa.boardId}/pulses/${fa.taskId}`);
+        lines.push(`  URL:        ${fa.url}`);
         lines.push('');
       }
     }
