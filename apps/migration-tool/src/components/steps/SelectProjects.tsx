@@ -271,11 +271,15 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
           </div>
 
           {/* Destination card */}
-          <div className={`connect-card ${(destMode === 'new' ? !!newProjectName.trim() : !!selectedDest) ? 'connected' : ''}`}>
+          <div className={`connect-card ${
+            destMode === 'new'
+              ? newProjectName.trim() && validatedOwner ? 'connected' : newProjectName.trim() ? 'pending' : ''
+              : selectedDest ? 'connected' : ''
+          }`}>
             <div className="connect-card-header">
               <h3>Destination Asana</h3>
               {destMode === 'new' && newProjectName.trim() && (
-                <span className="badge badge-success">New: {newProjectName.trim()}</span>
+                <span className={`badge ${validatedOwner ? 'badge-success' : 'badge-warning'}`}>New: {newProjectName.trim()}</span>
               )}
               {destMode === 'existing' && selectedDest && (
                 <span className="badge badge-success">{projectQuery}</span>

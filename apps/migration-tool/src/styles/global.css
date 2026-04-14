@@ -410,6 +410,11 @@ a:hover { text-decoration: underline; }
   background: #f0fdfe;
 }
 
+.connect-card.pending {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
 .connect-card-header {
   display: flex;
   align-items: center;
