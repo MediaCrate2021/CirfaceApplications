@@ -346,6 +346,25 @@ export class AsanaDestination {
       }
     }
 
+    // Step 4b: create 'm_SmartSheetRow' field for Smartsheet migrations.
+    // Stores the source row number so tasks can be traced back to their original Smartsheet row.
+    // The Smartsheet connector injects the value into customFields under '__smartsheet_row__';
+    // registering that key in fieldGidMap lets the existing customFields loop handle it automatically.
+    if (options.sourcePlatform === 'smartsheet') {
+      try {
+        const setting = await this.request<{ custom_field: { gid: string } }>(
+          'POST',
+          `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting?opt_fields=custom_field.gid`,
+          { custom_field: { resource_subtype: 'text', name: 'm_SmartSheetRow' } },
+        );
+        fieldGidMap.set('__smartsheet_row__', setting.custom_field.gid);
+        log(`'m_SmartSheetRow' field created.`);
+      } catch (err) {
+        warn('setup', 'm_SmartSheetRow field', `Could not create m_SmartSheetRow field: ${(err as Error).message}`);
+        log(`Could not create m_SmartSheetRow field: ${(err as Error).message}`, 'warning');
+      }
+    }
+
     // Step 5: create or map Asana sections to mirror source groups/lists
     const sectionGidMap = new Map<string, string>(); // sourceSectionId → asanaSectionGid
     const secMap = new Map<string, SectionMappingEntry>();
@@ -392,6 +411,12 @@ export class AsanaDestination {
     const total = project.tasks.length;
     log(`${total} tasks found in the source project.`);
 
+    // Map sourceFieldId → human-readable display name so deeply-nested subtask comments
+    // are labelled with field names rather than raw column IDs.
+    const fieldDisplayMap = new Map<string, string>(
+      options.fieldMapping.map((f) => [f.sourceFieldId, f.destFieldName ?? f.sourceFieldName]),
+    );
+
     const PROGRESS_INTERVAL = 25;
 
     for (let i = 0; i < project.tasks.length; i++) {
@@ -404,7 +429,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap);
       report.items.push(item);
 
       const processed = i + 1;
@@ -418,23 +443,41 @@ export class AsanaDestination {
     if (report.migratedComments > 0) log(`${report.migratedComments} comments migrated.`);
     if (report.migratedAttachments > 0) log(`${report.migratedAttachments} attachments transferred.`);
 
-    // Step 6: wire up dependencies
+    // Step 6: wire up dependencies (tasks and subtasks)
     let depAttempts = 0;
-    for (const task of project.tasks) {
-      if (!task.dependencyIds.length) continue;
-      const taskGid = taskGidMap.get(task.id);
-      if (!taskGid) continue;
-      for (const depId of task.dependencyIds) {
-        const depGid = taskGidMap.get(depId);
-        if (!depGid) continue;
-        depAttempts++;
-        try {
-          await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/addDependencies`, { dependencies: [depGid] });
-          report.migratedDependencies++;
-        } catch (err) {
-          warn('dependency', `Dependency: ${task.name}`, `Failed to add dependency: ${(err as Error).message}`);
+    const wireDependencies = async (task: NormalisedTask): Promise<void> => {
+      if (task.dependencyIds.length) {
+        const taskGid = taskGidMap.get(task.id);
+        if (taskGid) {
+          for (const depId of task.dependencyIds) {
+            const depGid = taskGidMap.get(depId);
+            if (!depGid) {
+              warn(task.id, task.name, `Dependency target (source ID: ${depId}) was not migrated — skipped`);
+              if (taskGid) {
+                try {
+                  await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
+                    text: `[m_Dependency] Predecessor task (source ID: ${depId}) could not be linked — it was not found in the migrated project.`,
+                  });
+                } catch { /* ignore */ }
+              }
+              continue;
+            }
+            depAttempts++;
+            try {
+              await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/addDependencies`, { dependencies: [depGid] });
+              report.migratedDependencies++;
+            } catch (err) {
+              warn(task.id, task.name, `Failed to add dependency: ${(err as Error).message}`);
+            }
+          }
         }
       }
+      for (const subtask of task.subtasks) {
+        await wireDependencies(subtask);
+      }
+    };
+    for (const task of project.tasks) {
+      await wireDependencies(task);
     }
     if (depAttempts > 0) log(`${report.migratedDependencies} of ${depAttempts} dependencies wired.`);
 
@@ -521,6 +564,7 @@ export class AsanaDestination {
     warn: (taskId: string, taskName: string, message: string) => void,
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
     authenticateAttachmentUrl?: (url: string) => string,
+    fieldDisplayMap?: Map<string, string>,
   ): Promise<MigrationReportItem> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -610,7 +654,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl);
+        await this.migrateSubtask(subtask, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap);
       }
 
       // Comments
@@ -673,6 +717,7 @@ export class AsanaDestination {
     warn: (taskId: string, taskName: string, message: string) => void,
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
     authenticateAttachmentUrl?: (url: string) => string,
+    fieldDisplayMap?: Map<string, string>,
   ): Promise<void> {
     try {
       const customFields: Record<string, unknown> = {};
@@ -752,7 +797,39 @@ export class AsanaDestination {
 
       if (nativeDueOn) payload.due_on = nativeDueOn.substring(0, 10);
 
-      const created = await this.request<{ gid: string }>('POST', '/tasks', payload);
+      // Asana only allows setting custom fields on tasks that are members of the project
+      // those fields are attached to. Deeply nested subtasks (subtask of a subtask) are not
+      // automatically added to the parent project, so the API rejects custom_fields for them.
+      // Detect that error and retry without custom fields rather than failing the whole subtask.
+      let created: { gid: string };
+      try {
+        created = await this.request<{ gid: string }>('POST', '/tasks', payload);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (payload.custom_fields && /not on (given|this) object/i.test(msg)) {
+          const { custom_fields: _dropped, ...payloadWithoutFields } = payload as Record<string, unknown>;
+          created = await this.request<{ gid: string }>('POST', '/tasks', payloadWithoutFields);
+          // Write dropped field values as a comment so data is not silently lost
+          const droppedLines: string[] = [];
+          for (const [sourceFieldId, value] of Object.entries(subtask.customFields)) {
+            if (value === null || value === '') continue;
+            const displayName = sourceFieldId === '__smartsheet_row__'
+              ? 'Smartsheet Row'
+              : (fieldDisplayMap?.get(sourceFieldId) ?? sourceFieldId);
+            const displayValue = Array.isArray(value) ? value.join(', ') : value;
+            droppedLines.push(`• ${displayName}: ${displayValue}`);
+          }
+          if (droppedLines.length) {
+            try {
+              await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
+                text: `[m_FieldData] Custom fields could not be applied (task is too deeply nested):\n${droppedLines.join('\n')}`,
+              });
+            } catch { /* ignore */ }
+          }
+        } else {
+          throw err;
+        }
+      }
       taskGidMap.set(subtask.id, created.gid);
       report.migratedSubtasks++;
 
@@ -783,6 +860,11 @@ export class AsanaDestination {
             });
           } catch { /* ignore story failure */ }
         }
+      }
+
+      // Recurse into children — Asana supports nested subtasks at arbitrary depth.
+      for (const child of subtask.subtasks) {
+        await this.migrateSubtask(child, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap);
       }
     } catch (err) {
       warn(subtask.id, subtask.name, `Failed to migrate subtask: ${(err as Error).message}`);

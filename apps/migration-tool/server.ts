@@ -447,7 +447,8 @@ app.get('/api/source/project-summary', requireAuth, async (req, res) => {
       n + t.comments.length + t.subtasks.reduce((sn, s) => sn + s.comments.length, 0), 0);
     const attachments = project.tasks.reduce((n, t) =>
       n + t.attachments.length + t.subtasks.reduce((sn, s) => sn + s.attachments.length, 0), 0);
-    const dependencies = project.tasks.reduce((n, t) => n + t.dependencyIds.length, 0);
+    const dependencies = project.tasks.reduce((n, t) =>
+      n + t.dependencyIds.length + t.subtasks.reduce((sn, s) => sn + s.dependencyIds.length, 0), 0);
     res.json({ tasks, subtasks, comments, attachments, dependencies });
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/project-summary' });

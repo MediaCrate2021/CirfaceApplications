@@ -16,12 +16,12 @@
 //   Sheet              → Project
 //   Column             → NormalisedField
 //   Top-level row      → Task
-//   Child row          → Subtask (flattened to one level; deeper rows attach to top-level ancestor)
+//   Child row          → Subtask (full hierarchy preserved; arbitrary depth supported)
 //   Discussion/comment → NormalisedComment (per row)
-//   Row attachment     → NormalisedAttachment (URLs do not expire — no refreshAttachmentUrl needed)
+//   Row attachment     → NormalisedAttachment (pre-signed URLs expire ~30s — refreshAttachmentUrl re-fetches on demand)
 //   CONTACT_LIST       → 'people' field type; first contact per row → assigneeId
 //   PICKLIST           → 'dropdown' field type
-//   PREDECESSOR column → dependencyIds (skipped as a custom field)
+//   PREDECESSOR column → dependencyIds (migrated as native Asana dependencies; not surfaced as a custom field)
 //   DURATION / AUTO_NUMBER → nonMigratable
 //
 // Note: Smartsheet has no section/group concept. project.sections is always [].
@@ -78,23 +78,28 @@ interface SmMultiContact {
   values?: SmContact[];
 }
 
-interface SmCell {
-  columnId: number;
-  value?: string | number | boolean | null;
-  displayValue?: string;
-  objectValue?: SmContact | SmMultiContact | unknown;
-}
-
 interface SmPredecessor {
   rowId: number;
   type: string; // 'FS', 'SS', 'FF', 'SF'
 }
 
+interface SmPredecessorList {
+  objectType: 'PREDECESSOR_LIST';
+  predecessors: SmPredecessor[];
+}
+
+interface SmCell {
+  columnId: number;
+  value?: string | number | boolean | null;
+  displayValue?: string;
+  objectValue?: SmContact | SmMultiContact | SmPredecessorList | unknown;
+}
+
 interface SmRow {
   id: number;
+  rowNumber?: number;
   parentId?: number;
   cells: SmCell[];
-  predecessorList?: SmPredecessor[];
   createdAt?: string;
   modifiedAt?: string;
 }
@@ -149,13 +154,19 @@ interface RowContext {
   attachmentsByRow: Map<number, SmAttachment[]>;
   discussionsByRow: Map<number, SmDiscussion[]>;
   childrenByParentId: Map<number, SmRow[]>;
+  rowNumberToId: Map<number, number>; // rowNumber → internal row id
 }
 
 // ---------------------------------------------------------------------------
 // Column type helpers
 // ---------------------------------------------------------------------------
 
-const NON_MIGRATABLE_TYPES = new Set(['DURATION', 'PREDECESSOR', 'AUTO_NUMBER']);
+// Types shown as non-migratable in the field mapping UI (no useful Asana equivalent)
+const NON_MIGRATABLE_TYPES = new Set(['DURATION', 'AUTO_NUMBER']);
+// Types whose cell values are skipped when building task.customFields.
+// PREDECESSOR is excluded here because its data is extracted into task.dependencyIds instead —
+// it migrates natively as Asana dependencies and doesn't need a custom field mapping.
+const SKIP_CELL_TYPES = new Set([...NON_MIGRATABLE_TYPES]);
 
 function normaliseColumnType(type: string): NormalisedFieldType {
   switch (type) {
@@ -178,9 +189,20 @@ function normaliseColumnType(type: string): NormalisedFieldType {
 export class SmartsheetConnector implements SourceConnector {
   readonly platform = 'smartsheet' as const;
   private token: string;
+  private activeSheetId: string | null = null;
 
   constructor(token: string) {
     this.token = token.trim();
+  }
+
+  async refreshAttachmentUrl(assetId: string): Promise<string | null> {
+    if (!this.activeSheetId) return null;
+    try {
+      const detail = await this.get<SmAttachment>(`/sheets/${this.activeSheetId}/attachments/${assetId}`);
+      return detail.url ?? null;
+    } catch {
+      return null;
+    }
   }
 
   // ---- HTTP helpers ----
@@ -276,28 +298,31 @@ export class SmartsheetConnector implements SourceConnector {
   }
 
   async getProjectData(sheetId: string): Promise<NormalisedProject> {
+    this.activeSheetId = sheetId;
     logger.info({ sheetId }, 'Smartsheet: fetching sheet');
 
     // Phase 1: full sheet — all rows, columns, and predecessor links
     const sheet = await this.get<SmSheet>(`/sheets/${sheetId}`, {
-      include: 'predecessors',
+      include: 'objectValue',
     }, AbortSignal.timeout(60_000));
 
     logger.info({ sheetId, rows: sheet.rows.length }, 'Smartsheet: sheet loaded');
 
-    // Phase 2: all ROW-level attachments for the sheet.
+    // Phase 2: all file attachments on rows OR comments (both parentType values).
+    // Comment attachments need Phase 3 (discussions) to map commentId → rowId,
+    // so URL resolution happens here but the attachmentsByRow map is built after Phase 3.
     // The list endpoint returns metadata only — no download URL.
     // We must fetch each FILE attachment individually to get its url.
     const allAttachments = await this.getAllPages<SmAttachment>(`/sheets/${sheetId}/attachments`);
-    const rowFileAttachments = allAttachments.filter(
-      (a) => a.parentType === 'ROW' && a.attachmentType === 'FILE',
+    const fileAttachments = allAttachments.filter(
+      (a) => (a.parentType === 'ROW' || a.parentType === 'COMMENT') && a.attachmentType === 'FILE',
     );
 
     // Resolve download URLs in parallel (capped to avoid hammering the API)
     const CONCURRENCY = 5;
     const resolvedAttachments: SmAttachment[] = [];
-    for (let i = 0; i < rowFileAttachments.length; i += CONCURRENCY) {
-      const batch = rowFileAttachments.slice(i, i + CONCURRENCY);
+    for (let i = 0; i < fileAttachments.length; i += CONCURRENCY) {
+      const batch = fileAttachments.slice(i, i + CONCURRENCY);
       const results = await Promise.all(
         batch.map(async (att) => {
           try {
@@ -311,15 +336,6 @@ export class SmartsheetConnector implements SourceConnector {
       );
       for (const r of results) {
         if (r) resolvedAttachments.push(r);
-      }
-    }
-
-    const attachmentsByRow = new Map<number, SmAttachment[]>();
-    for (const att of resolvedAttachments) {
-      if (att.url) {
-        const existing = attachmentsByRow.get(att.parentId) ?? [];
-        existing.push(att);
-        attachmentsByRow.set(att.parentId, existing);
       }
     }
     logger.info(
@@ -342,6 +358,40 @@ export class SmartsheetConnector implements SourceConnector {
     }
     logger.info({ sheetId, discussions: allDiscussions.length }, 'Smartsheet: discussions loaded');
 
+    // Build commentId → rowId map so COMMENT-parentType attachments resolve to the correct row.
+    // Smartsheet comment attachments have parentType:'COMMENT' and parentId = the comment ID,
+    // not the row ID — we need this map to route them correctly.
+    const commentToRowId = new Map<number, number>();
+    for (const disc of allDiscussions) {
+      if (disc.parentType === 'ROW') {
+        for (const comment of disc.comments ?? []) {
+          commentToRowId.set(comment.id, disc.parentId);
+        }
+      }
+    }
+
+    // Build attachmentsByRow — now that we have the comment→row map we can correctly
+    // route both ROW-level and COMMENT-level attachments to the right row.
+    const attachmentsByRow = new Map<number, SmAttachment[]>();
+    for (const att of resolvedAttachments) {
+      if (!att.url) continue;
+      let rowId: number;
+      if (att.parentType === 'ROW') {
+        rowId = att.parentId;
+      } else {
+        // COMMENT attachment — trace back to the row via the discussion map
+        const rid = commentToRowId.get(att.parentId);
+        if (rid == null) {
+          logger.warn({ attachmentId: att.id, commentId: att.parentId }, 'Smartsheet: comment attachment has no matching row, skipping');
+          continue;
+        }
+        rowId = rid;
+      }
+      const existing = attachmentsByRow.get(rowId) ?? [];
+      existing.push(att);
+      attachmentsByRow.set(rowId, existing);
+    }
+
     // Build indexes
     const columnMap = new Map<number, SmColumn>(sheet.columns.map((c) => [c.id, c]));
     const rowMap = new Map<number, SmRow>(sheet.rows.map((r) => [r.id, r]));
@@ -361,8 +411,8 @@ export class SmartsheetConnector implements SourceConnector {
       }
     }
 
-    // Partition rows into top-level tasks and children.
-    // All rows deeper than one level are flattened to their top-level ancestor.
+    // Partition rows into top-level tasks and a direct-parent → children map.
+    // The full hierarchy is preserved so normaliseRow can recurse to arbitrary depth.
     const topLevelRows: SmRow[] = [];
     const childrenByParentId = new Map<number, SmRow[]>();
 
@@ -370,14 +420,17 @@ export class SmartsheetConnector implements SourceConnector {
       if (!row.parentId || !rowMap.has(row.parentId)) {
         topLevelRows.push(row);
       } else {
-        const ancestorId = this.findTopAncestor(row.parentId, rowMap);
-        const existing = childrenByParentId.get(ancestorId) ?? [];
+        const existing = childrenByParentId.get(row.parentId) ?? [];
         existing.push(row);
-        childrenByParentId.set(ancestorId, existing);
+        childrenByParentId.set(row.parentId, existing);
       }
     }
 
-    const ctx: RowContext = { columnMap, attachmentsByRow, discussionsByRow, childrenByParentId };
+    const rowNumberToId = new Map<number, number>(
+      sheet.rows.filter((r) => r.rowNumber != null).map((r) => [r.rowNumber!, r.id]),
+    );
+
+    const ctx: RowContext = { columnMap, attachmentsByRow, discussionsByRow, childrenByParentId, rowNumberToId };
 
     const tasks: NormalisedTask[] = topLevelRows.map((row) => this.normaliseRow(row, ctx));
 
@@ -402,7 +455,7 @@ export class SmartsheetConnector implements SourceConnector {
 
   private normaliseColumns(columns: SmColumn[]): NormalisedField[] {
     return columns
-      .filter((c) => !c.primary) // primary column is the task name, not a custom field
+      .filter((c) => !c.primary && c.type !== 'PREDECESSOR') // primary = task name; PREDECESSOR = handled natively as dependencies
       .map((c): NormalisedField => {
         const isNonMig = NON_MIGRATABLE_TYPES.has(c.type);
         const field: NormalisedField = {
@@ -419,9 +472,10 @@ export class SmartsheetConnector implements SourceConnector {
   }
 
   private normaliseRow(row: SmRow, ctx: RowContext): NormalisedTask {
-    const { columnMap, attachmentsByRow, discussionsByRow, childrenByParentId } = ctx;
+    const { columnMap, attachmentsByRow, discussionsByRow, childrenByParentId, rowNumberToId } = ctx;
 
     const customFields: Record<string, string | string[] | null> = {};
+    const dependencyIds: string[] = [];
     let name = `Row ${row.id}`;
     let assigneeId: string | undefined;
     let dueDate: string | undefined;
@@ -435,7 +489,28 @@ export class SmartsheetConnector implements SourceConnector {
         continue;
       }
 
-      if (NON_MIGRATABLE_TYPES.has(col.type)) continue;
+      if (SKIP_CELL_TYPES.has(col.type)) continue;
+
+      // PREDECESSOR cells carry dependency data — extract row IDs, don't put in customFields.
+      // Prefer objectValue (contains internal rowId directly); fall back to parsing the cell
+      // value as a row number and converting via rowNumberToId.
+      if (col.type === 'PREDECESSOR') {
+        const obj = cell.objectValue as SmPredecessorList | undefined;
+        if (obj?.objectType === 'PREDECESSOR_LIST' && Array.isArray(obj.predecessors)) {
+          for (const pred of obj.predecessors) {
+            dependencyIds.push(String(pred.rowId));
+          }
+        } else if (cell.value != null) {
+          // Cell value is a row number (or comma-separated row numbers e.g. "2" or "1,3")
+          const raw = String(cell.value);
+          for (const part of raw.split(',')) {
+            const rowNum = parseInt(part.trim(), 10);
+            const rowId = !isNaN(rowNum) ? rowNumberToId.get(rowNum) : undefined;
+            if (rowId != null) dependencyIds.push(String(rowId));
+          }
+        }
+        continue;
+      }
 
       const fieldId = String(col.id);
 
@@ -493,11 +568,14 @@ export class SmartsheetConnector implements SourceConnector {
       }
     }
 
-    const dependencyIds = (row.predecessorList ?? []).map((p) => String(p.rowId));
+    // Store the Smartsheet row number under a reserved key so the migration engine
+    // can write it to the 'm_SmartSheetRow' field without needing an extra parameter.
+    if (row.rowNumber != null) {
+      customFields['__smartsheet_row__'] = String(row.rowNumber);
+    }
 
-    // Subtasks: direct children (and deeper descendants, flattened) from the partition built in getProjectData
-    const subtaskCtx: RowContext = { ...ctx, childrenByParentId: new Map() }; // no further recursion
-    const subtasks = (childrenByParentId.get(row.id) ?? []).map((sub) => this.normaliseRow(sub, subtaskCtx));
+    // Subtasks: direct children only — recursion into ctx preserves the full hierarchy.
+    const subtasks = (childrenByParentId.get(row.id) ?? []).map((sub) => this.normaliseRow(sub, ctx));
 
     return {
       id: String(row.id),
@@ -534,13 +612,5 @@ export class SmartsheetConnector implements SourceConnector {
     return [];
   }
 
-  /** Walk the parentId chain to find the top-level (no-parent) ancestor row ID. */
-  private findTopAncestor(parentId: number, rowMap: Map<number, SmRow>): number {
-    let current = parentId;
-    while (true) {
-      const parent = rowMap.get(current);
-      if (!parent?.parentId || !rowMap.has(parent.parentId)) return current;
-      current = parent.parentId;
-    }
-  }
+
 }
