@@ -592,8 +592,12 @@ export class AsanaDestination {
           const ids = Array.isArray(value) ? value : [value];
           const gids = ids.map((id) => userGidMap.get(String(id))).filter((g): g is string => g != null);
           if (gids.length) customFields[destGid] = gids;
+        } else if (fieldTypeMap.get(sourceFieldId) === 'number') {
+          const num = parseFloat(String(value));
+          if (!isNaN(num)) customFields[destGid] = num;
         } else {
-          customFields[destGid] = value;
+          // text / unknown — Asana strictly requires a string for text_value
+          if (value !== null) customFields[destGid] = Array.isArray(value) ? value.join(', ') : String(value);
         }
       }
 
@@ -756,8 +760,12 @@ export class AsanaDestination {
           const ids = Array.isArray(value) ? value : [value];
           const gids = ids.map((id) => userGidMap.get(String(id))).filter((g): g is string => g != null);
           if (gids.length) customFields[destGid] = gids;
+        } else if (fieldTypeMap.get(resolvedFieldId) === 'number') {
+          const num = parseFloat(String(value));
+          if (!isNaN(num)) customFields[destGid] = num;
         } else {
-          customFields[destGid] = value;
+          // text / unknown — Asana strictly requires a string for text_value
+          if (value !== null) customFields[destGid] = Array.isArray(value) ? value.join(', ') : String(value);
         }
       }
 

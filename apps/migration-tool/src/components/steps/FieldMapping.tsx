@@ -5,6 +5,7 @@ import type {
   EnumMappingEntry,
   FieldMappingEntry,
   NormalisedField,
+  NormalisedFieldOption,
   NormalisedFieldType,
   NormalisedSection,
   SectionMappingEntry,
@@ -231,19 +232,28 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
     ])
       .then(([src, sections]) => {
         if (forceRemap || !state.fieldMapping.length) {
-          // Build a name → sourceFieldId map for parent fields so subitem fields
-          // with the same name can be linked to their parent.
-          const parentFieldByName = new Map<string, string>();
+          // Build a name → field map for parent fields so subitem fields with the same
+          // name can be linked. Only link if the field types match AND, for dropdown fields,
+          // the option sets are identical — same name with different enum values = different field.
+          const parentFieldByName = new Map<string, NormalisedField>();
           for (const f of src) {
-            if (!f.isSubitemField) parentFieldByName.set(f.name.toLowerCase(), f.id);
+            if (!f.isSubitemField) parentFieldByName.set(f.name.toLowerCase(), f);
           }
+          const optionSetKey = (opts?: NormalisedFieldOption[]) =>
+            (opts ?? []).map((o) => o.name).sort().join('|');
           const fieldEntries: FieldMappingEntry[] = src.map((f) => {
             const nativeField = state.sourcePlatform === 'monday'
               ? mondayNativeField(f.name, f.type)
               : undefined;
-            const linkedToParentSourceFieldId = f.isSubitemField
-              ? (parentFieldByName.get(f.name.toLowerCase()) ?? undefined)
-              : undefined;
+            let linkedToParentSourceFieldId: string | undefined;
+            if (f.isSubitemField) {
+              const parent = parentFieldByName.get(f.name.toLowerCase());
+              if (parent && parent.type === f.type) {
+                // For dropdown fields, only link if the option sets are identical
+                const typesMatch = f.type !== 'dropdown' || optionSetKey(f.options) === optionSetKey(parent.options);
+                if (typesMatch) linkedToParentSourceFieldId = parent.id;
+              }
+            }
             return {
               sourceFieldId: f.id,
               sourceFieldName: f.name,

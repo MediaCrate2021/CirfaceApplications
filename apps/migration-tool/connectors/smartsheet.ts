@@ -544,8 +544,11 @@ export class SmartsheetConnector implements SourceConnector {
           break;
         }
         default: {
-          const val = cell.displayValue ?? (cell.value != null ? String(cell.value) : null);
-          customFields[fieldId] = val ?? null;
+          // Explicitly coerce to string — cell.value may be a number at runtime (TEXT_NUMBER columns)
+          const val = cell.displayValue != null
+            ? String(cell.displayValue)
+            : (cell.value != null ? String(cell.value) : null);
+          customFields[fieldId] = val;
         }
       }
     }
