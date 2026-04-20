@@ -14,7 +14,6 @@
 
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 import express from 'express';
 import session from 'express-session';
 import helmet from 'helmet';
@@ -22,8 +21,6 @@ import cors from 'cors';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { Redis } from 'ioredis';
-import RedisStore from 'connect-redis';
 
 // Load .env relative to this file, regardless of cwd
 const __filename = fileURLToPath(import.meta.url);
@@ -58,20 +55,9 @@ const PORT = Number(process.env.PORT) || 3000;
 // ---------------------------------------------------------------------------
 
 function makeSessionStore() {
-  if (process.env.REDIS_URL) {
-    const client = new Redis(process.env.REDIS_URL);
-    client.on('error', (err: Error) => logger.error({ err }, 'Redis session store error'));
-    logger.info('Using Redis session store');
-    return new RedisStore({ client, ttl: 28800 });
-  }
-  if (APP_ENV !== 'production') return undefined;
-  // Fallback: file store for non-Redis environments
-  const sessionsDir = path.join(__dirname, 'sessions');
-  fs.mkdirSync(sessionsDir, { recursive: true });
-  const require = createRequire(import.meta.url);
-  const FileStore = require('session-file-store')(session);
-  logger.info('Using file session store');
-  return new FileStore({ path: sessionsDir, ttl: 28800, retries: 5, factor: 1, minTimeout: 100 });
+  // In-memory store for all environments — sufficient for this internal tool.
+  // Sessions are lost on redeploy (users re-authenticate), which is acceptable.
+  return undefined;
 }
 
 const sessionStore = makeSessionStore();
