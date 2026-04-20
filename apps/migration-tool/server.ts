@@ -22,6 +22,8 @@ import cors from 'cors';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { Redis } from 'ioredis';
+import RedisStore from 'connect-redis';
 
 // Load .env relative to this file, regardless of cwd
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +40,7 @@ import type {
   FieldMappingEntry,
   MigrationReport,
   NormalisedProject,
+  NormalisedTask,
   SectionMappingEntry,
   SourcePlatform,
   UserMappingEntry,
@@ -55,11 +58,19 @@ const PORT = Number(process.env.PORT) || 3000;
 // ---------------------------------------------------------------------------
 
 function makeSessionStore() {
+  if (process.env.REDIS_URL) {
+    const client = new Redis(process.env.REDIS_URL);
+    client.on('error', (err: Error) => logger.error({ err }, 'Redis session store error'));
+    logger.info('Using Redis session store');
+    return new RedisStore({ client, ttl: 28800 });
+  }
   if (APP_ENV !== 'production') return undefined;
+  // Fallback: file store for non-Redis environments
   const sessionsDir = path.join(__dirname, 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
   const require = createRequire(import.meta.url);
   const FileStore = require('session-file-store')(session);
+  logger.info('Using file session store');
   return new FileStore({ path: sessionsDir, ttl: 28800, retries: 5, factor: 1, minTimeout: 100 });
 }
 
@@ -441,14 +452,32 @@ app.get('/api/source/project-summary', requireAuth, async (req, res) => {
       project = await connector.getProjectData(projectId);
       req.session.cachedProject = { id: projectId, data: project };
     }
+    // Recursively accumulate counts across all levels of subtask nesting
+    const countDescendants = (task: NormalisedTask) => {
+      let subtasks = 0, comments = task.comments.length, attachments = task.attachments.length, dependencies = task.dependencyIds.length;
+      for (const child of task.subtasks) {
+        subtasks++;
+        const c = countDescendants(child);
+        subtasks += c.subtasks;
+        comments += c.comments;
+        attachments += c.attachments;
+        dependencies += c.dependencies;
+      }
+      return { subtasks, comments, attachments, dependencies };
+    };
+
+    let subtasks = 0, comments = 0, attachments = 0, dependencies = 0;
+    for (const task of project.tasks) {
+      comments += task.comments.length;
+      attachments += task.attachments.length;
+      dependencies += task.dependencyIds.length;
+      const c = countDescendants(task);
+      subtasks += c.subtasks;
+      comments += c.comments;
+      attachments += c.attachments;
+      dependencies += c.dependencies;
+    }
     const tasks = project.tasks.length;
-    const subtasks = project.tasks.reduce((n, t) => n + t.subtasks.length, 0);
-    const comments = project.tasks.reduce((n, t) =>
-      n + t.comments.length + t.subtasks.reduce((sn, s) => sn + s.comments.length, 0), 0);
-    const attachments = project.tasks.reduce((n, t) =>
-      n + t.attachments.length + t.subtasks.reduce((sn, s) => sn + s.attachments.length, 0), 0);
-    const dependencies = project.tasks.reduce((n, t) =>
-      n + t.dependencyIds.length + t.subtasks.reduce((sn, s) => sn + s.dependencyIds.length, 0), 0);
     res.json({ tasks, subtasks, comments, attachments, dependencies });
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/project-summary' });
