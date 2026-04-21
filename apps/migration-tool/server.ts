@@ -960,6 +960,16 @@ if (APP_ENV === 'production') {
   }
 }
 
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'uncaughtException — process will exit');
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.fatal({ reason }, 'unhandledRejection — process will exit');
+  process.exit(1);
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   logger.info({ port: PORT, env: APP_ENV, log_level: logger.level }, 'server started');
 });

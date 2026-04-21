@@ -1247,6 +1247,16 @@ export class AsanaDestination {
         }
         if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${currentUrl}`);
 
+        // Asana's max attachment size is 100 MB. We also need to guard against large files
+        // that would buffer entirely into memory via arrayBuffer() below and OOM-kill the
+        // server process before the upload even starts — which crashes the container and
+        // loses the in-memory session, making the whole migration unrecoverable.
+        const MAX_BYTES = 100 * 1024 * 1024; // 100 MB
+        const contentLength = Number(dlRes.headers.get('content-length') ?? '0');
+        if (contentLength > MAX_BYTES) {
+          throw new Error(`Attachment too large to transfer (${(contentLength / 1024 / 1024).toFixed(1)} MB > 100 MB limit): ${attachment.name}`);
+        }
+
         const mimeType = attachment.mimeType ?? dlRes.headers.get('content-type') ?? 'application/octet-stream';
         const blob = new Blob([await dlRes.arrayBuffer()], { type: mimeType });
 
