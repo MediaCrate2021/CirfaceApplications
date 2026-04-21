@@ -757,6 +757,10 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  // Keepalive — send a comment every 20s to prevent Railway's proxy from
+  // closing idle SSE connections during long fetch phases or rate-limit retries.
+  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 20_000);
+
   const send = (event: string, data: unknown) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
@@ -843,6 +847,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     migrationControllers.delete(req.sessionID);
     send('error', { message: msg });
   } finally {
+    clearInterval(keepalive);
     res.end();
   }
 });

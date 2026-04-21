@@ -38,7 +38,7 @@ export class MondayConnector implements SourceConnector {
     this.token = token;
   }
 
-  private async gql<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  private async gql<T = unknown>(query: string, variables?: Record<string, unknown>, _attempt = 0): Promise<T> {
     const res = await fetch(MONDAY_API, {
       method: 'POST',
       headers: {
@@ -49,6 +49,14 @@ export class MondayConnector implements SourceConnector {
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(30_000),
     });
+
+    if (res.status === 429 && _attempt < 4) {
+      const retryAfter = Number(res.headers.get('Retry-After') ?? 0);
+      const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(2 ** _attempt * 2000, 30_000);
+      logger.warn({ attempt: _attempt + 1, delayMs: delay }, 'Monday rate limit (429) — retrying');
+      await new Promise((r) => setTimeout(r, delay));
+      return this.gql<T>(query, variables, _attempt + 1);
+    }
 
     if (!res.ok) {
       const err = new Error(`Monday API HTTP error (${res.status})`);
