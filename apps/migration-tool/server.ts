@@ -442,12 +442,15 @@ app.get('/api/source/project-sections', requireAuth, async (req, res) => {
   const { projectId } = req.query as { projectId?: string };
   if (!projectId) return res.status(400).json({ error: 'projectId is required' });
   try {
-    const { platform, token } = req.session.sourceConfig;
-    const connector = makeConnector(platform, token);
-    // Re-use cached project data if available to avoid a redundant full fetch
-    const project = req.session.cachedProject?.id === projectId
-      ? req.session.cachedProject.data
-      : await connector.getProjectData(projectId);
+    let project: NormalisedProject;
+    if (req.session.cachedProject?.id === projectId) {
+      project = req.session.cachedProject.data;
+    } else {
+      const { platform, token } = req.session.sourceConfig;
+      const connector = makeConnector(platform, token);
+      project = await connector.getProjectData(projectId);
+      req.session.cachedProject = { id: projectId, data: project };
+    }
     res.json(project.sections);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/project-sections' });
