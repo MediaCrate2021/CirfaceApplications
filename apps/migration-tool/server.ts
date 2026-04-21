@@ -143,9 +143,6 @@ function countProjectItems(project: NormalisedProject) {
   };
   let subtasks = 0, comments = 0, attachments = 0, dependencies = 0;
   for (const task of project.tasks) {
-    comments += task.comments.length;
-    attachments += task.attachments.length;
-    dependencies += task.dependencyIds.length;
     const c = countDescendants(task);
     subtasks += c.subtasks;
     comments += c.comments;
@@ -865,9 +862,9 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       subitemFieldIdRemap,
       refreshAttachmentUrl: connector.refreshAttachmentUrl?.bind(connector),
       authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
+      sourceCount,
     });
 
-    report.sourceCount = sourceCount;
     logger.info({ user: req.session.user?.name, tasks: report.migratedTasks, subtasks: report.migratedSubtasks, attachments: report.migratedAttachments, warnings: report.warnings, errors: report.errors }, 'migration write phase complete');
     req.session.lastReport = report;
     req.session.migrationInProgress = false;

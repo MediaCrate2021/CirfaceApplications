@@ -72,6 +72,8 @@ export interface WriteOptions {
    * parent board column ID (common in Monday — subitems live on their own sub-board).
    */
   subitemFieldIdRemap?: Record<string, string>;
+  /** Pre-migration item counts from the source project, included in the report for comparison. */
+  sourceCount?: MigrationReport['sourceCount'];
 }
 
 export interface ProgressEvent {
@@ -247,6 +249,7 @@ export class AsanaDestination {
       skippedSubitemFields: [],
       failedAttachments: [],
       log: [],
+      sourceCount: options.sourceCount,
     };
 
     const emit = options.onProgress ?? (() => {});
