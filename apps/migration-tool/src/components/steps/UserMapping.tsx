@@ -20,8 +20,8 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/source/users').then((r) => r.json() as Promise<NormalisedUser[]>),
-      fetch('/api/destination/users').then((r) => r.json() as Promise<AsanaUser[]>),
+      fetch('/api/source/users').then(async (r) => { if (!r.ok) throw new Error(`Source users: ${r.status} ${r.statusText}`); return r.json() as Promise<NormalisedUser[]>; }),
+      fetch('/api/destination/users').then(async (r) => { if (!r.ok) throw new Error(`Destination users: ${r.status} ${r.statusText}`); return r.json() as Promise<AsanaUser[]>; }),
     ])
       .then(([src, dest]) => {
         setSourceUsers(src);
@@ -29,7 +29,7 @@ export default function UserMapping({ state, onSave, onBack }: Props) {
         setMapping(autoMap(src, dest));
         setLoading(false);
       })
-      .catch(() => { setError('Failed to load users'); setLoading(false); });
+      .catch((err: Error) => { setError(`Failed to load users: ${err.message}`); setLoading(false); });
   }, []);
 
   // Re-run auto-map when same-domain toggle changes
