@@ -1115,6 +1115,9 @@ export class AsanaDestination {
       `Completed: ${report.completedAt}`,
       report.cancelled ? `STATUS: CANCELLED — migration was stopped before completion.` : '',
       ``,
+      `Asana Project: https://app.asana.com/0/${report.destProject}/list`,
+      `Asana Project ID: ${report.destProject}`,
+      ``,
       `Tasks migrated:       ${report.migratedTasks} / ${report.totalTasks}`,
       `Subtasks migrated:    ${report.migratedSubtasks}`,
       `Comments migrated:    ${report.migratedComments}`,
@@ -1138,6 +1141,9 @@ export class AsanaDestination {
     lines.push(`Started:   ${report.startedAt}`);
     lines.push(`Completed: ${report.completedAt}`);
     if (report.cancelled) lines.push(`STATUS: CANCELLED — migration was stopped before completion.`);
+    lines.push('');
+    lines.push(`Asana Project: https://app.asana.com/0/${report.destProject}/list`);
+    lines.push(`Asana Project ID: ${report.destProject}`);
     lines.push('');
     lines.push(`Tasks migrated:     ${report.migratedTasks} / ${report.totalTasks}`);
     lines.push(`Subtasks migrated:  ${report.migratedSubtasks}`);

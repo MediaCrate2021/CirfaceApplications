@@ -313,19 +313,15 @@ export class MondayConnector implements SourceConnector {
       }
     }
 
-    // Phase 3: fetch updates (comments) for ALL items — parents and subitems — separately.
-    // Combining updates with column-value queries causes Monday to silently truncate results
-    // due to query complexity limits. Fetching them in a dedicated pass with small batches
-    // and per-item pagination guarantees every comment is captured.
-    const allIds = [...parentIds, ...Array.from(subitemMap.keys())];
-    logger.info({ boardId, totalItems: allIds.length }, 'Phase 3: fetching updates for all items');
-    if (allIds.length > 0) {
-      const updatesMap = await this.fetchUpdatesForItems(allIds);
+    // Phase 3: fetch updates (comments) for parent items only.
+    // Subitem updates were already fetched in Phase 1b via the sub-board query — the root
+    // items(ids:[...]) query silently drops sub-board items, so passing subitem IDs here
+    // would return empty arrays and overwrite the correctly-fetched Phase 1b data.
+    logger.info({ boardId, totalItems: parentIds.length }, 'Phase 3: fetching updates for all items');
+    if (parentIds.length > 0) {
+      const updatesMap = await this.fetchUpdatesForItems(parentIds);
       for (const item of allItems) {
         item.updates = updatesMap.get(item.id) ?? [];
-      }
-      for (const [id, sub] of subitemMap) {
-        sub.updates = updatesMap.get(id) ?? [];
       }
       const totalUpdates = [...updatesMap.values()].reduce((n, u) => n + u.length, 0);
       logger.info({ boardId, totalUpdates }, 'Phase 3: updates complete');

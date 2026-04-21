@@ -81,18 +81,23 @@ export default function Report({ report, onRunAnother }: Props) {
         </div>
       )}
 
-      <div className="report-meta">
-        <p><strong>Source:</strong> {report.sourceProject}</p>
-        <p>
-          <strong>Destination:</strong>{' '}
+      {report.destProject && (
+        <div className="report-project-link">
           <a
             href={`https://app.asana.com/0/${report.destProject}/list`}
             target="_blank"
             rel="noopener noreferrer"
+            className="btn btn-primary"
           >
-            {report.destProjectName || report.destProject}
+            Open Migrated Project in Asana
           </a>
-        </p>
+          <span className="report-project-id">Project ID: <code>{report.destProject}</code></span>
+        </div>
+      )}
+
+      <div className="report-meta">
+        <p><strong>Source:</strong> {report.sourceProject}</p>
+        <p><strong>Destination:</strong> {report.destProjectName || report.destProject}</p>
         {report.destProject && <p><strong>Asana Project ID:</strong> <code>{report.destProject}</code></p>}
         <p><strong>Migration started:</strong> {new Date(report.startedAt).toLocaleString()}</p>
         {duration !== null && <p><strong>Duration:</strong> {duration}s</p>}
@@ -192,16 +197,6 @@ export default function Report({ report, onRunAnother }: Props) {
       )}
 
       <div className="step-actions">
-        {report.destProject && (
-          <a
-            className="btn btn-primary"
-            href={`https://app.asana.com/0/${report.destProject}/list`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            View Project in Asana
-          </a>
-        )}
         <button className="btn btn-ghost" onClick={onRunAnother}>
           Migrate Another Project
         </button>
