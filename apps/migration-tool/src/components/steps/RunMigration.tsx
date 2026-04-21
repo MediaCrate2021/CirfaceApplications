@@ -12,11 +12,12 @@ interface LogLine {
 interface Props {
   state: AppState;
   onComplete: (report: MigrationReport) => void;
+  onBackToFieldMapping: () => void;
 }
 
 const POLL_INTERVAL_MS = 4_000;
 
-export default function RunMigration({ state, onComplete }: Props) {
+export default function RunMigration({ state, onComplete, onBackToFieldMapping }: Props) {
   const [log, setLog] = useState<LogLine[]>([]);
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
@@ -173,7 +174,14 @@ export default function RunMigration({ state, onComplete }: Props) {
         <p className="warning-text">Connection lost — migration is still running. Checking for completion every {POLL_INTERVAL_MS / 1000}s…</p>
       )}
 
-      {error && <p className="error-text error-banner">{error}</p>}
+      {error && (
+        <div>
+          <p className="error-text error-banner">{error}</p>
+          <div className="step-actions">
+            <button className="btn btn-ghost" onClick={onBackToFieldMapping}>Back to Field Mapping</button>
+          </div>
+        </div>
+      )}
 
       <div className="migration-log">
         {log.map((line, i) => (

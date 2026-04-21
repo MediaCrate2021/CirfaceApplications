@@ -938,46 +938,37 @@ export class AsanaDestination {
           }
         }
         log(`Creating project-level field '${fieldName}' (type: ${asanaType}).`);
-        try {
-          const fieldDef = this.buildFieldDef(asanaType, fieldName, entry);
-          const setting = await this.request<{
-            custom_field: { gid: string; enum_options?: Array<{ gid: string; name: string }> };
-          }>(
-            'POST',
-            `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting?opt_fields=custom_field.gid,custom_field.enum_options,custom_field.enum_options.gid,custom_field.enum_options.name`,
-            { custom_field: fieldDef },
-          );
-          fieldGidMap.set(entry.sourceFieldId, setting.custom_field.gid);
-          fieldTypeMap.set(entry.sourceFieldId, asanaType);
+        // Failure here is fatal — if a field can't be created, all task data for that
+        // field would be silently lost across every migrated task. Stop the migration
+        // so the user can investigate rather than silently produce incomplete data.
+        const fieldDef = this.buildFieldDef(asanaType, fieldName, entry);
+        const setting = await this.request<{
+          custom_field: { gid: string; enum_options?: Array<{ gid: string; name: string }> };
+        }>(
+          'POST',
+          `/projects/${encodeURIComponent(projectGid)}/addCustomFieldSetting?opt_fields=custom_field.gid,custom_field.enum_options,custom_field.enum_options.gid,custom_field.enum_options.name`,
+          { custom_field: fieldDef },
+        );
+        fieldGidMap.set(entry.sourceFieldId, setting.custom_field.gid);
+        fieldTypeMap.set(entry.sourceFieldId, asanaType);
 
-          // Build source-option-name → Asana-enum-option-GID map
-          if (setting.custom_field.enum_options?.length) {
-            const optMap = new Map<string, string>();
-            for (const opt of setting.custom_field.enum_options) {
-              optMap.set(opt.name, opt.gid);
-            }
-            // Checkbox source values: "v" / "1" / "true" → "True", everything else → "False"
-            if (entry.sourceFieldType === 'checkbox') {
-              const trueGid  = optMap.get('True');
-              const falseGid = optMap.get('False');
-              if (trueGid)  { optMap.set('v', trueGid);  optMap.set('1', trueGid);  optMap.set('true', trueGid); }
-              if (falseGid) { optMap.set('0', falseGid); optMap.set('false', falseGid); }
-            }
-            enumOptionMap.set(entry.sourceFieldId, optMap);
+        // Build source-option-name → Asana-enum-option-GID map
+        if (setting.custom_field.enum_options?.length) {
+          const optMap = new Map<string, string>();
+          for (const opt of setting.custom_field.enum_options) {
+            optMap.set(opt.name, opt.gid);
           }
-
-          log(`Field '${fieldName}' created.`);
-        } catch (err) {
-          const msg = (err as Error).message ?? '';
-          log(`Failed to create field '${fieldName}': ${msg}`, 'warning');
-          logger.warn({ err, field: entry.sourceFieldName }, 'failed to create custom field');
-          fieldFailures.push({
-            taskId: `field:${entry.sourceFieldId}`,
-            taskName: `Custom field: ${entry.sourceFieldName}`,
-            status: 'warning',
-            message: `Failed to create field '${fieldName}': ${msg}`,
-          });
+          // Checkbox source values: "v" / "1" / "true" → "True", everything else → "False"
+          if (entry.sourceFieldType === 'checkbox') {
+            const trueGid  = optMap.get('True');
+            const falseGid = optMap.get('False');
+            if (trueGid)  { optMap.set('v', trueGid);  optMap.set('1', trueGid);  optMap.set('true', trueGid); }
+            if (falseGid) { optMap.set('0', falseGid); optMap.set('false', falseGid); }
+          }
+          enumOptionMap.set(entry.sourceFieldId, optMap);
         }
+
+        log(`Field '${fieldName}' created.`);
       } else {
         // Field is mapped to an existing Asana field. Attach it to the project in case
         // it isn't already — no-op if already present.
