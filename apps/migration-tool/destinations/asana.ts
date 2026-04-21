@@ -282,6 +282,7 @@ export class AsanaDestination {
       const created = await this.request<{ gid: string; name: string }>('POST', '/projects', newProjectPayload);
       projectGid = created.gid;
       log(`Asana project '${options.destProjectName}' created successfully.`);
+      logger.info({ projectGid, projectName: options.destProjectName }, 'Asana project created');
     } else {
       log(`Migrating to existing Asana project (GID: ${projectGid}).`);
     }

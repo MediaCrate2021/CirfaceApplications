@@ -51,6 +51,36 @@ export default function Report({ report, onRunAnother }: Props) {
         </div>
       </div>
 
+      {report.sourceCount && (
+        <div className="report-issues">
+          <h3>Source vs Migrated</h3>
+          <table className="mapping-table">
+            <thead>
+              <tr><th>Item</th><th>Source</th><th>Migrated</th><th>Delta</th></tr>
+            </thead>
+            <tbody>
+              {([
+                ['Tasks',       report.sourceCount.tasks,       report.migratedTasks],
+                ['Subtasks',    report.sourceCount.subtasks,    report.migratedSubtasks],
+                ['Comments',    report.sourceCount.comments,    report.migratedComments],
+                ['Attachments', report.sourceCount.attachments, report.migratedAttachments],
+                ['Dependencies',report.sourceCount.dependencies,report.migratedDependencies],
+              ] as [string, number, number][]).map(([label, source, migrated]) => {
+                const delta = migrated - source;
+                return (
+                  <tr key={label} className={delta < 0 ? 'row-warning' : ''}>
+                    <td>{label}</td>
+                    <td>{source}</td>
+                    <td>{migrated}</td>
+                    <td>{delta === 0 ? '✓' : delta > 0 ? `+${delta}` : delta}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="report-meta">
         <p><strong>Source:</strong> {report.sourceProject}</p>
         <p>
@@ -63,7 +93,8 @@ export default function Report({ report, onRunAnother }: Props) {
             {report.destProjectName || report.destProject}
           </a>
         </p>
-        <p><strong>Started:</strong> {new Date(report.startedAt).toLocaleString()}</p>
+        {report.destProject && <p><strong>Asana Project ID:</strong> <code>{report.destProject}</code></p>}
+        <p><strong>Migration started:</strong> {new Date(report.startedAt).toLocaleString()}</p>
         {duration !== null && <p><strong>Duration:</strong> {duration}s</p>}
         {report.trackingTaskGid && (
           <p>

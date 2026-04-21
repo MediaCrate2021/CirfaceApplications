@@ -229,6 +229,7 @@ export interface MigrationReport {
   items: MigrationReportItem[];
   skippedSubitemFields: SkippedSubitemField[];
   failedAttachments: FailedAttachment[];
+  sourceCount?: { tasks: number; subtasks: number; comments: number; attachments: number; dependencies: number };
   cancelled?: boolean;      // true if the migration was stopped by the user mid-run
   trackingTaskGid?: string; // GID of the report task created in Asana
 }

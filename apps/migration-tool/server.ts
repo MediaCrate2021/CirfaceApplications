@@ -95,6 +95,37 @@ declare module 'express-session' {
 const migrationControllers = new Map<string, AbortController>();
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function countProjectItems(project: NormalisedProject) {
+  const countDescendants = (task: NormalisedTask): { subtasks: number; comments: number; attachments: number; dependencies: number } => {
+    let subtasks = 0, comments = task.comments.length, attachments = task.attachments.length, dependencies = task.dependencyIds.length;
+    for (const child of task.subtasks) {
+      subtasks++;
+      const c = countDescendants(child);
+      subtasks += c.subtasks;
+      comments += c.comments;
+      attachments += c.attachments;
+      dependencies += c.dependencies;
+    }
+    return { subtasks, comments, attachments, dependencies };
+  };
+  let subtasks = 0, comments = 0, attachments = 0, dependencies = 0;
+  for (const task of project.tasks) {
+    comments += task.comments.length;
+    attachments += task.attachments.length;
+    dependencies += task.dependencyIds.length;
+    const c = countDescendants(task);
+    subtasks += c.subtasks;
+    comments += c.comments;
+    attachments += c.attachments;
+    dependencies += c.dependencies;
+  }
+  return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies };
+}
+
+// ---------------------------------------------------------------------------
 // App setup
 // ---------------------------------------------------------------------------
 
@@ -438,33 +469,7 @@ app.get('/api/source/project-summary', requireAuth, async (req, res) => {
       project = await connector.getProjectData(projectId);
       req.session.cachedProject = { id: projectId, data: project };
     }
-    // Recursively accumulate counts across all levels of subtask nesting
-    const countDescendants = (task: NormalisedTask) => {
-      let subtasks = 0, comments = task.comments.length, attachments = task.attachments.length, dependencies = task.dependencyIds.length;
-      for (const child of task.subtasks) {
-        subtasks++;
-        const c = countDescendants(child);
-        subtasks += c.subtasks;
-        comments += c.comments;
-        attachments += c.attachments;
-        dependencies += c.dependencies;
-      }
-      return { subtasks, comments, attachments, dependencies };
-    };
-
-    let subtasks = 0, comments = 0, attachments = 0, dependencies = 0;
-    for (const task of project.tasks) {
-      comments += task.comments.length;
-      attachments += task.attachments.length;
-      dependencies += task.dependencyIds.length;
-      const c = countDescendants(task);
-      subtasks += c.subtasks;
-      comments += c.comments;
-      attachments += c.attachments;
-      dependencies += c.dependencies;
-    }
-    const tasks = project.tasks.length;
-    res.json({ tasks, subtasks, comments, attachments, dependencies });
+    res.json(countProjectItems(project));
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/project-summary' });
   }
@@ -828,6 +833,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
     });
 
+    report.sourceCount = countProjectItems(project);
     logger.info({ user: req.session.user?.name, tasks: report.migratedTasks, subtasks: report.migratedSubtasks, attachments: report.migratedAttachments, warnings: report.warnings, errors: report.errors }, 'migration write phase complete');
     req.session.lastReport = report;
     req.session.migrationInProgress = false;
