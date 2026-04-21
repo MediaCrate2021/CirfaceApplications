@@ -85,6 +85,7 @@ declare module 'express-session' {
     externalIdDestFieldGid?: string | null;
     cachedProject?: { id: string; data: NormalisedProject };
     lastReport?: MigrationReport;
+    lastMigrationError?: string;
   }
 }
 
@@ -856,6 +857,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ err, user: req.session.user?.name }, 'migration failed');
     req.session.migrationInProgress = false;
+    req.session.lastMigrationError = msg;
     migrationControllers.delete(req.sessionID);
     send('error', { message: msg });
   } finally {
@@ -868,6 +870,7 @@ app.get('/api/migrate/status', requireAuth, (req, res) => {
   res.json({
     inProgress: req.session.migrationInProgress ?? false,
     report: req.session.lastReport ?? null,
+    error: req.session.lastMigrationError ?? null,
   });
 });
 

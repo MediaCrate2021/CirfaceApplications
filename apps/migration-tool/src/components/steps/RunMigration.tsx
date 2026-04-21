@@ -36,11 +36,13 @@ export default function RunMigration({ state, onComplete }: Props) {
       try {
         const res = await fetch('/api/migrate/status');
         if (res.ok) {
-          const { inProgress, report } = await res.json() as { inProgress: boolean; report: MigrationReport | null };
+          const { inProgress, report, error: migError } = await res.json() as { inProgress: boolean; report: MigrationReport | null; error: string | null };
           if (!inProgress) {
             setReconnecting(false);
             if (report) {
               onComplete(report);
+            } else if (migError) {
+              setError(`Migration failed: ${migError}`);
             } else {
               setError('Migration finished but no report was found. Check the Asana tracking task for details.');
             }

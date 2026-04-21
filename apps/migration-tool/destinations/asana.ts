@@ -281,7 +281,7 @@ export class AsanaDestination {
       if (options.destTeamGid) newProjectPayload.team = options.destTeamGid;
       const created = await this.request<{ gid: string; name: string }>('POST', '/projects', newProjectPayload);
       projectGid = created.gid;
-      log(`Asana project '${options.destProjectName}' created successfully.`);
+      log(`Asana project '${options.destProjectName}' : '${projectGid}' created successfully.`);
       logger.info({ projectGid, projectName: options.destProjectName }, 'Asana project created');
     } else {
       log(`Migrating to existing Asana project (GID: ${projectGid}).`);
@@ -1216,7 +1216,7 @@ export class AsanaDestination {
       : attachment.url;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const dlRes = await fetch(currentUrl, { signal: AbortSignal.timeout(90_000) });
+        const dlRes = await fetch(currentUrl, { signal: AbortSignal.timeout(30_000) });
         if (dlRes.status === 403 && refreshAttachmentUrl && attempt === 1) {
           // Pre-signed URL likely expired — fetch a fresh one and retry immediately
           const freshUrl = await refreshAttachmentUrl(attachment.id);
@@ -1228,9 +1228,8 @@ export class AsanaDestination {
         }
         if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${currentUrl}`);
 
-        const arrayBuffer = await dlRes.arrayBuffer();
         const mimeType = attachment.mimeType ?? dlRes.headers.get('content-type') ?? 'application/octet-stream';
-        const blob = new Blob([arrayBuffer], { type: mimeType });
+        const blob = new Blob([await dlRes.arrayBuffer()], { type: mimeType });
 
         const formData = new FormData();
         formData.append('parent', taskGid);
@@ -1240,7 +1239,7 @@ export class AsanaDestination {
           method: 'POST',
           headers: { Authorization: `Bearer ${this.token}` },
           body: formData,
-          signal: AbortSignal.timeout(90_000),
+          signal: AbortSignal.timeout(30_000),
         });
 
         if (!upRes.ok) {
