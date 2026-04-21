@@ -778,8 +778,8 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       send('info', { message: `Fetching source project from ${platform}...` });
       project = await connector.getProjectData(sourceProjectId);
       send('info', { message: `Loaded ${project.tasks.length} tasks` });
+      req.session.cachedProject = { id: sourceProjectId, data: project };
     }
-    req.session.cachedProject = undefined; // clear after use
 
     // For Monday boards, build a subitem column ID → parent column ID remap by matching on name.
     // Subitems live on their own sub-board and may have different column IDs for the same field.
@@ -804,6 +804,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       }
     }
 
+    logger.info({ user: req.session.user?.name, tasks: project.tasks.length }, 'migration write phase started');
     const dest = new AsanaDestination(destToken);
     const report = await dest.migrate(project, {
       destProjectGid: isNewProject ? '' : destProjectGid,
@@ -827,6 +828,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
     });
 
+    logger.info({ user: req.session.user?.name, tasks: report.migratedTasks, subtasks: report.migratedSubtasks, attachments: report.migratedAttachments, warnings: report.warnings, errors: report.errors }, 'migration write phase complete');
     req.session.lastReport = report;
     req.session.migrationInProgress = false;
     migrationControllers.delete(req.sessionID);
