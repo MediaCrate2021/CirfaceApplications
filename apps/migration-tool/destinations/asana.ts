@@ -1126,6 +1126,15 @@ export class AsanaDestination {
       `Warnings:             ${report.warnings}`,
       `Errors:               ${report.errors}`,
       `Failed attachments:   ${report.failedAttachments?.length ?? 0}`,
+      ...(report.sourceCount ? [
+        ``,
+        `Source vs Migrated:`,
+        `  Tasks:        ${report.sourceCount.tasks} source → ${report.migratedTasks} migrated`,
+        `  Subtasks:     ${report.sourceCount.subtasks} source → ${report.migratedSubtasks} migrated`,
+        `  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated`,
+        `  Attachments:  ${report.sourceCount.attachments} source → ${report.migratedAttachments} migrated`,
+        `  Dependencies: ${report.sourceCount.dependencies} source → ${report.migratedDependencies} migrated`,
+      ] : []),
       ``,
       `Full activity log with details is in the attached report file.`,
     ].filter((l) => l !== '');
@@ -1153,6 +1162,16 @@ export class AsanaDestination {
     lines.push(`Warnings:           ${report.warnings}`);
     lines.push(`Errors:             ${report.errors}`);
     lines.push(`Failed attachments: ${report.failedAttachments?.length ?? 0}`);
+
+    if (report.sourceCount) {
+      lines.push('');
+      lines.push('Source vs Migrated:');
+      lines.push(`  Tasks:        ${report.sourceCount.tasks} source → ${report.migratedTasks} migrated`);
+      lines.push(`  Subtasks:     ${report.sourceCount.subtasks} source → ${report.migratedSubtasks} migrated`);
+      lines.push(`  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated`);
+      lines.push(`  Attachments:  ${report.sourceCount.attachments} source → ${report.migratedAttachments} migrated`);
+      lines.push(`  Dependencies: ${report.sourceCount.dependencies} source → ${report.migratedDependencies} migrated`);
+    }
 
     // Errors
     const errors = report.items.filter((i) => i.status === 'error');
