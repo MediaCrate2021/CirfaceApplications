@@ -526,6 +526,7 @@ export class AsanaDestination {
 
         emit({ type: 'info', message: 'Report saved to tracking project' });
       } catch (err) {
+        logger.error({ err }, 'failed to write tracking task — report not saved to Asana');
         warn('setup', 'Tracking project report', `Failed to save report to tracking project: ${(err as Error).message}`);
       }
     }
@@ -1311,6 +1312,7 @@ export class AsanaDestination {
         Authorization: `Bearer ${tokenOverride ?? this.token}`,
       },
       body: formData,
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {

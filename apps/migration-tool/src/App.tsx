@@ -239,12 +239,26 @@ const initialState: AppState = {
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  // Check auth on mount
+  // Check auth on mount. If authenticated, also check whether a migration is already
+  // running or has a completed report — and jump straight to the right step so the
+  // user doesn't have to redo the entire wizard after a browser crash or refresh.
   useEffect(() => {
     fetch('/auth/status')
       .then((r) => r.json())
-      .then((data: { authenticated: boolean; user: AppState['user']; appEnv?: string }) => {
+      .then(async (data: { authenticated: boolean; user: AppState['user']; appEnv?: string }) => {
         dispatch({ type: 'AUTH_CHECKED', authenticated: data.authenticated, user: data.user ?? null, appEnv: data.appEnv ?? 'development' });
+        if (data.authenticated) {
+          try {
+            const status = await fetch('/api/migrate/status').then((r) => r.json()) as { inProgress: boolean; report: MigrationReport | null; error: string | null };
+            if (status.inProgress) {
+              dispatch({ type: 'SET_STEP', step: 'running' });
+            } else if (status.report) {
+              dispatch({ type: 'MIGRATION_COMPLETE', report: status.report });
+            }
+          } catch {
+            // Status check failing is non-fatal — user starts at the connect step as normal.
+          }
+        }
       })
       .catch(() => dispatch({ type: 'AUTH_CHECKED', authenticated: false, user: null, appEnv: 'development' }));
   }, []);
