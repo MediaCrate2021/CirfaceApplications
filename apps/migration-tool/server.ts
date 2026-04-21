@@ -812,6 +812,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       }
     }
 
+    const sourceCount = countProjectItems(project);
     logger.info({ user: req.session.user?.name, tasks: project.tasks.length }, 'migration write phase started');
     const dest = new AsanaDestination(destToken);
     const report = await dest.migrate(project, {
@@ -836,7 +837,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
     });
 
-    report.sourceCount = countProjectItems(project);
+    report.sourceCount = sourceCount;
     logger.info({ user: req.session.user?.name, tasks: report.migratedTasks, subtasks: report.migratedSubtasks, attachments: report.migratedAttachments, warnings: report.warnings, errors: report.errors }, 'migration write phase complete');
     req.session.lastReport = report;
     req.session.migrationInProgress = false;
