@@ -458,6 +458,7 @@ export class MondayConnector implements SourceConnector {
               parent_item { id }
               column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
               assets { id name public_url file_extension }
+              updates(limit: 50) { id body created_at creator { id name email } assets { id name public_url file_extension } }
             }
           }
         }
@@ -482,6 +483,7 @@ export class MondayConnector implements SourceConnector {
               parent_item { id }
               column_values { id type text value ... on FileValue { files { ... on FileAssetValue { asset { id public_url name } } } } ... on LongTextValue { text } }
               assets { id name public_url file_extension }
+              updates(limit: 50) { id body created_at creator { id name email } assets { id name public_url file_extension } }
             }
           }
         }
