@@ -283,6 +283,22 @@ export class AsanaDestination {
       projectGid = created.gid;
       log(`Asana project '${options.destProjectName}' : '${projectGid}' created successfully.`);
       logger.info({ projectGid, projectName: options.destProjectName }, 'Asana project created');
+
+      // Transfer ownership immediately after creation so the project is visible to the
+      // user throughout the migration. Doing this last (the previous approach) meant the
+      // project was invisible to the user if the UI lost its report before ownership was set.
+      if (options.projectOwnerGid) {
+        try {
+          await this.request('PUT', `/projects/${encodeURIComponent(projectGid)}`, {
+            owner: options.projectOwnerGid,
+          });
+          log('Project ownership transferred to specified user.');
+          emit({ type: 'info', message: 'Project ownership transferred' });
+        } catch (err) {
+          warn('setup', 'Project ownership', `Failed to transfer project ownership: ${(err as Error).message}`);
+          log(`Failed to transfer project ownership: ${(err as Error).message}`, 'warning');
+        }
+      }
     } else {
       log(`Migrating to existing Asana project (GID: ${projectGid}).`);
     }
@@ -519,20 +535,6 @@ export class AsanaDestination {
         emit({ type: 'info', message: 'Project added to tracking portfolio' });
       } catch (err) {
         warn('setup', 'Tracking portfolio', `Failed to add project to tracking portfolio: ${(err as Error).message}`);
-      }
-    }
-
-    // Step 8: transfer project ownership to the specified user
-    if (options.projectOwnerGid && projectGid) {
-      try {
-        await this.request('PUT', `/projects/${encodeURIComponent(projectGid)}`, {
-          owner: options.projectOwnerGid,
-        });
-        log('Project ownership transferred to specified user.');
-        emit({ type: 'info', message: 'Project ownership transferred' });
-      } catch (err) {
-        warn('setup', 'Project ownership', `Failed to transfer project ownership: ${(err as Error).message}`);
-        log(`Failed to transfer project ownership: ${(err as Error).message}`, 'warning');
       }
     }
 

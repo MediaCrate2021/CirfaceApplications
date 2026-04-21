@@ -96,6 +96,35 @@ declare module 'express-session' {
 const migrationControllers = new Map<string, AbortController>();
 
 // ---------------------------------------------------------------------------
+// Completed-report cache — survives session loss within the same process.
+// Keyed by session ID. Entries expire after 2 hours.
+// This handles the case where Railway recycles the session store (or the cookie
+// expires) after a long migration, but before the UI polls for the result.
+// ---------------------------------------------------------------------------
+
+interface CachedReport {
+  report: MigrationReport;
+  expiresAt: number;
+}
+const completedReports = new Map<string, CachedReport>();
+const REPORT_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function cacheReport(sessionId: string, report: MigrationReport) {
+  completedReports.set(sessionId, { report, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+  // Opportunistically evict expired entries so the map doesn't grow unbounded.
+  for (const [id, entry] of completedReports) {
+    if (entry.expiresAt < Date.now()) completedReports.delete(id);
+  }
+}
+
+function getCachedReport(sessionId: string): MigrationReport | null {
+  const entry = completedReports.get(sessionId);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) { completedReports.delete(sessionId); return null; }
+  return entry.report;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -842,6 +871,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     logger.info({ user: req.session.user?.name, tasks: report.migratedTasks, subtasks: report.migratedSubtasks, attachments: report.migratedAttachments, warnings: report.warnings, errors: report.errors }, 'migration write phase complete');
     req.session.lastReport = report;
     req.session.migrationInProgress = false;
+    cacheReport(req.sessionID, report);
     migrationControllers.delete(req.sessionID);
     logger.info({
       user: req.session.user?.name,
@@ -867,9 +897,10 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
 });
 
 app.get('/api/migrate/status', requireAuth, (req, res) => {
+  const report = req.session.lastReport ?? getCachedReport(req.sessionID) ?? null;
   res.json({
     inProgress: req.session.migrationInProgress ?? false,
-    report: req.session.lastReport ?? null,
+    report,
     error: req.session.lastMigrationError ?? null,
   });
 });
