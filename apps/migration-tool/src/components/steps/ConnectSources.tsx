@@ -84,6 +84,7 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                   value={sourcePlatform}
                   onChange={(e) => setSourcePlatform(e.target.value as SourcePlatform)}
                 >
+                  <option value="asana">Asana</option>
                   <option value="monday">Monday.com</option>
                   <option value="smartsheet">Smartsheet</option>
                   <option value="trello">Trello</option>

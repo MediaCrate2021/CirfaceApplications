@@ -375,7 +375,10 @@ export default function App() {
             <RunMigration
               state={state}
               onComplete={(report) => dispatch({ type: 'MIGRATION_COMPLETE', report })}
-              onBackToFieldMapping={() => dispatch({ type: 'RELOAD_MAPPING' })}
+              onBackToFieldMapping={() => {
+                fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
+                dispatch({ type: 'RELOAD_MAPPING' });
+              }}
             />
           )}
           {state.step === 'report' && (
