@@ -195,6 +195,10 @@ export class SmartsheetConnector implements SourceConnector {
     this.token = token.trim();
   }
 
+  setActiveSheetId(sheetId: string): void {
+    this.activeSheetId = sheetId;
+  }
+
   async refreshAttachmentUrl(assetId: string): Promise<string | null> {
     if (!this.activeSheetId) return null;
     try {
@@ -313,10 +317,21 @@ export class SmartsheetConnector implements SourceConnector {
     // so URL resolution happens here but the attachmentsByRow map is built after Phase 3.
     // The list endpoint returns metadata only — no download URL.
     // We must fetch each FILE attachment individually to get its url.
-    const allAttachments = await this.getAllPages<SmAttachment>(`/sheets/${sheetId}/attachments`);
+    const allAttachmentsRaw = await this.getAllPages<SmAttachment>(`/sheets/${sheetId}/attachments`);
+    // Deduplicate by ID — paginated results can contain the same item on multiple pages
+    // if new attachments are inserted between page fetches (shifted offsets).
+    const allAttachments = [...new Map(allAttachmentsRaw.map((a) => [a.id, a])).values()];
+    const dupeCount = allAttachmentsRaw.length - allAttachments.length;
+    if (dupeCount > 0) {
+      logger.warn({ sheetId, dupeCount }, 'Smartsheet: deduplicated attachments list — duplicate IDs found');
+    }
+
     const fileAttachments = allAttachments.filter(
       (a) => (a.parentType === 'ROW' || a.parentType === 'COMMENT') && a.attachmentType === 'FILE',
     );
+    const byParentType: Record<string, number> = {};
+    for (const a of allAttachments) byParentType[a.parentType] = (byParentType[a.parentType] ?? 0) + 1;
+    logger.info({ sheetId, total: allAttachments.length, byParentType, fileCount: fileAttachments.length }, 'Smartsheet: attachments fetched');
 
     // Resolve download URLs in parallel (capped to avoid hammering the API)
     const CONCURRENCY = 5;
@@ -391,6 +406,12 @@ export class SmartsheetConnector implements SourceConnector {
       existing.push(att);
       attachmentsByRow.set(rowId, existing);
     }
+
+    const bucketedTotal = [...attachmentsByRow.values()].reduce((sum, arr) => sum + arr.length, 0);
+    logger.info(
+      { sheetId, resolvedCount: resolvedAttachments.length, bucketedRows: attachmentsByRow.size, bucketedTotal },
+      'Smartsheet: attachments bucketed into rows',
+    );
 
     // Build indexes
     const columnMap = new Map<number, SmColumn>(sheet.columns.map((c) => [c.id, c]));

@@ -7,7 +7,7 @@ interface AsanaProject { gid: string; name: string; }
 
 interface Props {
   state: AppState;
-  onSelect: (sourceId: string, sourceName: string, destGid: string, destName: string, teamGid: string | null, teamName: string | null, isNew: boolean, ownerGid: string | null, ownerName: string | null) => void;
+  onSelect: (sourceId: string, sourceName: string, destGid: string, destName: string, teamGid: string | null, teamName: string | null, isNew: boolean, ownerGid: string | null, ownerName: string | null, destWorkspaceGid: string, destWorkspaceName: string) => void;
   onBack: () => void;
 }
 
@@ -15,6 +15,9 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [sourceWorkspaces, setSourceWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedSourceWorkspace, setSelectedSourceWorkspace] = useState('');
   const [sourceProjects, setSourceProjects]   = useState<SourceProject[]>([]);
+  const [destWorkspaces, setDestWorkspaces]   = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedDestWorkspaceGid, setSelectedDestWorkspaceGid] = useState(state.destWorkspaceGid ?? '');
+  const [destWorkspaceVersion, setDestWorkspaceVersion] = useState(0);
   const [teams, setTeams]                     = useState<AsanaTeam[]>([]);
   const [destProjects, setDestProjects]       = useState<AsanaProject[]>([]);
   const [selectedSource, setSelectedSource]   = useState(state.selectedSourceProjectId ?? '');
@@ -42,6 +45,21 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [error, setError] = useState('');
   const [reloadCount, setReloadCount] = useState(0);
 
+  async function handleDestWorkspaceChange(gid: string) {
+    const ws = destWorkspaces.find((w) => w.id === gid);
+    if (!ws) return;
+    setSelectedDestWorkspaceGid(gid);
+    setSelectedTeamGid('');
+    setSelectedDest('');
+    setProjectQuery('');
+    await fetch('/api/session/dest-workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspaceGid: ws.id, workspaceName: ws.name }),
+    }).catch(() => {});
+    setDestWorkspaceVersion((v) => v + 1);
+  }
+
   function handleReload() {
     fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
     setSelectedSource('');
@@ -54,13 +72,22 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     setReloadCount((c) => c + 1);
   }
 
-  // Load source workspaces and Asana teams on mount (and on reload)
+  // Load source workspaces, destination workspaces, and Asana teams on mount (and on reload)
   useEffect(() => {
     fetch('/api/source/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
       .then((ws) => setSourceWorkspaces(ws))
       .catch(() => { /* workspaces are optional — fail silently */ });
 
+    fetch('/api/destination/workspaces')
+      .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
+      .then((ws) => setDestWorkspaces(ws))
+      .catch(() => { /* fail silently — workspace picker is optional */ });
+  }, [reloadCount]);
+
+  // Reload destination teams when workspace changes (or on reload)
+  useEffect(() => {
+    setLoadingTeams(true);
     fetch('/api/destination/teams')
       .then((r) => r.json() as Promise<AsanaTeam[]>)
       .then((t) => { setTeams(t); setLoadingTeams(false); })
@@ -68,7 +95,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
         // Teams endpoint may fail for non-org workspaces — fall back to all projects
         setLoadingTeams(false);
       });
-  }, [reloadCount]);
+  }, [reloadCount, destWorkspaceVersion]);
 
   // Reload source projects when workspace filter changes (or on reload)
   useEffect(() => {
@@ -187,13 +214,16 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     const teamGid = selectedTeamGid || null;
     const teamName = teams.find((t) => t.gid === selectedTeamGid)?.name ?? null;
 
+    const destWsGid  = selectedDestWorkspaceGid;
+    const destWsName = destWorkspaces.find((w) => w.id === destWsGid)?.name ?? state.destWorkspaceName ?? '';
+
     if (destMode === 'new') {
       await fetch('/api/session/project-owner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validatedOwner ?? { gid: null, name: null }),
       });
-      onSelect(srcProject.id, srcProject.name, '', newProjectName.trim(), teamGid, teamName, true, validatedOwner?.gid ?? null, validatedOwner?.name ?? null);
+      onSelect(srcProject.id, srcProject.name, '', newProjectName.trim(), teamGid, teamName, true, validatedOwner?.gid ?? null, validatedOwner?.name ?? null, destWsGid, destWsName);
     } else {
       const destProject = destProjects.find((p) => p.gid === selectedDest);
       if (!destProject) return;
@@ -202,7 +232,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gid: null, name: null }),
       });
-      onSelect(srcProject.id, srcProject.name, destProject.gid, destProject.name, teamGid, teamName, false, null, null);
+      onSelect(srcProject.id, srcProject.name, destProject.gid, destProject.name, teamGid, teamName, false, null, null, destWsGid, destWsName);
     }
   }
 
@@ -285,6 +315,23 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
                 <span className="badge badge-success">{projectQuery}</span>
               )}
             </div>
+
+            {destWorkspaces.length > 1 && (
+              <div className="field-group">
+                <label htmlFor="dest-workspace">
+                  Asana Workspace
+                </label>
+                <select
+                  id="dest-workspace"
+                  value={selectedDestWorkspaceGid}
+                  onChange={(e) => handleDestWorkspaceChange(e.target.value)}
+                >
+                  {destWorkspaces.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {teams.length > 0 && (
               <div className="field-group">

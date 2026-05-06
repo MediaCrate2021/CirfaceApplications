@@ -28,7 +28,7 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
   const hasFired = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** Poll /api/migrate/status until the migration finishes, then hand off the report. */
+  /** Check the status endpoint once immediately, then poll until migration finishes. */
   function startPolling(reason: string) {
     setReconnecting(true);
     setLog((prev) => [...prev, { type: 'warning', message: `Connection lost (${reason}) — waiting for migration to finish…` }]);
@@ -57,6 +57,21 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
     };
 
     pollTimer.current = setTimeout(poll, POLL_INTERVAL_MS);
+  }
+
+  /** Check once if a completed report is available and hand off if so. */
+  async function checkForReport() {
+    try {
+      const res = await fetch('/api/migrate/status');
+      if (res.ok) {
+        const { inProgress, report, error: migError } = await res.json() as { inProgress: boolean; report: MigrationReport | null; error: string | null };
+        if (!inProgress) {
+          if (report) { onComplete(report); return true; }
+          if (migError) { setError(`Migration failed: ${migError}`); return true; }
+        }
+      }
+    } catch { /* ignore */ }
+    return false;
   }
 
   useEffect(() => {
@@ -124,6 +139,14 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
           if (payload.total) setTotal(payload.total);
         }
       }
+
+      // Stream closed without a complete/error event — the server may have finished
+      // successfully but the final SSE chunk didn't arrive (e.g. proxy timeout, network
+      // blip). Check the status endpoint immediately before falling back to polling.
+      const resolved = await checkForReport();
+      if (!resolved) {
+        startPolling('stream closed before completion signal');
+      }
     }).catch((err: Error) => {
       // Network error mid-stream — migration may still be running server-side.
       // Poll for completion rather than showing a hard failure.
@@ -179,6 +202,10 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
           <p className="error-text error-banner">{error}</p>
           <div className="step-actions">
             <button className="btn btn-ghost" onClick={onBackToFieldMapping}>Back to Field Mapping</button>
+            <button className="btn btn-primary" onClick={async () => {
+              const found = await checkForReport();
+              if (!found) setError((e) => e + ' — No report available.');
+            }}>View Report</button>
           </div>
         </div>
       )}

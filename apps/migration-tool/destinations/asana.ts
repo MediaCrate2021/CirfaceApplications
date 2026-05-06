@@ -236,6 +236,7 @@ export class AsanaDestination {
     const report: MigrationReport = {
       startedAt,
       completedAt: '',
+      sourcePlatform: options.sourcePlatform ?? 'source',
       sourceProject: project.name,
       destProject: '',
       destProjectName: '',
@@ -552,6 +553,25 @@ export class AsanaDestination {
   // Private helpers
   // ---------------------------------------------------------------------------
 
+  /** Recursively collect all attachments from a task and its subtask descendants. */
+  private collectAttachments(task: NormalisedTask): NormalisedAttachment[] {
+    const result: NormalisedAttachment[] = [...task.attachments];
+    for (const child of task.subtasks) {
+      result.push(...this.collectAttachments(child));
+    }
+    return result;
+  }
+
+  /** Build the Asana story text for a failed attachment transfer.
+   *  For oversized files the pre-signed source URL is omitted — it will have
+   *  expired by the time anyone reads the comment. */
+  private attachmentFailureComment(attachment: NormalisedAttachment, reason: string): string {
+    if (reason.startsWith('Attachment too large')) {
+      return `Attachment not transferred: ${attachment.name}\nReason: ${reason}\nRetrieve this file directly from the original source.`;
+    }
+    return `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nSource URL: ${attachment.url}`;
+  }
+
   private async migrateTask(
     task: NormalisedTask,
     projectGid: string,
@@ -661,7 +681,39 @@ export class AsanaDestination {
 
       if (nativeDueOn) payload.due_on = nativeDueOn.substring(0, 10);
 
-      const created = await this.request<{ gid: string }>('POST', '/tasks', payload);
+      // Create task — if Asana rejects the request (e.g. a custom field value fails
+      // validation), strip custom_fields and retry so the task itself is not lost.
+      let created: { gid: string };
+      try {
+        created = await this.request<{ gid: string }>('POST', '/tasks', payload);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (Object.keys(customFields).length > 0) {
+          logger.warn({ err, taskId: task.id }, 'task creation failed — retrying without custom fields');
+          const { custom_fields: _dropped, ...payloadWithoutFields } = payload as Record<string, unknown>;
+          created = await this.request<{ gid: string }>('POST', '/tasks', payloadWithoutFields as Record<string, unknown>);
+          // Post dropped field values as a comment so data is not silently lost
+          const droppedLines: string[] = [];
+          for (const [sourceFieldId, value] of Object.entries(task.customFields)) {
+            if (value === null || value === '') continue;
+            const displayName = sourceFieldId === '__smartsheet_row__'
+              ? 'Smartsheet Row'
+              : (fieldDisplayMap?.get(sourceFieldId) ?? sourceFieldId);
+            const displayValue = Array.isArray(value) ? value.join(', ') : value;
+            droppedLines.push(`• ${displayName}: ${displayValue}`);
+          }
+          if (droppedLines.length) {
+            try {
+              await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
+                text: `[m_FieldData] Custom fields could not be applied — field validation error:\n${droppedLines.join('\n')}\nError: ${msg}`,
+              });
+            } catch { /* ignore story failure */ }
+          }
+          warn(task.id, task.name, `Custom fields dropped due to creation error: ${msg}`);
+        } else {
+          throw err;
+        }
+      }
       taskGidMap.set(task.id, created.gid);
       report.migratedTasks++;
 
@@ -696,7 +748,7 @@ export class AsanaDestination {
           warn(task.id, task.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nSource URL: ${attachment.url}`,
+              text: this.attachmentFailureComment(attachment, reason),
             });
           } catch { /* ignore story failure */ }
         }
@@ -707,6 +759,9 @@ export class AsanaDestination {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ err, taskId: task.id }, 'failed to migrate task');
       report.errors++;
+      for (const attachment of this.collectAttachments(task)) {
+        report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason: `Task failed to migrate: ${msg}` });
+      }
       return { taskId: task.id, taskName: task.name, status: 'error', message: msg };
     }
   }
@@ -814,16 +869,16 @@ export class AsanaDestination {
 
       if (nativeDueOn) payload.due_on = nativeDueOn.substring(0, 10);
 
-      // Asana only allows setting custom fields on tasks that are members of the project
-      // those fields are attached to. Deeply nested subtasks (subtask of a subtask) are not
-      // automatically added to the parent project, so the API rejects custom_fields for them.
-      // Detect that error and retry without custom fields rather than failing the whole subtask.
+      // Create subtask — if Asana rejects the request (e.g. a custom field value fails
+      // validation, or the subtask is too deeply nested for custom fields), strip
+      // custom_fields and retry so the subtask itself is not lost.
       let created: { gid: string };
       try {
         created = await this.request<{ gid: string }>('POST', '/tasks', payload);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (payload.custom_fields && /not on (given|this) object/i.test(msg)) {
+        if (Object.keys(customFields).length > 0) {
+          logger.warn({ err, subtaskId: subtask.id }, 'subtask creation failed — retrying without custom fields');
           const { custom_fields: _dropped, ...payloadWithoutFields } = payload as Record<string, unknown>;
           created = await this.request<{ gid: string }>('POST', '/tasks', payloadWithoutFields);
           // Write dropped field values as a comment so data is not silently lost
@@ -839,10 +894,11 @@ export class AsanaDestination {
           if (droppedLines.length) {
             try {
               await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-                text: `[m_FieldData] Custom fields could not be applied (task is too deeply nested):\n${droppedLines.join('\n')}`,
+                text: `[m_FieldData] Custom fields could not be applied — field validation error:\n${droppedLines.join('\n')}\nError: ${msg}`,
               });
             } catch { /* ignore */ }
           }
+          warn(subtask.id, subtask.name, `Custom fields dropped due to creation error: ${msg}`);
         } else {
           throw err;
         }
@@ -873,7 +929,7 @@ export class AsanaDestination {
           warn(subtask.id, subtask.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: `Attachment transfer failed: ${attachment.name}\nReason: ${reason}\nSource URL: ${attachment.url}`,
+              text: this.attachmentFailureComment(attachment, reason),
             });
           } catch { /* ignore story failure */ }
         }
@@ -884,7 +940,11 @@ export class AsanaDestination {
         await this.migrateSubtask(child, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap);
       }
     } catch (err) {
-      warn(subtask.id, subtask.name, `Failed to migrate subtask: ${(err as Error).message}`);
+      const msg = (err as Error).message;
+      warn(subtask.id, subtask.name, `Failed to migrate subtask: ${msg}`);
+      for (const attachment of this.collectAttachments(subtask)) {
+        report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason: `Subtask failed to migrate: ${msg}` });
+      }
     }
   }
 

@@ -214,6 +214,7 @@ export interface FailedAttachment {
 export interface MigrationReport {
   startedAt: string;
   completedAt: string;
+  sourcePlatform: string;
   sourceProject: string;
   destProject: string;       // GID
   destProjectName: string;   // display name

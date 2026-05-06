@@ -133,11 +133,15 @@ function getCachedReport(sessionId: string): MigrationReport | null {
 // ---------------------------------------------------------------------------
 
 function countProjectItems(project: NormalisedProject) {
-  const countDescendants = (task: NormalisedTask): { subtasks: number; comments: number; attachments: number; dependencies: number } => {
+  let topLevelAttachments = 0;
+  let subtaskAttachments = 0;
+  const countDescendants = (task: NormalisedTask, depth: number): { subtasks: number; comments: number; attachments: number; dependencies: number } => {
+    if (depth === 0) topLevelAttachments += task.attachments.length;
+    else subtaskAttachments += task.attachments.length;
     let subtasks = 0, comments = task.comments.length, attachments = task.attachments.length, dependencies = task.dependencyIds.length;
     for (const child of task.subtasks) {
       subtasks++;
-      const c = countDescendants(child);
+      const c = countDescendants(child, depth + 1);
       subtasks += c.subtasks;
       comments += c.comments;
       attachments += c.attachments;
@@ -147,12 +151,16 @@ function countProjectItems(project: NormalisedProject) {
   };
   let subtasks = 0, comments = 0, attachments = 0, dependencies = 0;
   for (const task of project.tasks) {
-    const c = countDescendants(task);
+    const c = countDescendants(task, 0);
     subtasks += c.subtasks;
     comments += c.comments;
     attachments += c.attachments;
     dependencies += c.dependencies;
   }
+  logger.debug(
+    { projectId: project.id, total: attachments, topLevel: topLevelAttachments, subtask: subtaskAttachments },
+    'countProjectItems: attachment breakdown',
+  );
   return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies };
 }
 
@@ -565,6 +573,28 @@ app.post('/api/destination/connect', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/destination/workspaces', requireAuth, async (req, res) => {
+  if (!req.session.destConfig) return res.status(400).json({ error: 'Destination not connected' });
+  try {
+    const { token } = req.session.destConfig;
+    const dest = new AsanaDestination(token);
+    const workspaces = await dest.getWorkspaces();
+    res.json(workspaces.map((w) => ({ id: w.gid, name: w.name })));
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'destination/workspaces' });
+  }
+});
+
+app.post('/api/session/dest-workspace', requireAuth, (req, res) => {
+  if (!req.session.destConfig) return res.status(400).json({ error: 'Destination not connected' });
+  const { workspaceGid, workspaceName } = req.body as { workspaceGid: string; workspaceName: string };
+  if (!workspaceGid || !workspaceName) return res.status(400).json({ error: 'workspaceGid and workspaceName are required' });
+  req.session.destConfig.workspaceGid = workspaceGid;
+  req.session.destConfig.workspaceName = workspaceName;
+  logger.info({ user: req.session.user?.name, workspaceGid, workspaceName }, 'destination workspace switched');
+  res.json({ ok: true });
+});
+
 app.get('/api/destination/users', requireAuth, async (req, res) => {
   if (!req.session.destConfig) return res.status(400).json({ error: 'Destination not connected' });
   try {
@@ -810,6 +840,12 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     const { token: destToken, workspaceGid } = req.session.destConfig;
 
     const connector = makeConnector(platform, sourceToken);
+    // Smartsheet pre-signed URLs expire quickly. refreshAttachmentUrl needs the
+    // sheet ID to re-fetch a fresh URL, but it's only set inside getProjectData.
+    // When we use a cached project we skip getProjectData, so set it explicitly.
+    if (platform === 'smartsheet') {
+      (connector as SmartsheetConnector).setActiveSheetId(sourceProjectId);
+    }
     let project: NormalisedProject;
     if (req.session.cachedProject?.id === sourceProjectId) {
       project = req.session.cachedProject.data;

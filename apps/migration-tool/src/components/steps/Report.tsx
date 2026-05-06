@@ -1,5 +1,21 @@
 import type { FailedAttachment, MigrationReport, MigrationReportItem, SkippedSubitemField } from '../../types/index.ts';
 
+function SourceLink({ platform, boardId, taskId }: { platform: string; boardId: string; taskId: string }) {
+  if (platform === 'monday') {
+    return <a href={`https://monday.com/boards/${boardId}/pulses/${taskId}`} target="_blank" rel="noopener noreferrer">Open in Monday</a>;
+  }
+  if (platform === 'smartsheet') {
+    return <a href={`https://app.smartsheet.com/sheets/${boardId}`} target="_blank" rel="noopener noreferrer">Open in Smartsheet</a>;
+  }
+  if (platform === 'trello') {
+    return <a href={`https://trello.com/c/${taskId}`} target="_blank" rel="noopener noreferrer">Open in Trello</a>;
+  }
+  if (platform === 'asana') {
+    return <a href={`https://app.asana.com/0/${boardId}/${taskId}`} target="_blank" rel="noopener noreferrer">Open in Asana</a>;
+  }
+  return <span>—</span>;
+}
+
 interface Props {
   report: MigrationReport;
   onRunAnother: () => void;
@@ -59,23 +75,31 @@ export default function Report({ report, onRunAnother }: Props) {
               <tr><th>Item</th><th>Source</th><th>Migrated</th><th>Delta</th></tr>
             </thead>
             <tbody>
-              {([
-                ['Tasks',       report.sourceCount.tasks,       report.migratedTasks],
-                ['Subtasks',    report.sourceCount.subtasks,    report.migratedSubtasks],
-                ['Comments',    report.sourceCount.comments,    report.migratedComments],
-                ['Attachments', report.sourceCount.attachments, report.migratedAttachments],
-                ['Dependencies',report.sourceCount.dependencies,report.migratedDependencies],
-              ] as [string, number, number][]).map(([label, source, migrated]) => {
-                const delta = migrated - source;
-                return (
-                  <tr key={label} className={delta < 0 ? 'row-warning' : ''}>
-                    <td>{label}</td>
-                    <td>{source}</td>
-                    <td>{migrated}</td>
-                    <td>{delta === 0 ? '✓' : delta > 0 ? `+${delta}` : delta}</td>
-                  </tr>
-                );
-              })}
+              {(() => {
+                const failedCount = report.failedAttachments?.length ?? 0;
+                const rows: [string, number, number, number?][] = [
+                  ['Tasks',       report.sourceCount.tasks,        report.migratedTasks],
+                  ['Subtasks',    report.sourceCount.subtasks,     report.migratedSubtasks],
+                  ['Comments',    report.sourceCount.comments,     report.migratedComments],
+                  ['Attachments', report.sourceCount.attachments,  report.migratedAttachments, failedCount],
+                  ['Dependencies',report.sourceCount.dependencies, report.migratedDependencies],
+                ];
+                return rows.map(([label, source, migrated, failed]) => {
+                  const accounted = migrated + (failed ?? 0);
+                  const delta = accounted - source;
+                  const migratedCell = failed != null && failed > 0
+                    ? `${migrated} (+${failed} failed)`
+                    : migrated;
+                  return (
+                    <tr key={label} className={delta < 0 ? 'row-warning' : ''}>
+                      <td>{label}</td>
+                      <td>{source}</td>
+                      <td>{migratedCell}</td>
+                      <td>{delta === 0 ? '✓' : delta > 0 ? `+${delta}` : delta}</td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -151,7 +175,7 @@ export default function Report({ report, onRunAnother }: Props) {
                 <th>Task</th>
                 <th>Attachment</th>
                 <th>Reason</th>
-                <th>Find in Monday</th>
+                <th>Find in Source</th>
               </tr>
             </thead>
             <tbody>
@@ -160,9 +184,7 @@ export default function Report({ report, onRunAnother }: Props) {
                   <td>{a.taskName}</td>
                   <td>{a.attachmentName}</td>
                   <td>{a.reason}</td>
-                  <td>
-                    <a href={`https://monday.com/boards/${a.boardId}/pulses/${a.taskId}`} target="_blank" rel="noopener noreferrer">Open in Monday</a>
-                  </td>
+                  <td><SourceLink platform={report.sourcePlatform} boardId={a.boardId} taskId={a.taskId} /></td>
                 </tr>
               ))}
             </tbody>
