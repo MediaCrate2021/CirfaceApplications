@@ -35,6 +35,7 @@ import { AsanaConnector } from './connectors/asana.js';
 import { AsanaDestination } from './destinations/asana.js';
 import type { SourceConnector } from './connectors/base.js';
 import type {
+  AnalysisReport,
   FieldMappingEntry,
   MigrationReport,
   NormalisedProject,
@@ -87,6 +88,8 @@ declare module 'express-session' {
     cachedProject?: { id: string; data: NormalisedProject };
     lastReport?: MigrationReport;
     lastMigrationError?: string;
+    analysisInProgress?: boolean;
+    lastAnalysisReport?: AnalysisReport;
   }
 }
 
@@ -909,6 +912,138 @@ app.post('/api/migrate/cancel', requireAuth, (req, res) => {
   if (!controller) return res.status(404).json({ error: 'No active migration for this session' });
   controller.abort();
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Analysis — streaming via SSE (analyze-only mode)
+// ---------------------------------------------------------------------------
+
+app.get('/api/analyze', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  if (req.session.analysisInProgress) return res.status(409).json({ error: 'An analysis is already running' });
+
+  const { projectIds: projectIdsRaw, trackingProjectGid, trackingPortfolioGid } = req.query as {
+    projectIds?: string;
+    trackingProjectGid?: string;
+    trackingPortfolioGid?: string;
+  };
+
+  let projectIds: string[];
+  try {
+    projectIds = JSON.parse(projectIdsRaw ?? '[]') as string[];
+    if (!Array.isArray(projectIds) || projectIds.length === 0) throw new Error('empty');
+  } catch {
+    return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
+  }
+
+  // Switch to SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 20_000);
+
+  const send = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  req.session.analysisInProgress = true;
+
+  try {
+    const { platform, token } = req.session.sourceConfig;
+    const connector = makeConnector(platform, token);
+    const startedAt = new Date().toISOString();
+
+    const projects: AnalysisReport['projects'] = [];
+
+    for (let i = 0; i < projectIds.length; i++) {
+      const projectId = projectIds[i];
+      send('info', { message: `Fetching project ${i + 1} of ${projectIds.length}…`, done: i });
+
+      const project = await connector.getProjectData(projectId);
+      const counts = countProjectItems(project);
+
+      // Merge in subitem fields for Monday (same logic as /api/source/project-fields)
+      let fields = [...project.fields];
+      if (platform === 'monday') {
+        try {
+          const { MondayConnector } = await import('./connectors/monday.js');
+          const mc = new MondayConnector(token);
+          const subitemFields = await mc.getSubitemFields(projectId);
+          const existingIds = new Set(fields.map((f) => f.id));
+          for (const sf of subitemFields) {
+            if (!existingIds.has(sf.id)) fields.push({ ...sf, isSubitemField: true });
+          }
+        } catch {
+          // Non-fatal — proceed with parent fields only
+        }
+      }
+
+      projects.push({
+        projectId,
+        projectName: project.name,
+        ...counts,
+        users: project.users.length,
+        fields,
+      });
+
+      send('info', { message: `Analyzed "${project.name}" — ${counts.tasks} tasks, ${fields.length} fields`, done: i + 1 });
+    }
+
+    const report: AnalysisReport = {
+      startedAt,
+      completedAt: new Date().toISOString(),
+      sourcePlatform: platform,
+      projects,
+    };
+
+    // Save report to tracking project if configured
+    if (trackingProjectGid?.trim()) {
+      if (!req.session.destConfig) {
+        send('warning', { message: 'Asana not connected — skipping report save' });
+      } else {
+        send('info', { message: 'Saving report to Asana tracking project…' });
+        try {
+          const dest = new AsanaDestination(req.session.destConfig.token);
+          const trackingToken = req.session.trackingProject?.tokenSource === 'oauth'
+            ? req.session.accessToken
+            : undefined;
+          const taskGid = await dest.writeAnalysisReport(report, {
+            trackingProjectGid: trackingProjectGid.trim(),
+            trackingToken,
+            writerName: req.session.destConfig.patUserName,
+          });
+          if (taskGid) {
+            report.trackingTaskGid = taskGid;
+            send('info', { message: 'Report saved to tracking project' });
+          }
+        } catch (err) {
+          send('warning', { message: `Could not save report to Asana: ${(err as Error).message}` });
+          logger.error({ err }, 'failed to write analysis tracking task');
+        }
+
+        // Add to tracking portfolio if configured
+        if (trackingPortfolioGid?.trim() && report.trackingTaskGid) {
+          // portfolios hold projects, not tasks — skip silently for analysis mode
+        }
+      }
+    }
+
+    req.session.analysisInProgress = false;
+    req.session.lastAnalysisReport = report;
+    logger.info({ user: req.session.user?.name, projects: projects.length, platform }, 'analysis complete');
+
+    send('complete', report);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err, user: req.session.user?.name }, 'analysis failed');
+    req.session.analysisInProgress = false;
+    send('error-msg', { message: msg });
+  } finally {
+    clearInterval(keepalive);
+    res.end();
+  }
 });
 
 // ---------------------------------------------------------------------------

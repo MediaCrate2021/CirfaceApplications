@@ -196,7 +196,8 @@ a:hover { text-decoration: underline; }
    App shell
    ================================================================ */
 
-.app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+.app-shell { display: flex; flex-direction: column; min-height: 100vh; background: var(--color-bg); transition: background 0.3s ease; }
+.app-shell[data-mode="analyze"] { background: #eef4f2; }
 
 .app-header {
   background: var(--color-primary);

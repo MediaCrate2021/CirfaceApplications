@@ -15,6 +15,7 @@
 //-------------------------//
 
 import type {
+  AnalysisReport,
   AsanaFieldType,
   FieldMappingEntry,
   MigrationReport,
@@ -22,6 +23,7 @@ import type {
   NormalisedAttachment,
   NormalisedProject,
   NormalisedTask,
+  ProjectAnalysis,
   SectionMappingEntry,
   UserMappingEntry,
 } from '../src/types/index.js';
@@ -1098,6 +1100,137 @@ export class AsanaDestination {
     return text.trim();
   }
 
+  // ---------------------------------------------------------------------------
+  // Analysis report (analyze-only mode)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Creates a tracking task in Asana containing the analysis report summary and
+   * a full .txt log file as an attachment. Returns the tracking task GID, or null
+   * if writing fails (non-fatal — the analysis result is still returned to the UI).
+   */
+  async writeAnalysisReport(
+    report: AnalysisReport,
+    options: {
+      trackingProjectGid: string;
+      trackingToken?: string;
+      writerName?: string;
+    },
+  ): Promise<string | null> {
+    const tt = options.trackingToken;
+    const date = new Date().toLocaleDateString();
+    const projectNames = report.projects.map((p) => p.projectName).join(', ');
+    const taskName = `Analysis Report: ${projectNames} (${date})`;
+
+    try {
+      const task = await this.request<{ gid: string }>('POST', '/tasks', {
+        projects: [options.trackingProjectGid],
+        name: taskName,
+        notes: this.formatAnalysisReportSummary(report, options.writerName),
+      }, tt);
+
+      const filename = `analysis-report-${new Date().toISOString().slice(0, 10)}.txt`;
+      await this.uploadTextAttachment(task.gid, filename, this.formatAnalysisReportLog(report, options.writerName), tt);
+
+      return task.gid;
+    } catch (err) {
+      logger.error({ err }, 'failed to write analysis tracking task');
+      return null;
+    }
+  }
+
+  /** Short summary for the Asana task notes field. */
+  private formatAnalysisReportSummary(report: AnalysisReport, writerName?: string): string {
+    const lines: string[] = [
+      `Analysis Report — ${report.sourcePlatform}`,
+      writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool',
+      `Started:   ${report.startedAt}`,
+      `Completed: ${report.completedAt}`,
+      '',
+      `Projects analyzed: ${report.projects.length}`,
+      '',
+    ];
+
+    for (const p of report.projects) {
+      lines.push(`  ${p.projectName}`);
+      lines.push(`    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}`);
+      lines.push(`    Users: ${p.users}  Fields: ${p.fields.length}`);
+      lines.push('');
+    }
+
+    lines.push('Full field listing is in the attached report file.');
+    return lines.join('\n');
+  }
+
+  /** Full analysis log with per-project field tables, written to the attached .txt file. */
+  private formatAnalysisReportLog(report: AnalysisReport, writerName?: string): string {
+    const sep = (label: string) => `\n${'='.repeat(60)}\n${label}\n${'='.repeat(60)}`;
+    const lines: string[] = [];
+
+    lines.push(`ANALYSIS REPORT — ${report.sourcePlatform.toUpperCase()}`);
+    lines.push(writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool');
+    lines.push(`Started:   ${report.startedAt}`);
+    lines.push(`Completed: ${report.completedAt}`);
+    lines.push('');
+    lines.push(`Projects analyzed: ${report.projects.length}`);
+
+    for (const p of report.projects) {
+      lines.push(sep(p.projectName));
+      lines.push('');
+      lines.push(`Tasks:        ${p.tasks}`);
+      lines.push(`Subtasks:     ${p.subtasks}`);
+      lines.push(`Comments:     ${p.comments}`);
+      lines.push(`Attachments:  ${p.attachments}`);
+      lines.push(`Dependencies: ${p.dependencies}`);
+      lines.push(`Users:        ${p.users}`);
+      lines.push(`Fields:       ${p.fields.length}`);
+      lines.push('');
+
+      if (p.fields.length > 0) {
+        const cw = { name: 30, type: 16, source: 10, options: 8, notes: 16 };
+        const pad = (s: string, n: number) => s.slice(0, n).padEnd(n);
+
+        lines.push('CUSTOM FIELDS');
+        lines.push('-'.repeat(cw.name + cw.type + cw.source + cw.options + cw.notes));
+        lines.push(
+          pad('Field Name', cw.name) +
+          pad('Type', cw.type) +
+          pad('Source', cw.source) +
+          pad('Options', cw.options) +
+          'Notes',
+        );
+        lines.push('-'.repeat(cw.name + cw.type + cw.source + cw.options + cw.notes));
+
+        for (const f of p.fields) {
+          lines.push(
+            pad(f.name, cw.name) +
+            pad(f.type, cw.type) +
+            pad(f.isSubitemField ? 'Subitem' : 'Parent', cw.source) +
+            pad(f.options?.length ? String(f.options.length) : '—', cw.options) +
+            (f.nonMigratable ? 'non-migratable' : ''),
+          );
+        }
+        lines.push('');
+
+        // Dropdown options detail
+        const dropdowns = p.fields.filter((f) => f.options?.length);
+        if (dropdowns.length > 0) {
+          lines.push('DROPDOWN OPTIONS');
+          lines.push('-'.repeat(40));
+          for (const f of dropdowns) {
+            lines.push(`  ${f.name}:`);
+            for (const opt of f.options!) {
+              lines.push(`    - ${opt.name}`);
+            }
+          }
+          lines.push('');
+        }
+      }
+    }
+
+    return lines.join('\n');
+  }
+
   /** ISO timestamp formatted as "YYYY-MM-DD HH:MM:SS". */
   private ts(): string {
     return new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -1291,7 +1424,7 @@ export class AsanaDestination {
   }
 
   /** Upload a plain-text string as a file attachment on a task. */
-  private async uploadTextAttachment(taskGid: string, filename: string, content: string, tokenOverride?: string): Promise<void> {
+  async uploadTextAttachment(taskGid: string, filename: string, content: string, tokenOverride?: string): Promise<void> {
     const formData = new FormData();
     formData.append('parent', taskGid);
     formData.append('file', new Blob([content], { type: 'text/plain' }), filename);

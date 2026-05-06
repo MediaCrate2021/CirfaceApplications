@@ -22,7 +22,11 @@ import FieldMapping from './components/steps/FieldMapping.tsx';
 import ReviewConfirm from './components/steps/ReviewConfirm.tsx';
 import RunMigration from './components/steps/RunMigration.tsx';
 import Report from './components/steps/Report.tsx';
+import AnalyzeSelectProjects from './components/steps/AnalyzeSelectProjects.tsx';
+import RunAnalysis from './components/steps/RunAnalysis.tsx';
+import AnalysisReport from './components/steps/AnalysisReport.tsx';
 import type {
+  AnalysisReport as AnalysisReportType,
   FieldMappingEntry,
   MigrationReport,
   SectionMappingEntry,
@@ -42,9 +46,14 @@ export type WizardStep =
   | 'field-mapping'
   | 'review'
   | 'running'
-  | 'report';
+  | 'report'
+  | 'analyze-select'
+  | 'analyzing'
+  | 'analysis-report';
 
-const STEPS: WizardStep[] = [
+export type AppMode = 'migrate' | 'analyze';
+
+const MIGRATE_STEPS: WizardStep[] = [
   'connect',
   'tracking',
   'user-mapping',
@@ -53,6 +62,14 @@ const STEPS: WizardStep[] = [
   'review',
   'running',
   'report',
+];
+
+const ANALYZE_STEPS: WizardStep[] = [
+  'connect',
+  'tracking',
+  'analyze-select',
+  'analyzing',
+  'analysis-report',
 ];
 
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -64,6 +81,9 @@ const STEP_LABELS: Record<WizardStep, string> = {
   'review': 'Review',
   'running': 'Migrate',
   'report': 'Report',
+  'analyze-select': 'Projects',
+  'analyzing': 'Analyze',
+  'analysis-report': 'Report',
 };
 
 // ---------------------------------------------------------------------------
@@ -76,6 +96,7 @@ export interface AppState {
   user: { name: string; email: string } | null;
   appEnv: string;
 
+  mode: AppMode;
   step: WizardStep;
 
   // Connect step
@@ -97,7 +118,7 @@ export interface AppState {
   // User mapping
   userMapping: UserMappingEntry[];
 
-  // Project selection
+  // Project selection (migrate mode — single project)
   selectedSourceProjectId: string | null;
   selectedSourceProjectName: string | null;
   selectedDestProjectGid: string | null;
@@ -113,13 +134,18 @@ export interface AppState {
   sectionMapping: SectionMappingEntry[];
   externalIdDestFieldGid: string | null;
 
-  // Report
+  // Analyze mode — multi-project selection
+  analyzeProjectIds: Array<{ id: string; name: string }>;
+
+  // Reports
   lastReport: MigrationReport | null;
+  analysisReport: AnalysisReportType | null;
 }
 
 type Action =
   | { type: 'AUTH_CHECKED'; authenticated: boolean; user: AppState['user']; appEnv: string }
   | { type: 'LOGGED_OUT' }
+  | { type: 'SET_MODE'; mode: AppMode }
   | { type: 'SET_STEP'; step: WizardStep }
   | { type: 'SOURCE_CONNECTED'; platform: SourcePlatform; workspaceName: string }
   | { type: 'DEST_CONNECTED'; workspaceGid: string; workspaceName: string }
@@ -129,7 +155,10 @@ type Action =
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[]; externalIdDestFieldGid: string | null }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
-  | { type: 'RELOAD_MAPPING' };
+  | { type: 'RELOAD_MAPPING' }
+  | { type: 'SET_ANALYZE_PROJECTS'; projects: Array<{ id: string; name: string }> }
+  | { type: 'ANALYSIS_COMPLETE'; report: AnalysisReportType }
+  | { type: 'RUN_ANOTHER_ANALYSIS' };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -144,6 +173,8 @@ function reducer(state: AppState, action: Action): AppState {
       };
     case 'LOGGED_OUT':
       return { ...initialState, authChecked: true, authenticated: false };
+    case 'SET_MODE':
+      return { ...state, mode: action.mode };
     case 'SET_STEP':
       return { ...state, step: action.step };
     case 'SOURCE_CONNECTED':
@@ -172,10 +203,8 @@ function reducer(state: AppState, action: Action): AppState {
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RELOAD_MAPPING':
-      // Go back to field-mapping with fresh data; keep connections, tracking, users, project selection
       return { ...state, step: 'field-mapping', fieldMapping: [], sectionMapping: [], externalIdDestFieldGid: null };
     case 'RUN_ANOTHER':
-      // Go back to project selection; keep connectors + mappings
       return {
         ...state,
         step: 'select-projects',
@@ -193,6 +222,12 @@ function reducer(state: AppState, action: Action): AppState {
         externalIdDestFieldGid: null,
         lastReport: null,
       };
+    case 'SET_ANALYZE_PROJECTS':
+      return { ...state, analyzeProjectIds: action.projects };
+    case 'ANALYSIS_COMPLETE':
+      return { ...state, analysisReport: action.report, step: 'analysis-report' };
+    case 'RUN_ANOTHER_ANALYSIS':
+      return { ...state, step: 'analyze-select', analyzeProjectIds: [], analysisReport: null };
     default:
       return state;
   }
@@ -203,6 +238,7 @@ const initialState: AppState = {
   authenticated: false,
   user: null,
   appEnv: 'development',
+  mode: 'migrate',
   step: 'connect',
   sourcePlatform: null,
   sourceConnected: false,
@@ -229,7 +265,9 @@ const initialState: AppState = {
   fieldMapping: [],
   sectionMapping: [],
   externalIdDestFieldGid: null,
+  analyzeProjectIds: [],
   lastReport: null,
+  analysisReport: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -239,9 +277,6 @@ const initialState: AppState = {
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  // Check auth on mount. If authenticated, also check whether a migration is already
-  // running or has a completed report — and jump straight to the right step so the
-  // user doesn't have to redo the entire wizard after a browser crash or refresh.
   useEffect(() => {
     fetch('/auth/status')
       .then((r) => r.json())
@@ -256,7 +291,7 @@ export default function App() {
               dispatch({ type: 'MIGRATION_COMPLETE', report: status.report });
             }
           } catch {
-            // Status check failing is non-fatal — user starts at the connect step as normal.
+            // Non-fatal — user starts at connect as normal.
           }
         }
       })
@@ -273,12 +308,15 @@ export default function App() {
 
   const next = (step: WizardStep) => dispatch({ type: 'SET_STEP', step });
 
-  // Steps that are "navigable" (all steps after running/report lock the indicator)
-  const navigableSteps = STEPS.filter((s) => s !== 'running' && s !== 'report');
+  const STEPS = state.mode === 'analyze' ? ANALYZE_STEPS : MIGRATE_STEPS;
+  const lockSteps: WizardStep[] = state.mode === 'analyze'
+    ? ['analyzing', 'analysis-report']
+    : ['running', 'report'];
+  const navigableSteps = STEPS.filter((s) => !lockSteps.includes(s));
   const currentIndex = STEPS.indexOf(state.step);
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-mode={state.mode}>
       <header className="app-header">
         <div className="header-left">
           <img src="/logo" alt="Cirface" className="header-logo" />
@@ -304,6 +342,7 @@ export default function App() {
           {state.step === 'connect' && (
             <ConnectSources
               state={state}
+              onModeChange={(mode) => dispatch({ type: 'SET_MODE', mode })}
               onSourceConnected={(platform, workspaceName) => {
                 dispatch({ type: 'SOURCE_CONNECTED', platform, workspaceName });
               }}
@@ -322,11 +361,12 @@ export default function App() {
               currentPortfolioName={state.trackingPortfolioName}
               onSet={(gid, name, portfolioGid, portfolioName) => {
                 dispatch({ type: 'SET_TRACKING', gid, name, portfolioGid, portfolioName, ownerGid: null, ownerName: null });
-                next('user-mapping');
+                next(state.mode === 'analyze' ? 'analyze-select' : 'user-mapping');
               }}
               onBack={() => next('connect')}
             />
           )}
+          {/* ── Migrate-mode steps ── */}
           {state.step === 'user-mapping' && (
             <UserMapping
               state={state}
@@ -388,6 +428,29 @@ export default function App() {
                 fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
                 dispatch({ type: 'RUN_ANOTHER' });
               }}
+            />
+          )}
+          {/* ── Analyze-mode steps ── */}
+          {state.step === 'analyze-select' && (
+            <AnalyzeSelectProjects
+              state={state}
+              onSelect={(projects) => {
+                dispatch({ type: 'SET_ANALYZE_PROJECTS', projects });
+                next('analyzing');
+              }}
+              onBack={() => next('tracking')}
+            />
+          )}
+          {state.step === 'analyzing' && (
+            <RunAnalysis
+              state={state}
+              onComplete={(report) => dispatch({ type: 'ANALYSIS_COMPLETE', report })}
+            />
+          )}
+          {state.step === 'analysis-report' && (
+            <AnalysisReport
+              report={state.analysisReport!}
+              onRunAnother={() => dispatch({ type: 'RUN_ANOTHER_ANALYSIS' })}
             />
           )}
         </main>

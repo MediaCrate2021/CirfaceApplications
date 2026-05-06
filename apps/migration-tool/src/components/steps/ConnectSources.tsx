@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import type { AppState } from '../../App.tsx';
+import type { AppMode, AppState } from '../../App.tsx';
 import type { SourcePlatform } from '../../types/index.ts';
 
 interface Props {
   state: AppState;
+  onModeChange: (mode: AppMode) => void;
   onSourceConnected: (platform: SourcePlatform, workspaceName: string) => void;
   onDestConnected: (workspaceGid: string, workspaceName: string) => void;
   onNext: () => void;
 }
 
-export default function ConnectSources({ state, onSourceConnected, onDestConnected, onNext }: Props) {
+export default function ConnectSources({ state, onModeChange, onSourceConnected, onDestConnected, onNext }: Props) {
   const [sourcePlatform, setSourcePlatform] = useState<SourcePlatform>(state.sourcePlatform ?? 'monday');
   const [sourceToken, setSourceToken] = useState('');
   const [destToken, setDestToken] = useState('');
@@ -59,11 +60,39 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
   }
 
   const canProceed = state.sourceConnected && state.destConnected;
+  const isAnalyze = state.mode === 'analyze';
 
   return (
     <div className="step-panel">
       <h2 className="step-title">Connect Source &amp; Destination</h2>
       <p className="step-desc">Enter API tokens for your source platform and the target Asana workspace. These are saved for the duration of your session.</p>
+
+      {/* Mode toggle */}
+      <div className="mode-toggle field-group">
+        <label>Mode</label>
+        <div className="radio-group">
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="app-mode"
+              value="migrate"
+              checked={state.mode === 'migrate'}
+              onChange={() => onModeChange('migrate')}
+            />
+            <span>Migrate — move data from source to Asana</span>
+          </label>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="app-mode"
+              value="analyze"
+              checked={state.mode === 'analyze'}
+              onChange={() => onModeChange('analyze')}
+            />
+            <span>Analyze only — inspect source projects and generate a report</span>
+          </label>
+        </div>
+      </div>
 
       <div className="connect-grid">
         {/* Source */}
@@ -154,11 +183,17 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
         {/* Destination */}
         <div className={`connect-card ${state.destConnected ? 'connected' : ''}`}>
           <div className="connect-card-header">
-            <h3>Destination Asana</h3>
+            <h3>{isAnalyze ? 'Asana (for report)' : 'Destination Asana'}</h3>
             {state.destConnected && (
               <span className="badge badge-success">Connected — {state.destWorkspaceName}</span>
             )}
           </div>
+
+          {isAnalyze && !state.destConnected && (
+            <p className="field-hint" style={{ marginBottom: '12px' }}>
+              Your analysis report will be saved as a task in a tracking project. Enter your Asana PAT to enable this.
+            </p>
+          )}
 
           {!state.destConnected && (
             <>
@@ -188,7 +223,7 @@ export default function ConnectSources({ state, onSourceConnected, onDestConnect
                 onClick={connectDest}
                 disabled={!destToken.trim() || destLoading}
               >
-                {destLoading ? 'Connecting…' : 'Connect Destination'}
+                {destLoading ? 'Connecting…' : 'Connect Asana'}
               </button>
             </>
           )}

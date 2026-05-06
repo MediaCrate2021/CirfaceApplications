@@ -251,6 +251,30 @@ export interface SessionStateResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Analysis report (analyze-only mode)
+// ---------------------------------------------------------------------------
+
+export interface ProjectAnalysis {
+  projectId: string;
+  projectName: string;
+  tasks: number;
+  subtasks: number;
+  comments: number;
+  attachments: number;
+  dependencies: number;
+  users: number;
+  fields: NormalisedField[];
+}
+
+export interface AnalysisReport {
+  startedAt: string;
+  completedAt: string;
+  sourcePlatform: string;
+  projects: ProjectAnalysis[];
+  trackingTaskGid?: string;
+}
+
+// ---------------------------------------------------------------------------
 // API response shapes
 // ---------------------------------------------------------------------------
 
