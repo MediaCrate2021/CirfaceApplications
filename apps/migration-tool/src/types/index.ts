@@ -16,7 +16,7 @@
 // Source platforms
 // ---------------------------------------------------------------------------
 
-export type SourcePlatform = 'monday' | 'trello' | 'smartsheet' | 'asana';
+export type SourcePlatform = 'monday' | 'trello' | 'smartsheet' | 'asana' | 'wrike';
 
 // ---------------------------------------------------------------------------
 // Normalised field types

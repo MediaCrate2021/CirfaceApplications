@@ -117,6 +117,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                   <option value="monday">Monday.com</option>
                   <option value="smartsheet">Smartsheet</option>
                   <option value="trello">Trello</option>
+                  <option value="wrike">Wrike</option>
                 </select>
               </div>
               <div className="field-group">
@@ -149,6 +150,15 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                       data-tooltip="How to get your Trello API key & token"
                     >i</a>
                   )}
+                  {sourcePlatform === 'wrike' && (
+                    <a
+                      className="info-icon"
+                      href="https://help.wrike.com/hc/en-us/articles/210146065-Wrike-API"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-tooltip="How to create a Wrike permanent access token"
+                    >i</a>
+                  )}
                 </label>
                 <input
                   id="source-token"
@@ -158,6 +168,8 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                       ? 'Monday.com API token'
                       : sourcePlatform === 'smartsheet'
                       ? 'Smartsheet Personal Access Token'
+                      : sourcePlatform === 'wrike'
+                      ? 'Wrike permanent access token'
                       : 'apiKey:token'
                   }
                   value={sourceToken}
@@ -166,6 +178,9 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                 />
                 {sourcePlatform === 'trello' && (
                   <p className="field-hint">Paste your API key and token separated by a colon: <code>apiKey:token</code></p>
+                )}
+                {sourcePlatform === 'wrike' && (
+                  <p className="field-hint">Generate a permanent token in Wrike: Profile menu &gt; Apps &amp; Integrations &gt; API &gt; Create permanent token</p>
                 )}
               </div>
               {sourceError && <p className="error-text">{sourceError}</p>}

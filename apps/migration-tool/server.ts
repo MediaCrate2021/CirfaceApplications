@@ -32,6 +32,7 @@ import { MondayConnector } from './connectors/monday.js';
 import { TrelloConnector } from './connectors/trello.js';
 import { SmartsheetConnector } from './connectors/smartsheet.js';
 import { AsanaConnector } from './connectors/asana.js';
+import { WrikeConnector } from './connectors/wrike.js';
 import { AsanaDestination } from './destinations/asana.js';
 import type { SourceConnector } from './connectors/base.js';
 import type {
@@ -254,6 +255,7 @@ function makeConnector(platform: SourcePlatform, token: string): SourceConnector
   if (platform === 'trello') return new TrelloConnector(token);
   if (platform === 'smartsheet') return new SmartsheetConnector(token);
   if (platform === 'asana') return new AsanaConnector(token);
+  if (platform === 'wrike') return new WrikeConnector(token);
   throw new Error(`Unknown platform: ${platform}`);
 }
 
