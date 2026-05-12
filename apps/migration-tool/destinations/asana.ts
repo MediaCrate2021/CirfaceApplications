@@ -602,6 +602,7 @@ export class AsanaDestination {
         if (!destGid || value === null || value === '') continue;
 
         const optMap = enumOptionMap.get(sourceFieldId);
+        const fieldType = fieldTypeMap.get(sourceFieldId);
         if (optMap) {
           // Enum/multi_enum: value must be an enum_option GID, not a label string
           if (Array.isArray(value)) {
@@ -612,6 +613,10 @@ export class AsanaDestination {
             if (gid) customFields[destGid] = gid;
             // else: source option has no mapping — skip silently
           }
+        } else if (fieldType === 'enum' || fieldType === 'multi_enum') {
+          // Enum field but no option map available — sending a raw string would cause
+          // Asana to reject with "Not a recognized ID". Skip silently.
+          continue;
         } else if (fieldTypeMap.get(sourceFieldId) === 'date') {
           // Date custom fields require { date: "YYYY-MM-DD" }, not a plain string
           const dateStr = Array.isArray(value) ? value[0] : value;
@@ -809,6 +814,7 @@ export class AsanaDestination {
         if (value === null || value === '') continue;
 
         const optMap = enumOptionMap.get(resolvedFieldId);
+        const fieldType = fieldTypeMap.get(resolvedFieldId);
         if (optMap) {
           if (Array.isArray(value)) {
             const gids = value.map((v) => optMap.get(v)).filter((g): g is string => g != null);
@@ -817,6 +823,10 @@ export class AsanaDestination {
             const gid = optMap.get(value);
             if (gid) customFields[destGid] = gid;
           }
+        } else if (fieldType === 'enum' || fieldType === 'multi_enum') {
+          // Enum field but no option map available — sending a raw string would cause
+          // Asana to reject with "Not a recognized ID". Skip silently.
+          continue;
         } else if (fieldTypeMap.get(resolvedFieldId) === 'date') {
           const dateStr = Array.isArray(value) ? value[0] : value;
           if (dateStr) customFields[destGid] = { date: String(dateStr).substring(0, 10) };

@@ -438,6 +438,32 @@ app.get('/api/source/projects', requireAuth, async (req, res) => {
   }
 });
 
+// Look up a single source project by ID — used when the user pastes a sheet ID or link
+// directly rather than selecting from the workspace list (Smartsheet only for now).
+app.get('/api/source/project-info', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  const { projectId } = req.query as { projectId?: string };
+  if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+  try {
+    const { platform, token } = req.session.sourceConfig;
+    const connector = makeConnector(platform, token);
+    if (platform === 'smartsheet') {
+      const { SmartsheetConnector } = await import('./connectors/smartsheet.js');
+      const ss = new SmartsheetConnector(token);
+      const info = await ss.getProjectInfo(projectId);
+      res.json(info);
+    } else {
+      // Fallback for other platforms — scan the project list
+      const projects = await connector.getProjects();
+      const found = projects.find((p) => p.id === projectId);
+      if (!found) return res.status(404).json({ error: 'Project not found' });
+      res.json(found);
+    }
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'source/project-info' });
+  }
+});
+
 // Returns the normalised field list for a specific source project (used by FieldMapping step).
 // For Monday, also fetches subitem fields and merges in any that don't already exist by name.
 app.get('/api/source/project-fields', requireAuth, async (req, res) => {

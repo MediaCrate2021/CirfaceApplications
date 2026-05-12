@@ -45,6 +45,45 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [error, setError] = useState('');
   const [reloadCount, setReloadCount] = useState(0);
 
+  // Smartsheet manual ID / link entry
+  const [sheetIdInput, setSheetIdInput]     = useState('');
+  const [sheetIdLookup, setSheetIdLookup]   = useState(false);
+  const [sheetIdError, setSheetIdError]     = useState('');
+
+  /** Extract a Smartsheet sheet ID from a pasted URL or raw numeric ID. */
+  function extractSheetId(value: string): string {
+    const fromUrl = value.match(/\/sheets\/([^/?&#]+)/);
+    if (fromUrl) return fromUrl[1];
+    return value.trim();
+  }
+
+  async function handleSheetIdLookup() {
+    const id = extractSheetId(sheetIdInput);
+    if (!id) return;
+    setSheetIdError('');
+    setSheetIdLookup(true);
+    try {
+      const res = await fetch(`/api/source/project-info?projectId=${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setSheetIdError(body.error ?? `Sheet not found (${res.status})`);
+        return;
+      }
+      const info = await res.json() as { id: string; name: string };
+      // Inject into the source list so the existing continue flow works unchanged
+      setSourceProjects((prev) => {
+        if (prev.some((p) => p.id === info.id)) return prev;
+        return [...prev, info];
+      });
+      setSelectedSource(info.id);
+      setSheetIdInput('');
+    } catch {
+      setSheetIdError('Failed to reach the server. Please try again.');
+    } finally {
+      setSheetIdLookup(false);
+    }
+  }
+
   async function handleDestWorkspaceChange(gid: string) {
     const ws = destWorkspaces.find((w) => w.id === gid);
     if (!ws) return;
@@ -290,7 +329,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
               <select
                 id="source-project"
                 value={selectedSource}
-                onChange={(e) => setSelectedSource(e.target.value)}
+                onChange={(e) => { setSelectedSource(e.target.value); setSheetIdInput(''); setSheetIdError(''); }}
               >
                 <option value="">— Select a project —</option>
                 {sourceProjects.map((p) => (
@@ -298,6 +337,33 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
                 ))}
               </select>
             </div>
+
+            {state.sourcePlatform === 'smartsheet' && (
+              <div className="field-group">
+                <label htmlFor="sheet-id-input">Or paste a Sheet ID / link</label>
+                <p className="field-hint">For sheets not in a workspace. Paste a sheet URL or numeric Sheet ID.</p>
+                <div className="input-with-button">
+                  <input
+                    id="sheet-id-input"
+                    type="text"
+                    value={sheetIdInput}
+                    onChange={(e) => { setSheetIdInput(e.target.value); setSheetIdError(''); }}
+                    onKeyDown={(e) => e.key === 'Enter' && !sheetIdLookup && sheetIdInput.trim() && handleSheetIdLookup()}
+                    placeholder="https://app.smartsheet.com/sheets/…  or  1234567890"
+                    disabled={sheetIdLookup}
+                    autoComplete="off"
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleSheetIdLookup}
+                    disabled={!sheetIdInput.trim() || sheetIdLookup}
+                  >
+                    {sheetIdLookup ? 'Looking up…' : 'Use this sheet'}
+                  </button>
+                </div>
+                {sheetIdError && <p className="error-text">{sheetIdError}</p>}
+              </div>
+            )}
           </div>
 
           {/* Destination card */}

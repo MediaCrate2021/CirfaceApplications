@@ -60,6 +60,101 @@ const ASANA_CREATABLE_TYPES: Array<{ value: AsanaFieldType | string; label: stri
   { value: 'people',          label: 'New Field Type: People' },
 ];
 
+// ---------------------------------------------------------------------------
+// Import / export helpers
+// ---------------------------------------------------------------------------
+
+interface MappingExport {
+  version: 2;
+  sourcePlatform: string;
+  sourceProjectId: string | null;
+  sourceProjectName: string | null;
+  fieldMapping: FieldMappingEntry[];
+  sectionMapping: SectionMappingEntry[];
+  externalIdDestFieldGid: string | null;
+}
+
+function downloadMappingExport(
+  state: Props['state'],
+  fieldMapping: FieldMappingEntry[],
+  sectionMapping: SectionMappingEntry[],
+  externalIdDestFieldGid: string | null,
+) {
+  const data: MappingExport = {
+    version: 2,
+    sourcePlatform: state.sourcePlatform ?? '',
+    sourceProjectId: state.selectedSourceProjectId ?? null,
+    sourceProjectName: state.selectedSourceProjectName ?? null,
+    fieldMapping,
+    sectionMapping,
+    externalIdDestFieldGid,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `field-mapping-${(state.selectedSourceProjectName ?? 'export').replace(/[^a-z0-9]/gi, '_')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Merge an imported mapping into the current one, matching by sourceFieldId.
+ * Keeps live sourceOptions from the current entry so enum rows render correctly.
+ */
+function applyImportedFieldMapping(
+  current: FieldMappingEntry[],
+  imported: FieldMappingEntry[],
+): { merged: FieldMappingEntry[]; matched: number } {
+  const byId = new Map(imported.map((e) => [e.sourceFieldId, e]));
+  let matched = 0;
+  const merged = current.map((entry) => {
+    const imp = byId.get(entry.sourceFieldId);
+    if (!imp) return entry;
+    matched++;
+    return {
+      ...entry,                           // keep live sourceOptions / sourceFieldName
+      destFieldId:               imp.destFieldId,
+      destFieldName:             imp.destFieldName,
+      destFieldType:             imp.destFieldType,
+      destNativeField:           imp.destNativeField,
+      isOrgWide:                 imp.isOrgWide,
+      confidence:                imp.confidence,
+      omit:                      imp.omit,
+      enumMapping:               imp.enumMapping,
+      deduplicateOptions:        imp.deduplicateOptions,
+      linkedToParentSourceFieldId: imp.linkedToParentSourceFieldId,
+    };
+  });
+  return { merged, matched };
+}
+
+function applyImportedSectionMapping(
+  current: SectionMappingEntry[],
+  imported: SectionMappingEntry[],
+): SectionMappingEntry[] {
+  const byId = new Map(imported.map((s) => [s.sourceId, s]));
+  return current.map((entry) => {
+    const imp = byId.get(entry.sourceId);
+    if (!imp) return entry;
+    return { ...entry, destId: imp.destId, destName: imp.destName, omit: imp.omit };
+  });
+}
+
+function parseMappingFile(
+  text: string,
+): { ok: true; data: MappingExport } | { ok: false; error: string } {
+  try {
+    const data = JSON.parse(text) as Partial<MappingExport>;
+    if (data.version !== 2 || !Array.isArray(data.fieldMapping)) {
+      return { ok: false, error: 'Unrecognised file format (expected version 2 mapping export).' };
+    }
+    return { ok: true, data: data as MappingExport };
+  } catch {
+    return { ok: false, error: 'Could not parse file — make sure it is a valid JSON mapping export.' };
+  }
+}
+
 interface CheckIssue {
   severity: 'warning' | 'info';
   message: string;
@@ -212,6 +307,8 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
+  const [importMsg, setImportMsg] = useState('');
+  const importRef = useRef<HTMLInputElement>(null);
   const hasFired = useRef(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -309,6 +406,26 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
   function handleReload() {
     fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
     load(true);
+  }
+
+  function handleExport() {
+    downloadMappingExport(state, mapping, sectionMapping, null);
+  }
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const result = parseMappingFile(ev.target?.result as string);
+      if (!result.ok) { setImportMsg(`Error: ${result.error}`); return; }
+      const { merged, matched } = applyImportedFieldMapping(mapping, result.data.fieldMapping);
+      setMapping(merged);
+      setSectionMapping((prev) => applyImportedSectionMapping(prev, result.data.sectionMapping ?? []));
+      setImportMsg(`Loaded: ${matched} of ${mapping.length} fields matched.`);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   }
 
   function setType(sourceFieldId: string, value: string) {
@@ -513,10 +630,19 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
         </div>
       )}
 
+      <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
+      {importMsg && <p className="field-hint" style={{ marginTop: 8 }}>{importMsg}</p>}
+
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
         <button className="btn btn-ghost" onClick={handleReload} disabled={loading}>
           ↺ Reload source data
+        </button>
+        <button className="btn btn-ghost" onClick={handleExport} disabled={loading || !!error} title="Download mapping as JSON">
+          ↓ Export Mapping
+        </button>
+        <button className="btn btn-ghost" onClick={() => importRef.current?.click()} title="Load a previously exported mapping JSON">
+          ↑ Import Mapping
         </button>
         <button className="btn btn-ghost" onClick={handleCheck} disabled={loading || !!error}>
           ✓ Check Mapping
@@ -543,6 +669,8 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
+  const [importMsg, setImportMsg] = useState('');
+  const importRef = useRef<HTMLInputElement>(null);
   const hasFired = useRef(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -787,6 +915,27 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
       next.has(sourceFieldId) ? next.delete(sourceFieldId) : next.add(sourceFieldId);
       return next;
     });
+  }
+
+  function handleExport() {
+    downloadMappingExport(state, mapping, sectionMapping, externalIdDestFieldGid);
+  }
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const result = parseMappingFile(ev.target?.result as string);
+      if (!result.ok) { setImportMsg(`Error: ${result.error}`); return; }
+      const { merged, matched } = applyImportedFieldMapping(mapping, result.data.fieldMapping);
+      setMapping(merged);
+      setSectionMapping((prev) => applyImportedSectionMapping(prev, result.data.sectionMapping ?? []));
+      if (result.data.externalIdDestFieldGid !== undefined) setExternalIdDestFieldGid(result.data.externalIdDestFieldGid);
+      setImportMsg(`Loaded: ${matched} of ${mapping.length} fields matched.`);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   }
 
   const unmappedCount = mapping.filter((m) => !m.omit && !m.destFieldId && !m.destNativeField).length;
@@ -1142,8 +1291,17 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
         </div>
       )}
 
+      <input ref={importRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
+      {importMsg && <p className="field-hint" style={{ marginTop: 8 }}>{importMsg}</p>}
+
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
+        <button className="btn btn-ghost" onClick={handleExport} disabled={loading || !!error}>
+          ↓ Export Mapping
+        </button>
+        <button className="btn btn-ghost" onClick={() => importRef.current?.click()} disabled={loading || !!error}>
+          ↑ Import Mapping
+        </button>
         <button className="btn btn-ghost" onClick={handleCheck} disabled={loading || !!error}>
           ✓ Check Mapping
         </button>

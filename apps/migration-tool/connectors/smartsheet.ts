@@ -293,6 +293,13 @@ export class SmartsheetConnector implements SourceConnector {
     return sheets.map((s) => ({ id: String(s.id), name: s.name }));
   }
 
+  /** Fetch just the name and ID of a sheet — much lighter than getProjectData. */
+  async getProjectInfo(sheetId: string): Promise<{ id: string; name: string }> {
+    // pageSize=1 limits row payload; we only need top-level name/id from the response.
+    const sheet = await this.get<{ id: number; name: string }>(`/sheets/${sheetId}`, { pageSize: '1' });
+    return { id: String(sheet.id), name: sheet.name };
+  }
+
   async getProjectFields(sheetId: string): Promise<NormalisedField[]> {
     // A lightweight fetch — only need columns, not rows
     const sheet = await this.get<Pick<SmSheet, 'columns'>>(`/sheets/${sheetId}`, {
