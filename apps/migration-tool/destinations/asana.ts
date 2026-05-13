@@ -724,7 +724,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap);
       }
 
       // Comments
@@ -774,6 +774,7 @@ export class AsanaDestination {
   private async migrateSubtask(
     subtask: NormalisedTask,
     parentGid: string,
+    destProjectGid: string,
     sourceBoardId: string,
     sourceIdFieldGid: string | undefined,
     nativeDueOnSourceId: string | undefined,
@@ -860,6 +861,9 @@ export class AsanaDestination {
 
       const payload: Record<string, unknown> = {
         parent: parentGid,
+        // Adding the subtask to the project gives it project membership, which is
+        // required for project-specific custom fields to be accepted by Asana.
+        projects: [destProjectGid],
         name: subtask.name,
         notes: nativeNotes ?? '',
         completed: subtask.completed,
@@ -947,7 +951,7 @@ export class AsanaDestination {
 
       // Recurse into children — Asana supports nested subtasks at arbitrary depth.
       for (const child of subtask.subtasks) {
-        await this.migrateSubtask(child, created.gid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap);
+        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap);
       }
     } catch (err) {
       const msg = (err as Error).message;
