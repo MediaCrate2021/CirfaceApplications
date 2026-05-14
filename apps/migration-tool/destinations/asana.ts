@@ -421,6 +421,7 @@ export class AsanaDestination {
 
     // Derive source field IDs that map to native Asana task fields.
     // These are applied directly to the task payload instead of creating custom fields.
+    const anyDueMapped            = options.fieldMapping.some((f) => f.destNativeField === 'due_on');
     const nativeDueOnSourceId     = options.fieldMapping.find((f) => f.destNativeField === 'due_on'    && !f.omit)?.sourceFieldId;
     const nativeNotesSourceId     = options.fieldMapping.find((f) => f.destNativeField === 'notes'     && !f.omit)?.sourceFieldId;
     const nativeFollowersSourceId = options.fieldMapping.find((f) => f.destNativeField === 'followers' && !f.omit)?.sourceFieldId;
@@ -455,7 +456,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap, options.skipAttachments);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap, options.skipAttachments);
       report.items.push(item);
 
       const processed = i + 1;
@@ -584,6 +585,7 @@ export class AsanaDestination {
     sectionGidMap: Map<string, string>,
     sourceIdFieldGid: string | undefined,
     nativeDueOnSourceId: string | undefined,
+    anyDueMapped: boolean,
     nativeNotesSourceId: string | undefined,
     nativeAssigneeSourceId: string | undefined,
     assigneeOmitted: boolean,
@@ -650,12 +652,20 @@ export class AsanaDestination {
 
       // Apply native field mappings — values come from source customFields but are
       // written to native Asana task fields (due_on / notes) instead of custom fields.
-      let nativeDueOn: string | undefined = task.dueDate;
-      let nativeNotes: string | undefined = task.description;
+      //
+      // nativeDueOn resolution order:
+      //   1. A real source field explicitly mapped to due_on (nativeDueOnSourceId set, reads customFields)
+      //   2. The synthetic __due_date__ entry (nativeDueOnSourceId === '__due_date__', reads task.dueDate)
+      //   3. No mapping entry exists at all → fall back to task.dueDate (e.g. connectors without field lists)
+      //   4. A due_on mapping entry exists but is omitted → suppress entirely (nativeDueOn stays undefined)
+      let nativeDueOn: string | undefined = anyDueMapped ? undefined : task.dueDate;
       if (nativeDueOnSourceId) {
-        const v = task.customFields[nativeDueOnSourceId];
+        const v = nativeDueOnSourceId === '__due_date__'
+          ? task.dueDate
+          : (task.customFields[nativeDueOnSourceId] as string | null | undefined);
         if (typeof v === 'string' && v) nativeDueOn = v;
       }
+      let nativeNotes: string | undefined = task.description;
       if (nativeNotesSourceId) {
         const v = task.customFields[nativeNotesSourceId];
         if (typeof v === 'string' && v) nativeNotes = v;
@@ -735,7 +745,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap, skipAttachments);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap, skipAttachments);
       }
 
       // Comments
@@ -792,6 +802,7 @@ export class AsanaDestination {
     sourceBoardId: string,
     sourceIdFieldGid: string | undefined,
     nativeDueOnSourceId: string | undefined,
+    anyDueMapped: boolean,
     nativeNotesSourceId: string | undefined,
     nativeAssigneeSourceId: string | undefined,
     assigneeOmitted: boolean,
@@ -820,8 +831,9 @@ export class AsanaDestination {
         const resolvedFieldId = subitemFieldIdRemap[sourceFieldId] ?? sourceFieldId;
         const destGid = fieldGidMap.get(resolvedFieldId);
         if (!destGid) {
-          // Field exists on the subitem board but has no entry in the field mapping — track it
-          if (value !== null && value !== '') {
+          // Field exists on the subitem board but has no entry in the field mapping — track it.
+          // Skip internal sentinel keys (e.g. __smartsheet_row__) — they are never in the mapping by design.
+          if (value !== null && value !== '' && !sourceFieldId.startsWith('__')) {
             const existing = report.skippedSubitemFields.find((s) => s.fieldId === sourceFieldId);
             if (existing) {
               existing.count++;
@@ -867,12 +879,14 @@ export class AsanaDestination {
 
       // Apply native field mappings — same logic as migrateTask.
       // Prefer the mapped source column; fall back to the normalised task field.
-      let nativeDueOn: string | undefined = subtask.dueDate;
-      let nativeNotes: string | undefined = subtask.description;
+      let nativeDueOn: string | undefined = anyDueMapped ? undefined : subtask.dueDate;
       if (nativeDueOnSourceId) {
-        const v = subtask.customFields[nativeDueOnSourceId];
+        const v = nativeDueOnSourceId === '__due_date__'
+          ? subtask.dueDate
+          : (subtask.customFields[nativeDueOnSourceId] as string | null | undefined);
         if (typeof v === 'string' && v) nativeDueOn = v;
       }
+      let nativeNotes: string | undefined = subtask.description;
       if (nativeNotesSourceId) {
         const v = subtask.customFields[nativeNotesSourceId];
         if (typeof v === 'string' && v) nativeNotes = v;
@@ -973,7 +987,7 @@ export class AsanaDestination {
 
       // Recurse into children — Asana supports nested subtasks at arbitrary depth.
       for (const child of subtask.subtasks) {
-        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments);
+        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments);
       }
     } catch (err) {
       const msg = (err as Error).message;

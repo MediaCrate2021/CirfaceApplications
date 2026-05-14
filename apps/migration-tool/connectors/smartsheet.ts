@@ -552,7 +552,6 @@ export class SmartsheetConnector implements SourceConnector {
           // Smartsheet date values are already YYYY-MM-DD strings
           const raw = cell.value != null ? String(cell.value) : null;
           customFields[fieldId] = raw;
-          if (raw && !dueDate) dueDate = raw;
           break;
         }
         case 'CHECKBOX': {

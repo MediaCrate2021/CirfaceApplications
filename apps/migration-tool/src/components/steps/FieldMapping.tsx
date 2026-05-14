@@ -383,6 +383,25 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
               omit: false,
             });
           }
+          // Inject synthetic Due Date row for connectors with a native due date field.
+          // Trello, Wrike, and Asana (source) set task.dueDate from a platform-level property
+          // that has no column in project.fields — without this entry the user cannot see or
+          // omit the due date migration.
+          const hasDueDateNative = ['trello', 'wrike', 'asana'].includes(state.sourcePlatform ?? '');
+          if (hasDueDateNative && !fieldEntries.some((e) => e.destNativeField === 'due_on')) {
+            fieldEntries.unshift({
+              sourceFieldId: '__due_date__',
+              sourceFieldName: 'Due Date',
+              sourceFieldType: 'date',
+              destFieldId: null,
+              destFieldName: null,
+              destFieldType: null,
+              destNativeField: 'due_on',
+              isOrgWide: false,
+              confidence: 'exact',
+              omit: false,
+            });
+          }
           setMapping(fieldEntries);
         }
         setSectionMapping(sections.map((s) => ({
