@@ -88,6 +88,7 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
         destProjectName: state.selectedDestProjectName ?? '',
         destTeamGid: state.selectedDestTeamGid ?? undefined,
         isNewProject: state.isNewDestProject,
+        skipAttachments: state.skipAttachments,
       }),
     }).then(async (res) => {
       if (res.status === 409) {

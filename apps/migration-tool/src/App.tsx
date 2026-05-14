@@ -134,6 +134,9 @@ export interface AppState {
   sectionMapping: SectionMappingEntry[];
   externalIdDestFieldGid: string | null;
 
+  // Migration options
+  skipAttachments: boolean;
+
   // Analyze mode — multi-project selection
   analyzeProjectIds: Array<{ id: string; name: string }>;
 
@@ -153,6 +156,7 @@ type Action =
   | { type: 'SET_USER_MAPPING'; mapping: UserMappingEntry[] }
   | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean; ownerGid: string | null; ownerName: string | null; destWorkspaceGid: string; destWorkspaceName: string }
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[]; externalIdDestFieldGid: string | null }
+  | { type: 'SET_SKIP_ATTACHMENTS'; skip: boolean }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
   | { type: 'RELOAD_MAPPING' }
@@ -202,6 +206,8 @@ function reducer(state: AppState, action: Action): AppState {
       };
     case 'SET_FIELD_MAPPING':
       return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping, externalIdDestFieldGid: action.externalIdDestFieldGid };
+    case 'SET_SKIP_ATTACHMENTS':
+      return { ...state, skipAttachments: action.skip };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RELOAD_MAPPING':
@@ -267,6 +273,7 @@ const initialState: AppState = {
   fieldMapping: [],
   sectionMapping: [],
   externalIdDestFieldGid: null,
+  skipAttachments: false,
   analyzeProjectIds: [],
   lastReport: null,
   analysisReport: null,
@@ -411,6 +418,7 @@ export default function App() {
                 fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
                 dispatch({ type: 'RELOAD_MAPPING' });
               }}
+              onSkipAttachmentsChange={(skip) => dispatch({ type: 'SET_SKIP_ATTACHMENTS', skip })}
             />
           )}
           {state.step === 'running' && (

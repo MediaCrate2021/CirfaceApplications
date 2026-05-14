@@ -75,6 +75,8 @@ export interface WriteOptions {
   subitemFieldIdRemap?: Record<string, string>;
   /** Pre-migration item counts from the source project, included in the report for comparison. */
   sourceCount?: MigrationReport['sourceCount'];
+  /** When true, attachment download/upload is skipped entirely. URLs are not posted as fallback comments either. */
+  skipAttachments?: boolean;
 }
 
 export interface ProgressEvent {
@@ -253,6 +255,7 @@ export class AsanaDestination {
       failedAttachments: [],
       log: [],
       sourceCount: options.sourceCount,
+      attachmentsSkipped: options.skipAttachments === true,
     };
 
     const emit = options.onProgress ?? (() => {});
@@ -452,7 +455,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap, options.skipAttachments);
       report.items.push(item);
 
       const processed = i + 1;
@@ -596,6 +599,7 @@ export class AsanaDestination {
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
     authenticateAttachmentUrl?: (url: string) => string,
     fieldDisplayMap?: Map<string, string>,
+    skipAttachments?: boolean,
   ): Promise<MigrationReportItem> {
     // For Smartsheet tasks, include the row number in error/warning report entries so the
     // source row is easy to locate. The actual task.name (Asana task name) is unchanged.
@@ -731,7 +735,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap, skipAttachments);
       }
 
       // Comments
@@ -750,20 +754,22 @@ export class AsanaDestination {
 
       // Attachments — download from source and re-upload to Asana.
       // Falls back to posting the URL as a comment if the download or upload fails.
-      for (const attachment of task.attachments) {
-        try {
-          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
-          report.migratedAttachments++;
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          logger.warn({ err, attachmentId: attachment.id, reason }, 'attachment transfer failed, falling back to URL comment');
-          report.failedAttachments.push({ taskId: task.id, taskName: taskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
-          warn(task.id, taskReportName, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
+      if (!skipAttachments) {
+        for (const attachment of task.attachments) {
           try {
-            await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: this.attachmentFailureComment(attachment, reason),
-            });
-          } catch { /* ignore story failure */ }
+            await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
+            report.migratedAttachments++;
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.warn({ err, attachmentId: attachment.id, reason }, 'attachment transfer failed, falling back to URL comment');
+            report.failedAttachments.push({ taskId: task.id, taskName: taskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
+            warn(task.id, taskReportName, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
+            try {
+              await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
+                text: this.attachmentFailureComment(attachment, reason),
+              });
+            } catch { /* ignore story failure */ }
+          }
         }
       }
 
@@ -800,6 +806,7 @@ export class AsanaDestination {
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
     authenticateAttachmentUrl?: (url: string) => string,
     fieldDisplayMap?: Map<string, string>,
+    skipAttachments?: boolean,
   ): Promise<void> {
     // For Smartsheet subtasks, include the row number in error/warning report entries.
     const ssRow = subtask.customFields['__smartsheet_row__'];
@@ -945,26 +952,28 @@ export class AsanaDestination {
         }
       }
 
-      for (const attachment of subtask.attachments) {
-        try {
-          await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
-          report.migratedAttachments++;
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          logger.warn({ err, attachmentId: attachment.id, reason }, 'subtask attachment transfer failed, falling back to URL comment');
-          report.failedAttachments.push({ taskId: subtask.id, taskName: subtaskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
-          warn(subtask.id, subtaskReportName, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
+      if (!skipAttachments) {
+        for (const attachment of subtask.attachments) {
           try {
-            await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-              text: this.attachmentFailureComment(attachment, reason),
-            });
-          } catch { /* ignore story failure */ }
+            await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
+            report.migratedAttachments++;
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.warn({ err, attachmentId: attachment.id, reason }, 'subtask attachment transfer failed, falling back to URL comment');
+            report.failedAttachments.push({ taskId: subtask.id, taskName: subtaskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
+            warn(subtask.id, subtaskReportName, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
+            try {
+              await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
+                text: this.attachmentFailureComment(attachment, reason),
+              });
+            } catch { /* ignore story failure */ }
+          }
         }
       }
 
       // Recurse into children — Asana supports nested subtasks at arbitrary depth.
       for (const child of subtask.subtasks) {
-        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap);
+        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments);
       }
     } catch (err) {
       const msg = (err as Error).message;
@@ -1338,7 +1347,7 @@ export class AsanaDestination {
       `Tasks migrated:       ${report.migratedTasks} / ${report.totalTasks}`,
       `Subtasks migrated:    ${report.migratedSubtasks}`,
       `Comments migrated:    ${report.migratedComments}${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`,
-      `Attachments transferred:   ${report.migratedAttachments}`,
+      `Attachments transferred:   ${report.attachmentsSkipped ? 'skipped by user' : report.migratedAttachments}`,
       `Dependencies wired:   ${report.migratedDependencies}`,
       `Warnings:             ${report.warnings}`,
       `Errors:               ${report.errors}`,
@@ -1349,7 +1358,7 @@ export class AsanaDestination {
         `  Tasks:        ${report.sourceCount.tasks} source → ${report.migratedTasks} migrated`,
         `  Subtasks:     ${report.sourceCount.subtasks} source → ${report.migratedSubtasks} migrated`,
         `  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`,
-        `  Attachments:  ${report.sourceCount.attachments} source → ${report.migratedAttachments} migrated`,
+        `  Attachments:  ${report.sourceCount.attachments} source → ${report.attachmentsSkipped ? 'skipped by user' : `${report.migratedAttachments} migrated`}`,
         `  Dependencies: ${report.sourceCount.dependencies} source → ${report.migratedDependencies} migrated`,
       ] : []),
       ``,
@@ -1374,7 +1383,7 @@ export class AsanaDestination {
     lines.push(`Tasks migrated:     ${report.migratedTasks} / ${report.totalTasks}`);
     lines.push(`Subtasks migrated:  ${report.migratedSubtasks}`);
     lines.push(`Comments migrated:  ${report.migratedComments}${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`);
-    lines.push(`Attachments transferred: ${report.migratedAttachments}`);
+    lines.push(`Attachments transferred: ${report.attachmentsSkipped ? 'skipped by user' : report.migratedAttachments}`);
     lines.push(`Dependencies wired: ${report.migratedDependencies}`);
     lines.push(`Warnings:           ${report.warnings}`);
     lines.push(`Errors:             ${report.errors}`);
@@ -1386,7 +1395,7 @@ export class AsanaDestination {
       lines.push(`  Tasks:        ${report.sourceCount.tasks} source → ${report.migratedTasks} migrated`);
       lines.push(`  Subtasks:     ${report.sourceCount.subtasks} source → ${report.migratedSubtasks} migrated`);
       lines.push(`  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`);
-      lines.push(`  Attachments:  ${report.sourceCount.attachments} source → ${report.migratedAttachments} migrated`);
+      lines.push(`  Attachments:  ${report.sourceCount.attachments} source → ${report.attachmentsSkipped ? 'skipped by user' : `${report.migratedAttachments} migrated`}`);
       lines.push(`  Dependencies: ${report.sourceCount.dependencies} source → ${report.migratedDependencies} migrated`);
     }
 

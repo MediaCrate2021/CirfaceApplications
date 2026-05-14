@@ -78,25 +78,28 @@ export default function Report({ report, onRunAnother }: Props) {
               {(() => {
                 const failedCount = report.failedAttachments?.length ?? 0;
                 const failedComments = report.failedComments || 0;
-                const rows: [string, number, number, number?][] = [
+                const rows: [string, number, number, number?, boolean?][] = [
                   ['Tasks',       report.sourceCount.tasks,        report.migratedTasks],
                   ['Subtasks',    report.sourceCount.subtasks,     report.migratedSubtasks],
                   ['Comments',    report.sourceCount.comments,     report.migratedComments, failedComments || undefined],
-                  ['Attachments', report.sourceCount.attachments,  report.migratedAttachments, failedCount],
+                  ['Attachments', report.sourceCount.attachments,  report.migratedAttachments, failedCount, report.attachmentsSkipped],
                   ['Dependencies',report.sourceCount.dependencies, report.migratedDependencies],
                 ];
-                return rows.map(([label, source, migrated, failed]) => {
+                return rows.map(([label, source, migrated, failed, skipped]) => {
                   const accounted = migrated + (failed ?? 0);
                   const delta = accounted - source;
-                  const migratedCell = failed != null && failed > 0
+                  const migratedCell = skipped
+                    ? <span className="muted-text">skipped</span>
+                    : failed != null && failed > 0
                     ? `${migrated} (+${failed} failed)`
                     : migrated;
+                  const deltaCell = skipped ? '—' : delta === 0 ? '✓' : delta > 0 ? `+${delta}` : delta;
                   return (
-                    <tr key={label} className={delta < 0 ? 'row-warning' : ''}>
+                    <tr key={label} className={!skipped && delta < 0 ? 'row-warning' : ''}>
                       <td>{label}</td>
                       <td>{source}</td>
                       <td>{migratedCell}</td>
-                      <td>{delta === 0 ? '✓' : delta > 0 ? `+${delta}` : delta}</td>
+                      <td>{deltaCell}</td>
                     </tr>
                   );
                 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { AppState } from '../../App.tsx';
 
 interface ProjectSummary {
@@ -20,9 +20,10 @@ interface Props {
   onConfirm: () => void;
   onBack: () => void;
   onReloadMapping: () => void;
+  onSkipAttachmentsChange: (skip: boolean) => void;
 }
 
-export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMapping }: Props) {
+export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMapping, onSkipAttachmentsChange }: Props) {
   const unmappedUsers = state.userMapping.filter((m) => !m.destId).length;
   const activeFields = state.fieldMapping.filter((f) => !f.omit);
   const mappedFields = activeFields.filter((f) => f.destFieldId || f.destNativeField).length;
@@ -112,7 +113,21 @@ export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMappin
               <ReviewRow label="Subtasks" value={String(summary.subtasks)} />
               <ReviewRow label="Dependencies" value={String(summary.dependencies)} />
               <ReviewRow label="Comments" value={String(summary.comments)} />
-              <ReviewRow label="Attachments" value={String(summary.attachments)} />
+              <ReviewRow
+                label="Attachments"
+                value={state.skipAttachments ? `${summary.attachments} (will be skipped)` : String(summary.attachments)}
+                muted={state.skipAttachments}
+                action={
+                  <label className="skip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={state.skipAttachments}
+                      onChange={(e) => onSkipAttachmentsChange(e.target.checked)}
+                    />
+                    Skip attachments
+                  </label>
+                }
+              />
             </>
           ) : (
             <ReviewRow label="Tasks" value="Could not load counts" />
@@ -165,11 +180,14 @@ function ReviewSection({ title, children, full }: { title: string; children: Rea
   );
 }
 
-function ReviewRow({ label, value, warning }: { label: string; value: string; warning?: boolean }) {
+function ReviewRow({ label, value, warning, muted, action }: { label: string; value: string; warning?: boolean; muted?: boolean; action?: React.ReactNode }) {
   return (
     <>
       <dt>{label}</dt>
-      <dd className={warning ? 'warning-text' : ''}>{value}</dd>
+      <dd className={warning ? 'warning-text' : muted ? 'muted-text' : ''}>
+        {value}
+        {action && <span className="review-row-action">{action}</span>}
+      </dd>
     </>
   );
 }
