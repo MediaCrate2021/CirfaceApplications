@@ -1447,7 +1447,9 @@ export class AsanaDestination {
 
   /** Download a file from the source URL and upload it as a native Asana attachment.
    *  Retries up to 3 times with exponential backoff on transient network errors (ECONNRESET, etc.).
-   *  On a 403, attempts a one-time URL refresh via refreshAttachmentUrl before giving up. */
+   *  Sentinel URLs (non-http scheme, e.g. "smartsheet-attachment:{id}", "wrike-attachment:{id}") are
+   *  resolved via refreshAttachmentUrl before the first download attempt. On a 403, a second refresh
+   *  is attempted in case the freshly resolved URL also expired mid-flight. */
   private async downloadAndAttach(
     taskGid: string,
     attachment: NormalisedAttachment,
@@ -1456,18 +1458,28 @@ export class AsanaDestination {
   ): Promise<void> {
     const MAX_ATTEMPTS = 3;
     let lastErr: unknown;
-    let currentUrl = authenticateAttachmentUrl
-      ? authenticateAttachmentUrl(attachment.url)
-      : attachment.url;
+    let rawUrl = attachment.url;
+
+    // Sentinel URLs are placeholders set by connectors whose download URLs expire quickly
+    // (Smartsheet ~30s, Wrike). Resolve to a real URL immediately before downloading so
+    // the URL is guaranteed fresh rather than stale from when the project was fetched.
+    if (!rawUrl.startsWith('http') && refreshAttachmentUrl) {
+      const freshUrl = await refreshAttachmentUrl(attachment.id);
+      if (!freshUrl) throw new Error(`Could not resolve download URL for attachment: ${attachment.name}`);
+      rawUrl = freshUrl;
+      logger.info({ attachmentId: attachment.id }, 'resolved sentinel attachment URL');
+    }
+
+    let currentUrl = authenticateAttachmentUrl ? authenticateAttachmentUrl(rawUrl) : rawUrl;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         const dlRes = await fetch(currentUrl, { signal: AbortSignal.timeout(30_000) });
         if (dlRes.status === 403 && refreshAttachmentUrl && attempt === 1) {
-          // Pre-signed URL likely expired — fetch a fresh one and retry immediately
+          // URL expired between resolution and download — fetch another fresh one and retry
           const freshUrl = await refreshAttachmentUrl(attachment.id);
           if (freshUrl) {
-            currentUrl = freshUrl;
-            logger.info({ attachmentId: attachment.id }, 'refreshed expired attachment URL, retrying');
+            currentUrl = authenticateAttachmentUrl ? authenticateAttachmentUrl(freshUrl) : freshUrl;
+            logger.info({ attachmentId: attachment.id }, 'refreshed expired attachment URL on 403, retrying');
             continue;
           }
         }

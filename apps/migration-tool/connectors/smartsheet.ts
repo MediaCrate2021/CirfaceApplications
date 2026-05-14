@@ -340,29 +340,17 @@ export class SmartsheetConnector implements SourceConnector {
     for (const a of allAttachments) byParentType[a.parentType] = (byParentType[a.parentType] ?? 0) + 1;
     logger.info({ sheetId, total: allAttachments.length, byParentType, fileCount: fileAttachments.length }, 'Smartsheet: attachments fetched');
 
-    // Resolve download URLs in parallel (capped to avoid hammering the API)
-    const CONCURRENCY = 5;
-    const resolvedAttachments: SmAttachment[] = [];
-    for (let i = 0; i < fileAttachments.length; i += CONCURRENCY) {
-      const batch = fileAttachments.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(
-        batch.map(async (att) => {
-          try {
-            const detail = await this.get<SmAttachment>(`/sheets/${sheetId}/attachments/${att.id}`);
-            return { ...att, url: detail.url, mimeType: detail.mimeType ?? att.mimeType };
-          } catch (err) {
-            logger.warn({ attachmentId: att.id, err }, 'Smartsheet: failed to resolve attachment URL, skipping');
-            return null;
-          }
-        }),
-      );
-      for (const r of results) {
-        if (r) resolvedAttachments.push(r);
-      }
-    }
+    // Store a sentinel URL instead of resolving the pre-signed download URL now.
+    // Smartsheet pre-signed URLs expire in ~30 seconds — far too short to survive until the
+    // migration engine reaches each attachment. The real URL is fetched on demand via
+    // refreshAttachmentUrl() at download time, guaranteeing a fresh URL for every transfer.
+    const resolvedAttachments: SmAttachment[] = fileAttachments.map((att) => ({
+      ...att,
+      url: `smartsheet-attachment:${att.id}`,
+    }));
     logger.info(
-      { sheetId, total: allAttachments.length, resolved: resolvedAttachments.length },
-      'Smartsheet: attachments loaded',
+      { sheetId, fileCount: fileAttachments.length },
+      'Smartsheet: attachments registered with sentinel URLs (resolved at download time)',
     );
 
     // Phase 3: all discussions with inline comments
