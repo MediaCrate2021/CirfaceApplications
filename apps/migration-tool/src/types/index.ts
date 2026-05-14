@@ -222,6 +222,7 @@ export interface MigrationReport {
   migratedTasks: number;
   migratedSubtasks: number;
   migratedComments: number;
+  failedComments: number;
   migratedAttachments: number;
   migratedDependencies: number;
   log: Array<{ time: string; message: string }>; // timestamped activity log

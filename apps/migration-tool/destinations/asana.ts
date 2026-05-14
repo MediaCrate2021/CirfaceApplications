@@ -23,7 +23,6 @@ import type {
   NormalisedAttachment,
   NormalisedProject,
   NormalisedTask,
-  ProjectAnalysis,
   SectionMappingEntry,
   UserMappingEntry,
 } from '../src/types/index.js';
@@ -244,6 +243,7 @@ export class AsanaDestination {
       migratedTasks: 0,
       migratedSubtasks: 0,
       migratedComments: 0,
+      failedComments: 0,
       migratedAttachments: 0,
       migratedDependencies: 0,
       warnings: 0,
@@ -471,11 +471,13 @@ export class AsanaDestination {
     const wireDependencies = async (task: NormalisedTask): Promise<void> => {
       if (task.dependencyIds.length) {
         const taskGid = taskGidMap.get(task.id);
+        const ssRow = task.customFields['__smartsheet_row__'];
+        const depReportName = ssRow ? `${task.name} [Row ${ssRow}]` : task.name;
         if (taskGid) {
           for (const depId of task.dependencyIds) {
             const depGid = taskGidMap.get(depId);
             if (!depGid) {
-              warn(task.id, task.name, `Dependency target (source ID: ${depId}) was not migrated — skipped`);
+              warn(task.id, depReportName, `Dependency target (source ID: ${depId}) was not migrated — skipped`);
               if (taskGid) {
                 try {
                   await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
@@ -490,7 +492,7 @@ export class AsanaDestination {
               await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/addDependencies`, { dependencies: [depGid] });
               report.migratedDependencies++;
             } catch (err) {
-              warn(task.id, task.name, `Failed to add dependency: ${(err as Error).message}`);
+              warn(task.id, depReportName, `Failed to add dependency: ${(err as Error).message}`);
             }
           }
         }
@@ -595,6 +597,11 @@ export class AsanaDestination {
     authenticateAttachmentUrl?: (url: string) => string,
     fieldDisplayMap?: Map<string, string>,
   ): Promise<MigrationReportItem> {
+    // For Smartsheet tasks, include the row number in error/warning report entries so the
+    // source row is easy to locate. The actual task.name (Asana task name) is unchanged.
+    const ssRow = task.customFields['__smartsheet_row__'];
+    const taskReportName = ssRow ? `${task.name} [Row ${ssRow}]` : task.name;
+
     try {
       const customFields: Record<string, unknown> = {};
       for (const [sourceFieldId, value] of Object.entries(task.customFields)) {
@@ -714,7 +721,7 @@ export class AsanaDestination {
               });
             } catch { /* ignore story failure */ }
           }
-          warn(task.id, task.name, `Custom fields dropped due to creation error: ${msg}`);
+          warn(task.id, taskReportName, `Custom fields dropped due to creation error: ${msg}`);
         } else {
           throw err;
         }
@@ -736,7 +743,8 @@ export class AsanaDestination {
           });
           report.migratedComments++;
         } catch (err) {
-          warn(task.id, task.name, `Failed to migrate comment (id: ${comment.id}): ${(err as Error).message}`);
+          report.failedComments++;
+          warn(task.id, taskReportName, `Failed to migrate comment (id: ${comment.id}): ${(err as Error).message}`);
         }
       }
 
@@ -749,8 +757,8 @@ export class AsanaDestination {
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
           logger.warn({ err, attachmentId: attachment.id, reason }, 'attachment transfer failed, falling back to URL comment');
-          report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
-          warn(task.id, task.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
+          report.failedAttachments.push({ taskId: task.id, taskName: taskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
+          warn(task.id, taskReportName, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
               text: this.attachmentFailureComment(attachment, reason),
@@ -759,15 +767,15 @@ export class AsanaDestination {
         }
       }
 
-      return { taskId: task.id, taskName: task.name, status: 'success' };
+      return { taskId: task.id, taskName: taskReportName, status: 'success' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ err, taskId: task.id }, 'failed to migrate task');
       report.errors++;
       for (const attachment of this.collectAttachments(task)) {
-        report.failedAttachments.push({ taskId: task.id, taskName: task.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason: `Task failed to migrate: ${msg}` });
+        report.failedAttachments.push({ taskId: task.id, taskName: taskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason: `Task failed to migrate: ${msg}` });
       }
-      return { taskId: task.id, taskName: task.name, status: 'error', message: msg };
+      return { taskId: task.id, taskName: taskReportName, status: 'error', message: msg };
     }
   }
 
@@ -793,6 +801,10 @@ export class AsanaDestination {
     authenticateAttachmentUrl?: (url: string) => string,
     fieldDisplayMap?: Map<string, string>,
   ): Promise<void> {
+    // For Smartsheet subtasks, include the row number in error/warning report entries.
+    const ssRow = subtask.customFields['__smartsheet_row__'];
+    const subtaskReportName = ssRow ? `${subtask.name} [Row ${ssRow}]` : subtask.name;
+
     try {
       const customFields: Record<string, unknown> = {};
 
@@ -912,7 +924,7 @@ export class AsanaDestination {
               });
             } catch { /* ignore */ }
           }
-          warn(subtask.id, subtask.name, `Custom fields dropped due to creation error: ${msg}`);
+          warn(subtask.id, subtaskReportName, `Custom fields dropped due to creation error: ${msg}`);
         } else {
           throw err;
         }
@@ -928,7 +940,8 @@ export class AsanaDestination {
           });
           report.migratedComments++;
         } catch (err) {
-          warn(subtask.id, subtask.name, `Failed to migrate comment (id: ${comment.id}): ${(err as Error).message}`);
+          report.failedComments++;
+          warn(subtask.id, subtaskReportName, `Failed to migrate comment (id: ${comment.id}): ${(err as Error).message}`);
         }
       }
 
@@ -939,8 +952,8 @@ export class AsanaDestination {
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
           logger.warn({ err, attachmentId: attachment.id, reason }, 'subtask attachment transfer failed, falling back to URL comment');
-          report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
-          warn(subtask.id, subtask.name, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
+          report.failedAttachments.push({ taskId: subtask.id, taskName: subtaskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason });
+          warn(subtask.id, subtaskReportName, `Attachment '${attachment.name}' could not be transferred: ${reason}`);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
               text: this.attachmentFailureComment(attachment, reason),
@@ -955,9 +968,9 @@ export class AsanaDestination {
       }
     } catch (err) {
       const msg = (err as Error).message;
-      warn(subtask.id, subtask.name, `Failed to migrate subtask: ${msg}`);
+      warn(subtask.id, subtaskReportName, `Failed to migrate subtask: ${msg}`);
       for (const attachment of this.collectAttachments(subtask)) {
-        report.failedAttachments.push({ taskId: subtask.id, taskName: subtask.name, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason: `Subtask failed to migrate: ${msg}` });
+        report.failedAttachments.push({ taskId: subtask.id, taskName: subtaskReportName, attachmentId: attachment.id, attachmentName: attachment.name, url: attachment.url, boardId: sourceBoardId, reason: `Subtask failed to migrate: ${msg}` });
       }
     }
   }
@@ -1324,7 +1337,7 @@ export class AsanaDestination {
       ``,
       `Tasks migrated:       ${report.migratedTasks} / ${report.totalTasks}`,
       `Subtasks migrated:    ${report.migratedSubtasks}`,
-      `Comments migrated:    ${report.migratedComments}`,
+      `Comments migrated:    ${report.migratedComments}${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`,
       `Attachments transferred:   ${report.migratedAttachments}`,
       `Dependencies wired:   ${report.migratedDependencies}`,
       `Warnings:             ${report.warnings}`,
@@ -1335,7 +1348,7 @@ export class AsanaDestination {
         `Source vs Migrated:`,
         `  Tasks:        ${report.sourceCount.tasks} source → ${report.migratedTasks} migrated`,
         `  Subtasks:     ${report.sourceCount.subtasks} source → ${report.migratedSubtasks} migrated`,
-        `  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated`,
+        `  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`,
         `  Attachments:  ${report.sourceCount.attachments} source → ${report.migratedAttachments} migrated`,
         `  Dependencies: ${report.sourceCount.dependencies} source → ${report.migratedDependencies} migrated`,
       ] : []),
@@ -1360,7 +1373,7 @@ export class AsanaDestination {
     lines.push('');
     lines.push(`Tasks migrated:     ${report.migratedTasks} / ${report.totalTasks}`);
     lines.push(`Subtasks migrated:  ${report.migratedSubtasks}`);
-    lines.push(`Comments migrated:  ${report.migratedComments}`);
+    lines.push(`Comments migrated:  ${report.migratedComments}${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`);
     lines.push(`Attachments transferred: ${report.migratedAttachments}`);
     lines.push(`Dependencies wired: ${report.migratedDependencies}`);
     lines.push(`Warnings:           ${report.warnings}`);
@@ -1372,7 +1385,7 @@ export class AsanaDestination {
       lines.push('Source vs Migrated:');
       lines.push(`  Tasks:        ${report.sourceCount.tasks} source → ${report.migratedTasks} migrated`);
       lines.push(`  Subtasks:     ${report.sourceCount.subtasks} source → ${report.migratedSubtasks} migrated`);
-      lines.push(`  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated`);
+      lines.push(`  Comments:     ${report.sourceCount.comments} source → ${report.migratedComments} migrated${report.failedComments ? ` (+${report.failedComments} failed)` : ''}`);
       lines.push(`  Attachments:  ${report.sourceCount.attachments} source → ${report.migratedAttachments} migrated`);
       lines.push(`  Dependencies: ${report.sourceCount.dependencies} source → ${report.migratedDependencies} migrated`);
     }

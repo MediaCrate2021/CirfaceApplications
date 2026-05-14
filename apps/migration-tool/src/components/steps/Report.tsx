@@ -77,10 +77,11 @@ export default function Report({ report, onRunAnother }: Props) {
             <tbody>
               {(() => {
                 const failedCount = report.failedAttachments?.length ?? 0;
+                const failedComments = report.failedComments || 0;
                 const rows: [string, number, number, number?][] = [
                   ['Tasks',       report.sourceCount.tasks,        report.migratedTasks],
                   ['Subtasks',    report.sourceCount.subtasks,     report.migratedSubtasks],
-                  ['Comments',    report.sourceCount.comments,     report.migratedComments],
+                  ['Comments',    report.sourceCount.comments,     report.migratedComments, failedComments || undefined],
                   ['Attachments', report.sourceCount.attachments,  report.migratedAttachments, failedCount],
                   ['Dependencies',report.sourceCount.dependencies, report.migratedDependencies],
                 ];
