@@ -504,7 +504,7 @@ export class SmartsheetConnector implements SourceConnector {
 
     const customFields: Record<string, string | string[] | null> = {};
     const dependencyIds: string[] = [];
-    let name = `Row ${row.id}`;
+    let name = `Row ${row.rowNumber ?? row.id} (${row.id})`;
     let assigneeId: string | undefined;
     let dueDate: string | undefined;
 
