@@ -275,6 +275,17 @@ export class AsanaDestination {
 
     const sourcePlatform = options.sourcePlatform ?? 'source';
 
+    // Surface any warnings collected during the fetch/normalisation phase
+    // (e.g. attachments that couldn't be routed to a row) so they appear in the report.
+    if (project.fetchWarnings?.length) {
+      for (const fw of project.fetchWarnings) {
+        report.warnings++;
+        report.items.push(fw);
+        logger.warn({ taskId: fw.taskId, taskName: fw.taskName }, fw.message ?? 'Fetch-phase warning');
+      }
+      log(`${project.fetchWarnings.length} issue(s) detected during source data fetch — see report for details.`, 'warning');
+    }
+
     log('Migration job started.');
     log(`Starting Migration for '${project.name}' from ${sourcePlatform} to Asana.`);
 

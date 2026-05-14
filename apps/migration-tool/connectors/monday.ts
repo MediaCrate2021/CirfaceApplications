@@ -17,6 +17,7 @@
 import type { SourceConnector } from './base.js';
 import logger from '../logger.js';
 import type {
+  MigrationReportItem,
   NormalisedAttachment,
   NormalisedComment,
   NormalisedField,
@@ -246,7 +247,6 @@ export class MondayConnector implements SourceConnector {
     const board = data.boards[0];
     if (!board) throw new Error(`Board ${boardId} not found`);
 
-    const fields = this.normaliseColumns(board.columns);
     const sections: NormalisedSection[] = (board.groups ?? []).map((g) => ({ id: g.id, name: g.title }));
     const usersMap = new Map<string, NormalisedUser>();
 
@@ -281,6 +281,7 @@ export class MondayConnector implements SourceConnector {
     // root items(ids:[...]) endpoint does NOT return subitem-board items — only
     // top-level board items. Full column_values/updates/assets are fetched here
     // so subitems are never passed to fetchItemsByIds.
+    const fetchWarnings: MigrationReportItem[] = [];
     const subitemMap = new Map<string, MondaySubitem>();
     const subBoardId = this.parseSubBoardId(board.columns);
     if (subBoardId) {
@@ -298,6 +299,11 @@ export class MondayConnector implements SourceConnector {
       }
       const nullParentCount = allSubitemData.length - subitemMap.size;
       logger.info({ boardId, subBoardId, subitemTotal: allSubitemData.length, subitemMapped: subitemMap.size, nullParentCount }, 'Phase 1b: fetched all subitem data from sub-board');
+      if (nullParentCount > 0) {
+        const msg = `${nullParentCount} subitem(s) could not be linked to a parent task — their parent_item field was null even after a fallback retry. These subtasks were skipped.`;
+        logger.warn({ boardId, subBoardId, nullParentCount }, msg);
+        fetchWarnings.push({ taskId: 'fetch-phase', taskName: 'Subitems', status: 'warning', message: msg });
+      }
     }
 
     // Phase 2: fetch column values and item-level assets for PARENT items.
@@ -327,16 +333,17 @@ export class MondayConnector implements SourceConnector {
       logger.info({ boardId, totalUpdates }, 'Phase 3: updates complete');
     }
 
-    const tasks = this.normaliseBoardItems(allItems, board.columns, usersMap, subitemMap);
+    const tasks = this.normaliseBoardItems(allItems, board.columns, usersMap, subitemMap, fetchWarnings);
 
     return {
       id: board.id,
       name: board.name,
       description: board.description ?? undefined,
       tasks,
-      fields,
+      fields: this.normaliseColumns(board.columns, fetchWarnings),
       sections,
       users: Array.from(usersMap.values()),
+      fetchWarnings: fetchWarnings.length > 0 ? fetchWarnings : undefined,
     };
   }
 
@@ -523,7 +530,7 @@ export class MondayConnector implements SourceConnector {
     return results;
   }
 
-  private normaliseColumns(columns: MondayColumn[]): NormalisedField[] {
+  private normaliseColumns(columns: MondayColumn[], fetchWarnings?: MigrationReportItem[]): NormalisedField[] {
     return columns
       // Exclude purely structural columns that have no data value at all.
       .filter((c) => !['name', 'subitems', 'subtasks', 'board_relation', 'file'].includes(c.type))
@@ -569,7 +576,9 @@ export class MondayConnector implements SourceConnector {
               }));
             }
           } catch (err) {
-            logger.warn({ err, columnId: c.id, columnTitle: c.title }, 'failed to parse Monday column settings_str — field will have no options');
+            const msg = `Field '${c.title}' (id: ${c.id}) — failed to parse dropdown options. The field will be migrated without its option list.`;
+            logger.warn({ err, columnId: c.id, columnTitle: c.title }, msg);
+            fetchWarnings?.push({ taskId: 'fetch-phase', taskName: `Field: ${c.title}`, status: 'warning', message: msg });
           }
         }
 
@@ -602,6 +611,7 @@ export class MondayConnector implements SourceConnector {
     columns: MondayColumn[],
     usersMap: Map<string, NormalisedUser>,
     subitemMap: Map<string, MondaySubitem>,
+    fetchWarnings: MigrationReportItem[],
   ): NormalisedTask[] {
     return items.map((item) => {
       const customFields: Record<string, string | string[] | null> = {};
@@ -633,7 +643,9 @@ export class MondayConnector implements SourceConnector {
                   dependencyIds.push(String(link.linkedPulseId));
                 }
               } catch {
-                logger.warn({ itemId: item.id, colId: cv.id, value: cv.value }, 'failed to parse monday dependency value');
+                const msg = `Task '${item.name}' (id: ${item.id}) — failed to parse dependency links on column ${cv.id}. Dependencies from this column were skipped.`;
+                logger.warn({ itemId: item.id, colId: cv.id, value: cv.value }, msg);
+                fetchWarnings.push({ taskId: item.id, taskName: item.name, status: 'warning', message: msg });
               }
             }
           }
@@ -692,7 +704,9 @@ export class MondayConnector implements SourceConnector {
         if (full) {
           subtasks.push(this.normaliseSubitem(full, item.id, usersMap));
         } else {
-          logger.warn({ itemId: item.id, subitemId: ref.id }, 'normaliseBoardItems: subitem not found in subitemMap — skipping');
+          const msg = `Task '${item.name}' (id: ${item.id}) — subitem ${ref.id} was referenced but not found in the fetched subitem data. This subtask was skipped.`;
+          logger.warn({ itemId: item.id, subitemId: ref.id }, msg);
+          fetchWarnings.push({ taskId: item.id, taskName: item.name, status: 'warning', message: msg });
         }
       }
 

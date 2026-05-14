@@ -112,6 +112,8 @@ export interface NormalisedProject {
   fields: NormalisedField[];
   users: NormalisedUser[];
   sections: NormalisedSection[]; // board groups / Trello lists / etc.
+  /** Warnings collected during the fetch/normalisation phase, before migration begins. */
+  fetchWarnings?: MigrationReportItem[];
 }
 
 // ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@
 import type { SourceConnector } from './base.js';
 import logger from '../logger.js';
 import type {
+  MigrationReportItem,
   NormalisedAttachment,
   NormalisedComment,
   NormalisedField,
@@ -338,10 +339,17 @@ export class WrikeConnector implements SourceConnector {
     }));
     const sectionIdSet = new Set(sections.map((s) => s.id));
 
+    const fetchWarnings: MigrationReportItem[] = [];
+
     // Comments grouped by task ID
     const commentsByTask = new Map<string, WrikeComment[]>();
     for (const c of allComments) {
-      if (!c.taskId) continue;
+      if (!c.taskId) {
+        const msg = `Comment (id: ${c.id}) has no associated task ID and was skipped.`;
+        logger.warn({ commentId: c.id }, msg);
+        fetchWarnings.push({ taskId: 'fetch-phase', taskName: 'Orphaned comment', status: 'warning', message: msg });
+        continue;
+      }
       if (!commentsByTask.has(c.taskId)) commentsByTask.set(c.taskId, []);
       commentsByTask.get(c.taskId)!.push(c);
     }
@@ -349,7 +357,12 @@ export class WrikeConnector implements SourceConnector {
     // Attachments grouped by task ID
     const attachmentsByTask = new Map<string, WrikeAttachment[]>();
     for (const a of allAttachments) {
-      if (!a.taskId) continue;
+      if (!a.taskId) {
+        const msg = `Attachment '${a.name}' (id: ${a.id}) has no associated task ID and was skipped.`;
+        logger.warn({ attachmentId: a.id, attachmentName: a.name }, msg);
+        fetchWarnings.push({ taskId: 'fetch-phase', taskName: 'Orphaned attachment', status: 'warning', message: msg });
+        continue;
+      }
       if (!attachmentsByTask.has(a.taskId)) attachmentsByTask.set(a.taskId, []);
       attachmentsByTask.get(a.taskId)!.push(a);
     }
@@ -415,7 +428,12 @@ export class WrikeConnector implements SourceConnector {
 
     for (const wt of wrikeTasks) {
       const task = taskMap.get(wt.id);
-      if (!task) continue;
+      if (!task) {
+        const msg = `Task '${wt.title}' (id: ${wt.id}) was present in the source list but missing from the task map during tree assembly — it was skipped.`;
+        logger.warn({ taskId: wt.id, taskTitle: wt.title }, msg);
+        fetchWarnings.push({ taskId: wt.id, taskName: wt.title, status: 'warning', message: msg });
+        continue;
+      }
       const parentTaskId = wt.superTaskIds?.[0];
       if (parentTaskId) {
         const parent = taskMap.get(parentTaskId);
@@ -434,6 +452,7 @@ export class WrikeConnector implements SourceConnector {
       fields: customFieldDefs.map((f) => this.normaliseField(f)),
       users: [...userMap.values()],
       sections,
+      fetchWarnings: fetchWarnings.length > 0 ? fetchWarnings : undefined,
     };
   }
 

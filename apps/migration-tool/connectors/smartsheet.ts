@@ -35,6 +35,7 @@
 import type { SourceConnector } from './base.js';
 import logger from '../logger.js';
 import type {
+  MigrationReportItem,
   NormalisedAttachment,
   NormalisedComment,
   NormalisedField,
@@ -319,6 +320,8 @@ export class SmartsheetConnector implements SourceConnector {
 
     logger.info({ sheetId, rows: sheet.rows.length }, 'Smartsheet: sheet loaded');
 
+    const fetchWarnings: MigrationReportItem[] = [];
+
     // Phase 2: all file attachments on rows OR comments (both parentType values).
     // Comment attachments need Phase 3 (discussions) to map commentId → rowId,
     // so URL resolution happens here but the attachmentsByRow map is built after Phase 3.
@@ -330,7 +333,9 @@ export class SmartsheetConnector implements SourceConnector {
     const allAttachments = [...new Map(allAttachmentsRaw.map((a) => [a.id, a])).values()];
     const dupeCount = allAttachmentsRaw.length - allAttachments.length;
     if (dupeCount > 0) {
-      logger.warn({ sheetId, dupeCount }, 'Smartsheet: deduplicated attachments list — duplicate IDs found');
+      const msg = `${dupeCount} duplicate attachment ID(s) were found in the sheet attachment list and removed. This can occur when attachments are added during the fetch. The deduplicated list was used.`;
+      logger.warn({ sheetId, dupeCount }, msg);
+      fetchWarnings.push({ taskId: 'fetch-phase', taskName: 'Attachments', status: 'warning', message: msg });
     }
 
     const fileAttachments = allAttachments.filter(
@@ -392,7 +397,9 @@ export class SmartsheetConnector implements SourceConnector {
         // COMMENT attachment — trace back to the row via the discussion map
         const rid = commentToRowId.get(att.parentId);
         if (rid == null) {
-          logger.warn({ attachmentId: att.id, commentId: att.parentId }, 'Smartsheet: comment attachment has no matching row, skipping');
+          const msg = `Attachment '${att.name}' (id: ${att.id}) on comment ${att.parentId} could not be routed to a row — comment may belong to a deleted row or sheet-level discussion. Attachment was skipped.`;
+          logger.warn({ attachmentId: att.id, commentId: att.parentId }, msg);
+          fetchWarnings.push({ taskId: String(att.parentId), taskName: `Comment ${att.parentId}`, status: 'warning', message: msg });
           continue;
         }
         rowId = rid;
@@ -457,6 +464,7 @@ export class SmartsheetConnector implements SourceConnector {
       fields: this.normaliseColumns(sheet.columns),
       users: Array.from(usersMap.values()),
       sections: [], // Smartsheet has no section/group concept
+      fetchWarnings: fetchWarnings.length > 0 ? fetchWarnings : undefined,
     };
   }
 
