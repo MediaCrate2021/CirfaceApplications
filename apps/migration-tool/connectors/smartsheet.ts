@@ -154,7 +154,7 @@ interface SmPaginated<T> {
 interface RowContext {
   columnMap: Map<number, SmColumn>;
   attachmentsByRow: Map<number, SmAttachment[]>;
-  discussionsByRow: Map<number, SmDiscussion[]>;
+  commentsByRow: Map<number, NormalisedComment[]>;
   childrenByParentId: Map<number, SmRow[]>;
   rowNumberToId: Map<number, number>; // rowNumber → internal row id
 }
@@ -368,76 +368,140 @@ export class SmartsheetConnector implements SourceConnector {
       'Smartsheet: attachments registered with sentinel URLs (resolved at download time)',
     );
 
-    // Phase 3: all discussions with inline comments.
-    // Deduplicate by ID for the same reason as attachments — paginated results can contain
-    // the same discussion on multiple pages if items are inserted between page fetches.
-    const allDiscussionsRaw = await this.getAllPages<SmDiscussion>(
-      `/sheets/${sheetId}/discussions`,
-      { include: 'comments' },
-    );
-    const allDiscussions = [...new Map(allDiscussionsRaw.map((d) => [d.id, d])).values()];
-    const discDupeCount = allDiscussionsRaw.length - allDiscussions.length;
-    logger.info(
-      { sheetId, fetched: allDiscussionsRaw.length, unique: allDiscussions.length, dupes: discDupeCount },
-      'Smartsheet: discussions loaded',
-    );
-    if (discDupeCount > 0) {
-      fetchWarnings.push({
-        taskId: 'fetch-phase',
-        taskName: 'Discussions',
-        status: 'warning',
-        message: `${discDupeCount} duplicate discussion(s) removed from the fetched list. This can occur when discussions are added during the fetch.`,
-      });
+    // Phase 3: discussions and comments.
+    //
+    // Step 3a — Fetch ALL discussions with inline comments in one call using includeAll=true.
+    // includeAll bypasses pagination entirely; include=comments embeds comment arrays per discussion.
+    // This avoids the pageNumber-ignored bug and the ~500-discussion cap of the paginated endpoint.
+    // If the API rejects includeAll on this endpoint, we fall back to the paginated approach.
+    let allDiscussions: SmDiscussion[] = [];
+    let usedIncludeAll = false;
+    try {
+      const res = await this.get<SmPaginated<SmDiscussion>>(
+        `/sheets/${sheetId}/discussions`,
+        { include: 'comments', includeAll: 'true' },
+        AbortSignal.timeout(120_000),
+      );
+      allDiscussions = res.data ?? [];
+      usedIncludeAll = true;
+      logger.info(
+        { sheetId, total: allDiscussions.length },
+        'Smartsheet: all discussions fetched via includeAll',
+      );
+    } catch (err) {
+      logger.warn({ err, sheetId }, 'Smartsheet: includeAll failed for discussions — falling back to paginated fetch');
     }
 
-    // For discussions where the inline comment array is shorter than commentCount, the
-    // list endpoint truncated the thread. Fetch the full comment list for those discussions.
-    const truncated = allDiscussions.filter(
-      (d) => d.commentCount != null && (d.comments?.length ?? 0) < d.commentCount,
-    );
-    if (truncated.length > 0) {
-      logger.info(
-        { sheetId, truncatedDiscussions: truncated.length },
-        'Smartsheet: fetching full comments for truncated discussion threads',
+    if (!usedIncludeAll) {
+      // Fallback: paginated fetch without include=comments (caps at ~500, misses some discussions).
+      const allDiscussionsRaw = await this.getAllPages<SmDiscussion>(`/sheets/${sheetId}/discussions`);
+      allDiscussions = [...new Map(allDiscussionsRaw.map((d) => [d.id, d])).values()];
+      logger.warn(
+        { sheetId, fetched: allDiscussions.length },
+        'Smartsheet: discussions fetched via paginated fallback — sheet-level discussions beyond position 500 may be missing',
       );
+    }
+
+    // Separate row vs sheet discussions; build discussionIdToRowId for COMMENT attachment routing.
+    const sheetDiscussions: SmDiscussion[] = [];
+    const discussionIdToRowId = new Map<number, number>();
+
+    for (const disc of allDiscussions) {
+      if (disc.parentType === 'ROW') {
+        discussionIdToRowId.set(disc.id, disc.parentId);
+      } else if (disc.parentType === 'SHEET') {
+        sheetDiscussions.push(disc);
+      }
+    }
+
+    // Step 3b — If we used includeAll, comments are already embedded on each discussion.
+    // If we used the paginated fallback, fetch comments for sheet discussions separately.
+    const COMMENT_BATCH = 20;
+    if (!usedIncludeAll && sheetDiscussions.length > 0) {
+      for (let i = 0; i < sheetDiscussions.length; i += COMMENT_BATCH) {
+        const batch = sheetDiscussions.slice(i, i + COMMENT_BATCH);
+        await Promise.all(
+          batch.map(async (disc) => {
+            try {
+              disc.comments = await this.getAllPages<SmComment>(
+                `/sheets/${sheetId}/discussions/${disc.id}/comments`,
+              );
+            } catch (err) {
+              logger.warn({ err, discussionId: disc.id }, 'Smartsheet: failed to fetch sheet discussion comments');
+              disc.comments = [];
+            }
+          }),
+        );
+      }
+    }
+
+    // Step 3d — Fetch comments per row for ALL rows.
+    // We iterate every row rather than only rows known from the sheet-level discussion list,
+    // because the sheet-level endpoint caps at 500 discussions and may miss rows entirely.
+    // Empty responses (rows with no discussions) are fast. This guarantees full coverage.
+    // GET /rows/{rowId}/discussions?include=comments returns all discussions with inline
+    // comments scoped to that row — already bucketed, no routing needed.
+    // Comments are de-duped by ID within each row (Smartsheet can create multiple discussion
+    // objects for a single image-only comment).
+    const commentsByRow = new Map<number, NormalisedComment[]>();
+    const commentIdToRowId = new Map<number, number>();
+
+    const allRowIds = sheet.rows.map((r) => r.id);
+    for (let i = 0; i < allRowIds.length; i += COMMENT_BATCH) {
+      const batch = allRowIds.slice(i, i + COMMENT_BATCH);
       await Promise.all(
-        truncated.map(async (disc) => {
+        batch.map(async (rowId) => {
           try {
-            const fullComments = await this.getAllPages<SmComment>(
-              `/sheets/${sheetId}/discussions/${disc.id}/comments`,
+            const discussions = await this.getAllPages<SmDiscussion>(
+              `/sheets/${sheetId}/rows/${rowId}/discussions`,
+              { include: 'comments' },
             );
-            disc.comments = fullComments;
+            const seenIds = new Set<number>();
+            const comments: NormalisedComment[] = [];
+            for (const disc of discussions) {
+              for (const c of disc.comments ?? []) {
+                if (seenIds.has(c.id)) continue;
+                seenIds.add(c.id);
+                commentIdToRowId.set(c.id, rowId);
+                comments.push({
+                  id: String(c.id),
+                  authorId: c.createdBy?.email ?? 'unknown',
+                  authorName: c.createdBy?.name ?? c.createdBy?.email ?? 'Unknown',
+                  text: c.text ?? '',
+                  createdAt: c.createdAt,
+                });
+              }
+            }
+            commentsByRow.set(rowId, comments);
           } catch (err) {
-            logger.warn({ err, discussionId: disc.id }, 'Smartsheet: failed to fetch full comments for discussion');
+            logger.warn({ err, rowId }, 'Smartsheet: failed to fetch discussions for row');
+            commentsByRow.set(rowId, []);
           }
         }),
       );
     }
 
-    const discussionsByRow = new Map<number, SmDiscussion[]>();
-    for (const disc of allDiscussions) {
-      if (disc.parentType === 'ROW') {
-        const existing = discussionsByRow.get(disc.parentId) ?? [];
-        existing.push(disc);
-        discussionsByRow.set(disc.parentId, existing);
-      }
-    }
+    const totalRowComments = [...commentsByRow.values()].reduce((s, arr) => s + arr.length, 0);
+    const rowsWithComments = [...commentsByRow.values()].filter((arr) => arr.length > 0).length;
+    const totalSheetComments = sheetDiscussions.reduce((s, d) => s + (d.comments?.length ?? 0), 0);
+    logger.info(
+      {
+        sheetId,
+        totalRows: sheet.rows.length,
+        rowsWithComments,
+        totalRowComments,
+        totalSheetComments,
+        totalComments: totalRowComments + totalSheetComments,
+      },
+      'Smartsheet: comments fetched',
+    );
 
     // Build two lookup maps for routing COMMENT-type attachments to their row.
     // The Smartsheet API sets parentType='COMMENT' and parentId to either:
     //   (a) the discussion ID — when the attachment was added to the discussion thread, or
     //   (b) the comment ID    — when added to a specific comment within the thread.
-    // We build both maps and try them in order; a direct API lookup is the fallback.
-    const discussionIdToRowId = new Map<number, number>();
-    const commentIdToRowId    = new Map<number, number>();
-    for (const disc of allDiscussions) {
-      if (disc.parentType === 'ROW') {
-        discussionIdToRowId.set(disc.id, disc.parentId);
-        for (const c of disc.comments ?? []) {
-          commentIdToRowId.set(c.id, disc.parentId);
-        }
-      }
-    }
+    // commentIdToRowId is built above from the per-row fetch (complete data).
+    // discussionIdToRowId is built above from the sheet-level discussion list.
 
     // Build attachmentsByRow — route both ROW-level and COMMENT-level attachments.
     const sheetFallbackAttachments: SmAttachment[] = [];
@@ -554,7 +618,7 @@ export class SmartsheetConnector implements SourceConnector {
       sheet.rows.filter((r) => r.rowNumber != null).map((r) => [r.rowNumber!, r.id]),
     );
 
-    const ctx: RowContext = { columnMap, attachmentsByRow, discussionsByRow, childrenByParentId, rowNumberToId };
+    const ctx: RowContext = { columnMap, attachmentsByRow, commentsByRow, childrenByParentId, rowNumberToId };
 
     const tasks: NormalisedTask[] = topLevelRows.map((row) => this.normaliseRow(row, ctx));
 
@@ -562,10 +626,10 @@ export class SmartsheetConnector implements SourceConnector {
     // These are comments/files attached to the sheet itself (not to any row) and would
     // otherwise be silently dropped. We collect them into a single dedicated Asana task
     // appended at the end of the project so the content is preserved.
+    // sheetDiscussions already have comments fetched (Phase 3c).
     const seenSheetCommentIds = new Set<number>();
     const sheetComments: NormalisedComment[] = [];
-    for (const disc of allDiscussions) {
-      if (disc.parentType !== 'SHEET') continue;
+    for (const disc of sheetDiscussions) {
       for (const c of disc.comments ?? []) {
         if (seenSheetCommentIds.has(c.id)) continue;
         seenSheetCommentIds.add(c.id);
@@ -643,7 +707,7 @@ export class SmartsheetConnector implements SourceConnector {
   }
 
   private normaliseRow(row: SmRow, ctx: RowContext): NormalisedTask {
-    const { columnMap, attachmentsByRow, discussionsByRow, childrenByParentId, rowNumberToId } = ctx;
+    const { columnMap, attachmentsByRow, commentsByRow, childrenByParentId, rowNumberToId } = ctx;
 
     const customFields: Record<string, string | string[] | null> = {};
     const dependencyIds: string[] = [];
@@ -727,26 +791,8 @@ export class SmartsheetConnector implements SourceConnector {
       .filter((a) => !!a.url)
       .map((a) => ({ id: String(a.id), name: a.name, url: a.url!, mimeType: a.mimeType }));
 
-    // Smartsheet can produce multiple discussion objects for a single "comment event"
-    // (e.g. one discussion per image attachment). Deduplicating by comment ID ensures
-    // each comment is migrated once regardless of how many discussion objects reference it.
-    // Comments with empty text are still included — image-only comments arrive with text=""
-    // and a separate COMMENT-type attachment; the write phase uses a fallback for empty text.
-    const seenCommentIds = new Set<number>();
-    const comments: NormalisedComment[] = [];
-    for (const disc of discussionsByRow.get(row.id) ?? []) {
-      for (const c of disc.comments ?? []) {
-        if (seenCommentIds.has(c.id)) continue;
-        seenCommentIds.add(c.id);
-        comments.push({
-          id: String(c.id),
-          authorId: c.createdBy?.email ?? 'unknown',
-          authorName: c.createdBy?.name ?? c.createdBy?.email ?? 'Unknown',
-          text: c.text ?? '',
-          createdAt: c.createdAt,
-        });
-      }
-    }
+    // Comments are already de-duped and bucketed by row during Phase 3 (per-row discussion fetch).
+    const comments: NormalisedComment[] = commentsByRow.get(row.id) ?? [];
 
     // Store the Smartsheet row number under a reserved key so the migration engine
     // can write it to the 'm_SmartSheetRow' field without needing an extra parameter.
