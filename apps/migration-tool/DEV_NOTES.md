@@ -40,7 +40,11 @@ The discussions endpoint (`/sheets/{id}/discussions?include=comments`) returns c
 
 ### Image-only comments
 
-When a user posts a comment with only an image (no text), Smartsheet returns the comment with `text = ""` and a separate attachment with `parentType: 'COMMENT'`. These comments must not be filtered out at the normalise phase — the write phase already handles empty text with a `(image — see task attachments)` fallback. The attachment is routed to the correct row via the `commentId → rowId` map built in Phase 3.
+When a user posts a comment with only an image (no text), Smartsheet returns the comment with `text = ""` and a separate attachment with `parentType: 'COMMENT'`. These comments must not be filtered out at the normalise phase — the write phase already handles empty text with a `(image — see task attachments)` fallback. The attachment is routed to the correct row via the `discussionId → rowId` map built in Phase 3.
+
+### COMMENT attachment parentId is the discussion ID, not the comment ID
+
+Smartsheet attachment objects with `parentType: 'COMMENT'` have `parentId` set to the **discussion ID**, not the individual comment ID. When routing these attachments to their row, look them up in a `discussionId → rowId` map (built from `allDiscussions` where `parentType === 'ROW'`). Looking up by comment ID will always fail for this attachment type.
 
 ---
 

@@ -134,6 +134,7 @@ interface SmDiscussion {
   id: number;
   parentType: string; // 'ROW', 'SHEET'
   parentId: number;
+  commentCount?: number; // total comments in the thread per Smartsheet metadata
   comments?: SmComment[];
 }
 
@@ -241,6 +242,7 @@ export class SmartsheetConnector implements SourceConnector {
   private async getAllPages<T>(
     path: string,
     params: Record<string, string> = {},
+    pageSize = 500,
   ): Promise<T[]> {
     const results: T[] = [];
     let page = 1;
@@ -248,12 +250,20 @@ export class SmartsheetConnector implements SourceConnector {
     while (true) {
       const res = await this.get<SmPaginated<T>>(path, {
         ...params,
-        pageSize: '500',
+        pageSize: String(pageSize),
         pageNumber: String(page),
       });
 
-      results.push(...(res.data ?? []));
-      if (!res.totalPages || page >= res.totalPages) break;
+      const items = res.data ?? [];
+      results.push(...items);
+
+      // Prefer totalPages; fall back to computing it from totalCount so we don't
+      // stop early when the API omits totalPages (observed on the discussions endpoint).
+      const totalPages =
+        res.totalPages ??
+        (res.totalCount != null ? Math.ceil(res.totalCount / pageSize) : undefined);
+
+      if (!totalPages || page >= totalPages || items.length === 0) break;
       page++;
     }
 
@@ -358,11 +368,52 @@ export class SmartsheetConnector implements SourceConnector {
       'Smartsheet: attachments registered with sentinel URLs (resolved at download time)',
     );
 
-    // Phase 3: all discussions with inline comments
-    const allDiscussions = await this.getAllPages<SmDiscussion>(
+    // Phase 3: all discussions with inline comments.
+    // Deduplicate by ID for the same reason as attachments — paginated results can contain
+    // the same discussion on multiple pages if items are inserted between page fetches.
+    const allDiscussionsRaw = await this.getAllPages<SmDiscussion>(
       `/sheets/${sheetId}/discussions`,
       { include: 'comments' },
     );
+    const allDiscussions = [...new Map(allDiscussionsRaw.map((d) => [d.id, d])).values()];
+    const discDupeCount = allDiscussionsRaw.length - allDiscussions.length;
+    logger.info(
+      { sheetId, fetched: allDiscussionsRaw.length, unique: allDiscussions.length, dupes: discDupeCount },
+      'Smartsheet: discussions loaded',
+    );
+    if (discDupeCount > 0) {
+      fetchWarnings.push({
+        taskId: 'fetch-phase',
+        taskName: 'Discussions',
+        status: 'warning',
+        message: `${discDupeCount} duplicate discussion(s) removed from the fetched list. This can occur when discussions are added during the fetch.`,
+      });
+    }
+
+    // For discussions where the inline comment array is shorter than commentCount, the
+    // list endpoint truncated the thread. Fetch the full comment list for those discussions.
+    const truncated = allDiscussions.filter(
+      (d) => d.commentCount != null && (d.comments?.length ?? 0) < d.commentCount,
+    );
+    if (truncated.length > 0) {
+      logger.info(
+        { sheetId, truncatedDiscussions: truncated.length },
+        'Smartsheet: fetching full comments for truncated discussion threads',
+      );
+      await Promise.all(
+        truncated.map(async (disc) => {
+          try {
+            const fullComments = await this.getAllPages<SmComment>(
+              `/sheets/${sheetId}/discussions/${disc.id}/comments`,
+            );
+            disc.comments = fullComments;
+          } catch (err) {
+            logger.warn({ err, discussionId: disc.id }, 'Smartsheet: failed to fetch full comments for discussion');
+          }
+        }),
+      );
+    }
+
     const discussionsByRow = new Map<number, SmDiscussion[]>();
     for (const disc of allDiscussions) {
       if (disc.parentType === 'ROW') {
@@ -371,22 +422,25 @@ export class SmartsheetConnector implements SourceConnector {
         discussionsByRow.set(disc.parentId, existing);
       }
     }
-    logger.info({ sheetId, discussions: allDiscussions.length }, 'Smartsheet: discussions loaded');
 
-    // Build commentId → rowId map so COMMENT-parentType attachments resolve to the correct row.
-    // Smartsheet comment attachments have parentType:'COMMENT' and parentId = the comment ID,
-    // not the row ID — we need this map to route them correctly.
-    const commentToRowId = new Map<number, number>();
+    // Build two lookup maps for routing COMMENT-type attachments to their row.
+    // The Smartsheet API sets parentType='COMMENT' and parentId to either:
+    //   (a) the discussion ID — when the attachment was added to the discussion thread, or
+    //   (b) the comment ID    — when added to a specific comment within the thread.
+    // We build both maps and try them in order; a direct API lookup is the fallback.
+    const discussionIdToRowId = new Map<number, number>();
+    const commentIdToRowId    = new Map<number, number>();
     for (const disc of allDiscussions) {
       if (disc.parentType === 'ROW') {
-        for (const comment of disc.comments ?? []) {
-          commentToRowId.set(comment.id, disc.parentId);
+        discussionIdToRowId.set(disc.id, disc.parentId);
+        for (const c of disc.comments ?? []) {
+          commentIdToRowId.set(c.id, disc.parentId);
         }
       }
     }
 
-    // Build attachmentsByRow — now that we have the comment→row map we can correctly
-    // route both ROW-level and COMMENT-level attachments to the right row.
+    // Build attachmentsByRow — route both ROW-level and COMMENT-level attachments.
+    const sheetFallbackAttachments: SmAttachment[] = [];
     const attachmentsByRow = new Map<number, SmAttachment[]>();
     for (const att of resolvedAttachments) {
       if (!att.url) continue;
@@ -394,12 +448,59 @@ export class SmartsheetConnector implements SourceConnector {
       if (att.parentType === 'ROW') {
         rowId = att.parentId;
       } else {
-        // COMMENT attachment — trace back to the row via the discussion map
-        const rid = commentToRowId.get(att.parentId);
+        // COMMENT attachment — try discussion ID, then comment ID, then live API lookups.
+        let rid: number | undefined =
+          discussionIdToRowId.get(att.parentId) ??
+          commentIdToRowId.get(att.parentId);
+
         if (rid == null) {
-          const msg = `Attachment '${att.name}' (id: ${att.id}) on comment ${att.parentId} could not be routed to a row — comment may belong to a deleted row or sheet-level discussion. Attachment was skipped.`;
-          logger.warn({ attachmentId: att.id, commentId: att.parentId }, msg);
-          fetchWarnings.push({ taskId: String(att.parentId), taskName: `Comment ${att.parentId}`, status: 'warning', message: msg });
+          // Fallback A: treat parentId as a discussion ID and fetch it directly.
+          // Handles cases where the discussion was not included in the paginated allDiscussions fetch.
+          try {
+            const disc = await this.get<{ id: number; parentType: string; parentId: number }>(
+              `/sheets/${sheetId}/discussions/${att.parentId}`,
+            );
+            if (disc.parentType === 'ROW') {
+              rid = disc.parentId;
+              logger.info(
+                { attachmentId: att.id, discussionId: att.parentId, rowId: rid },
+                'Smartsheet: COMMENT attachment resolved via direct discussion lookup',
+              );
+            }
+          } catch { /* not a discussion ID — try comment ID */ }
+        }
+
+        if (rid == null) {
+          // Fallback B: treat parentId as a comment ID, fetch the comment to get its discussionId,
+          // then resolve that discussion to its row.
+          try {
+            const comment = await this.get<{ id: number; discussionId: number }>(
+              `/sheets/${sheetId}/comments/${att.parentId}`,
+            );
+            rid = discussionIdToRowId.get(comment.discussionId);
+            if (rid == null) {
+              const disc = await this.get<{ id: number; parentType: string; parentId: number }>(
+                `/sheets/${sheetId}/discussions/${comment.discussionId}`,
+              );
+              if (disc.parentType === 'ROW') rid = disc.parentId;
+            }
+            if (rid != null) {
+              logger.info(
+                { attachmentId: att.id, commentId: att.parentId, rowId: rid },
+                'Smartsheet: COMMENT attachment resolved via comment → discussion lookup',
+              );
+            }
+          } catch { /* ignore — will warn below */ }
+        }
+
+        if (rid == null) {
+          // Could not route to any row — fall through to the sheet-level attachment list
+          // so it ends up on the [Sheet Discussions] synthetic task rather than being lost.
+          logger.warn(
+            { attachmentId: att.id, attachmentName: att.name, parentId: att.parentId },
+            'Smartsheet: COMMENT attachment could not be routed to a row; will be added to [Sheet Discussions]',
+          );
+          sheetFallbackAttachments.push(att);
           continue;
         }
         rowId = rid;
@@ -477,9 +578,13 @@ export class SmartsheetConnector implements SourceConnector {
         });
       }
     }
-    const sheetAttachments: NormalisedAttachment[] = allAttachments
-      .filter((a) => a.parentType === 'SHEET' && a.attachmentType === 'FILE')
-      .map((a) => ({ id: String(a.id), name: a.name, url: `smartsheet-attachment:${a.id}`, mimeType: a.mimeType }));
+    const sheetAttachments: NormalisedAttachment[] = [
+      ...allAttachments
+        .filter((a) => a.parentType === 'SHEET' && a.attachmentType === 'FILE')
+        .map((a) => ({ id: String(a.id), name: a.name, url: `smartsheet-attachment:${a.id}`, mimeType: a.mimeType })),
+      ...sheetFallbackAttachments
+        .map((a) => ({ id: String(a.id), name: a.name, url: a.url!, mimeType: a.mimeType })),
+    ];
 
     if (sheetComments.length > 0 || sheetAttachments.length > 0) {
       tasks.push({
