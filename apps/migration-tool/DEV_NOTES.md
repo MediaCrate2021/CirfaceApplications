@@ -32,6 +32,18 @@ Monday subitems live on their own sub-board and have their **own column IDs**, s
 
 ---
 
+## Smartsheet Connector
+
+### Comment thread truncation
+
+The discussions endpoint (`/sheets/{id}/discussions?include=comments`) returns comments inline per discussion. Smartsheet's API caps the number of inline comments — **discussion threads longer than ~100 comments will be silently truncated**. Fetching all comments for long threads would require a separate paginated call to `/sheets/{id}/discussions/{discussionId}/comments` for each discussion. This has not been implemented; it is a known limitation for very active sheets.
+
+### Image-only comments
+
+When a user posts a comment with only an image (no text), Smartsheet returns the comment with `text = ""` and a separate attachment with `parentType: 'COMMENT'`. These comments must not be filtered out at the normalise phase — the write phase already handles empty text with a `(image — see task attachments)` fallback. The attachment is routed to the correct row via the `commentId → rowId` map built in Phase 3.
+
+---
+
 ## Trello Connector
 
 ### Dependencies not supported

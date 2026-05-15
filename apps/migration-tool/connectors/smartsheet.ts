@@ -457,6 +457,48 @@ export class SmartsheetConnector implements SourceConnector {
 
     const tasks: NormalisedTask[] = topLevelRows.map((row) => this.normaliseRow(row, ctx));
 
+    // Synthetic task for sheet-level discussions and attachments.
+    // These are comments/files attached to the sheet itself (not to any row) and would
+    // otherwise be silently dropped. We collect them into a single dedicated Asana task
+    // appended at the end of the project so the content is preserved.
+    const seenSheetCommentIds = new Set<number>();
+    const sheetComments: NormalisedComment[] = [];
+    for (const disc of allDiscussions) {
+      if (disc.parentType !== 'SHEET') continue;
+      for (const c of disc.comments ?? []) {
+        if (seenSheetCommentIds.has(c.id)) continue;
+        seenSheetCommentIds.add(c.id);
+        sheetComments.push({
+          id: String(c.id),
+          authorId: c.createdBy?.email ?? 'unknown',
+          authorName: c.createdBy?.name ?? c.createdBy?.email ?? 'Unknown',
+          text: c.text ?? '',
+          createdAt: c.createdAt,
+        });
+      }
+    }
+    const sheetAttachments: NormalisedAttachment[] = allAttachments
+      .filter((a) => a.parentType === 'SHEET' && a.attachmentType === 'FILE')
+      .map((a) => ({ id: String(a.id), name: a.name, url: `smartsheet-attachment:${a.id}`, mimeType: a.mimeType }));
+
+    if (sheetComments.length > 0 || sheetAttachments.length > 0) {
+      tasks.push({
+        id: '__sheet_discussions__',
+        name: '[Sheet Discussions]',
+        description: 'Sheet-level discussions and file attachments from Smartsheet. These were not tied to any specific row.',
+        completed: false,
+        customFields: {},
+        subtasks: [],
+        comments: sheetComments,
+        attachments: sheetAttachments,
+        dependencyIds: [],
+      });
+      logger.info(
+        { sheetId, sheetComments: sheetComments.length, sheetAttachments: sheetAttachments.length },
+        'Smartsheet: sheet-level discussions captured into synthetic task',
+      );
+    }
+
     return {
       id: String(sheet.id),
       name: sheet.name,
@@ -580,15 +622,22 @@ export class SmartsheetConnector implements SourceConnector {
       .filter((a) => !!a.url)
       .map((a) => ({ id: String(a.id), name: a.name, url: a.url!, mimeType: a.mimeType }));
 
+    // Smartsheet can produce multiple discussion objects for a single "comment event"
+    // (e.g. one discussion per image attachment). Deduplicating by comment ID ensures
+    // each comment is migrated once regardless of how many discussion objects reference it.
+    // Comments with empty text are still included — image-only comments arrive with text=""
+    // and a separate COMMENT-type attachment; the write phase uses a fallback for empty text.
+    const seenCommentIds = new Set<number>();
     const comments: NormalisedComment[] = [];
     for (const disc of discussionsByRow.get(row.id) ?? []) {
       for (const c of disc.comments ?? []) {
-        if (!c.text?.trim()) continue;
+        if (seenCommentIds.has(c.id)) continue;
+        seenCommentIds.add(c.id);
         comments.push({
           id: String(c.id),
           authorId: c.createdBy?.email ?? 'unknown',
           authorName: c.createdBy?.name ?? c.createdBy?.email ?? 'Unknown',
-          text: c.text,
+          text: c.text ?? '',
           createdAt: c.createdAt,
         });
       }
