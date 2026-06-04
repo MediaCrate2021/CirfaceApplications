@@ -171,7 +171,21 @@ export class AsanaConnector implements SourceConnector {
     return users.map((u) => ({ id: u.gid, name: u.name, email: u.email ?? '' }));
   }
 
-  async getProjects(workspaceId?: string): Promise<ProjectListItem[]> {
+  async getTeams(workspaceId?: string): Promise<Array<{ id: string; name: string }>> {
+    const gid = workspaceId ?? await this.getWorkspaceGid();
+    const teams = await this.getPaginated<{ gid: string; name: string }>(
+      `/organizations/${gid}/teams?opt_fields=gid,name`,
+    );
+    return teams.map((t) => ({ id: t.gid, name: t.name }));
+  }
+
+  async getProjects(workspaceId?: string, teamId?: string): Promise<ProjectListItem[]> {
+    if (teamId) {
+      const projects = await this.getPaginated<{ gid: string; name: string }>(
+        `/teams/${teamId}/projects?opt_fields=gid,name&archived=false`,
+      );
+      return projects.map((p) => ({ id: p.gid, name: p.name }));
+    }
     const gid = workspaceId ?? await this.getWorkspaceGid();
     const projects = await this.getPaginated<{ gid: string; name: string }>(
       `/workspaces/${gid}/projects?opt_fields=gid,name&archived=false`,

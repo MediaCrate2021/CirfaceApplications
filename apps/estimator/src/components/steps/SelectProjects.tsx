@@ -36,6 +36,8 @@ const PROJECT_NOUN: Record<SourcePlatform, string> = {
 export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedTeam, setSelectedTeam] = useState('');
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
@@ -47,13 +49,21 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
       .then((ws) => setWorkspaces(ws))
       .catch(() => { /* workspaces are optional */ });
+
+    fetch('/api/source/teams')
+      .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
+      .then((ts) => setTeams(ts))
+      .catch(() => { /* teams are optional */ });
   }, []);
 
   useEffect(() => {
     setLoading(true);
     setError('');
-    const url = selectedWorkspace
-      ? `/api/source/projects?workspaceId=${encodeURIComponent(selectedWorkspace)}`
+    const params = new URLSearchParams();
+    if (selectedWorkspace) params.set('workspaceId', selectedWorkspace);
+    if (selectedTeam)      params.set('teamId', selectedTeam);
+    const url = params.size > 0
+      ? `/api/source/projects?${params}`
       : '/api/source/projects';
     fetch(url)
       .then((r) => r.json() as Promise<SourceProject[]>)
@@ -62,7 +72,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         setError(`Failed to load ${PROJECT_NOUN[platform]}s. Check your source connection.`);
         setLoading(false);
       });
-  }, [selectedWorkspace, platform]);
+  }, [selectedWorkspace, selectedTeam, platform]);
 
   const filtered = filter.trim()
     ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
@@ -117,11 +127,27 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
           <select
             id="workspace-filter"
             value={selectedWorkspace}
-            onChange={(e) => { setSelectedWorkspace(e.target.value); setChecked(new Set()); }}
+            onChange={(e) => { setSelectedWorkspace(e.target.value); setSelectedTeam(''); setChecked(new Set()); }}
           >
             <option value="">All workspaces</option>
             {workspaces.map((ws) => (
               <option key={ws.id} value={ws.id}>{ws.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {teams.length > 0 && (
+        <div className="field-group" style={{ maxWidth: '360px', marginBottom: '20px' }}>
+          <label htmlFor="team-filter">Filter by team</label>
+          <select
+            id="team-filter"
+            value={selectedTeam}
+            onChange={(e) => { setSelectedTeam(e.target.value); setChecked(new Set()); }}
+          >
+            <option value="">All teams</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         </div>

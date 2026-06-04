@@ -32,8 +32,11 @@ export interface SourceConnector {
   /** Return a lightweight list of workspace/team groupings, if the platform supports it. */
   getWorkspaces?(): Promise<Array<{ id: string; name: string }>>;
 
+  /** Return a lightweight list of teams within a workspace, if the platform supports it. */
+  getTeams?(workspaceId?: string): Promise<Array<{ id: string; name: string }>>;
+
   /** Return a lightweight list of projects (id + name only), optionally filtered by workspace/team. */
-  getProjects(workspaceId?: string): Promise<ProjectListItem[]>;
+  getProjects(workspaceId?: string, teamId?: string): Promise<ProjectListItem[]>;
 
   /**
    * Fetch only the custom field definitions for a project — no tasks, no users.

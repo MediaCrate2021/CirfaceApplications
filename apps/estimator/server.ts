@@ -519,12 +519,25 @@ app.get('/api/source/workspaces', requireAuth, requireSourceConnected, async (re
   }
 });
 
+app.get('/api/source/teams', requireAuth, requireSourceConnected, async (req, res) => {
+  try {
+    const { platform, token } = req.session.sourceConfig!;
+    const connector = makeConnector(platform, token);
+    if (!connector.getTeams) return res.json([]);
+    const { workspaceId } = req.query as { workspaceId?: string };
+    const teams = await connector.getTeams(workspaceId);
+    res.json(teams);
+  } catch (err) {
+    apiError(res, err, { route: 'GET /api/source/teams' });
+  }
+});
+
 app.get('/api/source/projects', requireAuth, requireSourceConnected, async (req, res) => {
   try {
     const { platform, token } = req.session.sourceConfig!;
-    const { workspaceId } = req.query as { workspaceId?: string };
+    const { workspaceId, teamId } = req.query as { workspaceId?: string; teamId?: string };
     const connector = makeConnector(platform, token);
-    const projects = await connector.getProjects(workspaceId);
+    const projects = await connector.getProjects(workspaceId, teamId);
     res.json(projects);
   } catch (err) {
     apiError(res, err, { route: 'GET /api/source/projects' });
