@@ -1,4 +1,4 @@
-import type { FailedAttachment, MigrationReport, MigrationReportItem, SkippedSubitemField } from '../../types/index.ts';
+import type { FailedAttachment, MigrationReport, MigrationReportItem, SkippedSubitemField } from '@cirface/core/types';
 
 function SourceLink({ platform, boardId, taskId }: { platform: string; boardId: string; taskId: string }) {
   if (platform === 'monday') {

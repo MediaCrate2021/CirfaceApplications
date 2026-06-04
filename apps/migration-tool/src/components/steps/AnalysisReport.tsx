@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AnalysisReport as AnalysisReportType, NormalisedField, ProjectAnalysis } from '../../types/index.ts';
+import type { AnalysisReport as AnalysisReportType, NormalisedField, ProjectAnalysis } from '@cirface/core/types';
 
 interface Props {
   report: AnalysisReportType;

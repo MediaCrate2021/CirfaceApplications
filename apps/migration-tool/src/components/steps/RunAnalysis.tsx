@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppState } from '../../App.tsx';
-import type { AnalysisReport } from '../../types/index.ts';
+import type { AnalysisReport } from '@cirface/core/types';
 
 interface ProgressLine {
   type: 'info' | 'warning' | 'error';

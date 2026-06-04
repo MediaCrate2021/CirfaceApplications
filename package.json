@@ -1,4 +1,10 @@
 {
+  "name": "cirface-workspace",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "dependencies": {
     "node.js": "^0.0.1-security"
   }

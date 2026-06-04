@@ -28,13 +28,13 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 import logger from './logger.js';
-import { MondayConnector } from './connectors/monday.js';
-import { TrelloConnector } from './connectors/trello.js';
-import { SmartsheetConnector } from './connectors/smartsheet.js';
-import { AsanaConnector } from './connectors/asana.js';
-import { WrikeConnector } from './connectors/wrike.js';
-import { AsanaDestination } from './destinations/asana.js';
-import type { SourceConnector } from './connectors/base.js';
+import { MondayConnector } from '@cirface/core/connectors/monday';
+import { TrelloConnector } from '@cirface/core/connectors/trello';
+import { SmartsheetConnector } from '@cirface/core/connectors/smartsheet';
+import { AsanaConnector } from '@cirface/core/connectors/asana';
+import { WrikeConnector } from '@cirface/core/connectors/wrike';
+import { AsanaDestination } from '@cirface/core/destinations/asana';
+import type { SourceConnector } from '@cirface/core/connectors/base';
 import type {
   AnalysisReport,
   FieldMappingEntry,
@@ -44,7 +44,7 @@ import type {
   SectionMappingEntry,
   SourcePlatform,
   UserMappingEntry,
-} from './src/types/index.js';
+} from '@cirface/core/types';
 
 // ---------------------------------------------------------------------------
 // Environment

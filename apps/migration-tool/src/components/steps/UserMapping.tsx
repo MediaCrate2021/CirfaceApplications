@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppState } from '../../App.tsx';
-import type { NormalisedUser, UserMappingEntry } from '../../types/index.ts';
+import type { NormalisedUser, UserMappingEntry } from '@cirface/core/types';
 
 interface AsanaUser { gid: string; name: string; email: string; }
 

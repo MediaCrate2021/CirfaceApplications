@@ -1,0 +1,19 @@
+{
+  "name": "@cirface/core",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    "./connectors/base":        "./src/connectors/base.ts",
+    "./connectors/monday":      "./src/connectors/monday.ts",
+    "./connectors/trello":      "./src/connectors/trello.ts",
+    "./connectors/smartsheet":  "./src/connectors/smartsheet.ts",
+    "./connectors/asana":       "./src/connectors/asana.ts",
+    "./connectors/wrike":       "./src/connectors/wrike.ts",
+    "./destinations/asana":     "./src/destinations/asana.ts",
+    "./types":                  "./src/types/index.ts",
+    "./logger":                 "./src/logger.ts"
+  },
+  "dependencies": {
+    "pino": "^10.3.1"
+  }
+}

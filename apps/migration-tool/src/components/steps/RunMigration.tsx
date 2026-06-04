@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppState } from '../../App.tsx';
-import type { MigrationReport } from '../../types/index.ts';
+import type { MigrationReport } from '@cirface/core/types';
 
 interface LogLine {
   type: 'task' | 'info' | 'warning' | 'error';

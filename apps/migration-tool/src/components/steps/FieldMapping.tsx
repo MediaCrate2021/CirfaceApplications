@@ -9,7 +9,7 @@ import type {
   NormalisedFieldType,
   NormalisedSection,
   SectionMappingEntry,
-} from '../../types/index.ts';
+} from '@cirface/core/types';
 
 interface AsanaField {
   gid: string;

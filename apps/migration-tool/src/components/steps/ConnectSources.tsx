@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AppMode, AppState } from '../../App.tsx';
-import type { SourcePlatform } from '../../types/index.ts';
+import type { SourcePlatform } from '@cirface/core/types';
 
 interface Props {
   state: AppState;

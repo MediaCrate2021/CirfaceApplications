@@ -9,6 +9,7 @@
     "start": "tsx server.ts"
   },
   "dependencies": {
+    "@cirface/core": "*",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.18.0",

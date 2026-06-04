@@ -1,0 +1,842 @@
+//-------------------------//
+// connectors/smartsheet.ts
+// Code implemented by Cirface.com / MMG
+//
+// Smartsheet source connector. Uses the Smartsheet REST API v2.
+// All data is normalised into the shared NormalisedProject shape
+// before being returned to the migration engine.
+//
+// Smartsheet API docs: https://smartsheet.redoc.ly/
+//
+// Auth: Personal Access Token (PAT) — passed as Bearer token.
+// Generate in Smartsheet UI: Account > Apps & Integrations > API Access
+//
+// Smartsheet → Normalised mapping:
+//   Workspace          → getWorkspaces()
+//   Sheet              → Project
+//   Column             → NormalisedField
+//   Top-level row      → Task
+//   Child row          → Subtask (full hierarchy preserved; arbitrary depth supported)
+//   Discussion/comment → NormalisedComment (per row)
+//   Row attachment     → NormalisedAttachment (pre-signed URLs expire ~30s — refreshAttachmentUrl re-fetches on demand)
+//   CONTACT_LIST       → 'people' field type; first contact per row → assigneeId
+//   PICKLIST           → 'dropdown' field type
+//   PREDECESSOR column → dependencyIds (migrated as native Asana dependencies; not surfaced as a custom field)
+//   DURATION / AUTO_NUMBER → nonMigratable
+//
+// Note: Smartsheet has no section/group concept. project.sections is always [].
+//
+// Disclaimer: This code was created with the help of Claude.AI
+//
+// This code is part of Cirface Migration Tool
+// Last updated by: 2026APR09 - LMR
+//-------------------------//
+
+import type { SourceConnector } from './base.js';
+import logger from '../logger.js';
+import type {
+  MigrationReportItem,
+  NormalisedAttachment,
+  NormalisedComment,
+  NormalisedField,
+  NormalisedFieldType,
+  NormalisedProject,
+  NormalisedTask,
+  NormalisedUser,
+  ProjectListItem,
+} from '../types/index.js';
+
+const SS_API = 'https://api.smartsheet.com/2.0';
+
+// ---------------------------------------------------------------------------
+// Raw Smartsheet API types
+// ---------------------------------------------------------------------------
+
+interface SmUser {
+  id: number;
+  firstName?: string;
+  lastName?: string;
+  email: string;
+}
+
+interface SmColumn {
+  id: number;
+  title: string;
+  type: string;       // TEXT_NUMBER, DATE, CHECKBOX, CONTACT_LIST, PICKLIST, PREDECESSOR, etc.
+  primary?: boolean;  // true for the primary (task name) column
+  options?: string[]; // for PICKLIST columns
+  index: number;
+}
+
+interface SmContact {
+  objectType: string; // 'CONTACT'
+  name?: string;
+  email?: string;
+}
+
+interface SmMultiContact {
+  objectType: string; // 'MULTI_CONTACT'
+  values?: SmContact[];
+}
+
+interface SmPredecessor {
+  rowId: number;
+  type: string; // 'FS', 'SS', 'FF', 'SF'
+}
+
+interface SmPredecessorList {
+  objectType: 'PREDECESSOR_LIST';
+  predecessors: SmPredecessor[];
+}
+
+interface SmCell {
+  columnId: number;
+  value?: string | number | boolean | null;
+  displayValue?: string;
+  objectValue?: SmContact | SmMultiContact | SmPredecessorList | unknown;
+}
+
+interface SmRow {
+  id: number;
+  rowNumber?: number;
+  parentId?: number;
+  cells: SmCell[];
+  createdAt?: string;
+  modifiedAt?: string;
+}
+
+interface SmSheet {
+  id: number;
+  name: string;
+  columns: SmColumn[];
+  rows: SmRow[];
+}
+
+interface SmAttachment {
+  id: number;
+  name: string;
+  attachmentType: string; // 'FILE', 'BOX_COM', 'DROPBOX', 'GOOGLE_DRIVE', 'LINK', etc.
+  // url is only present on the individual GET /attachments/{id} response, not the list
+  url?: string;
+  mimeType?: string;
+  parentType: string; // 'ROW', 'SHEET', 'COMMENT'
+  parentId: number;
+}
+
+interface SmComment {
+  id: number;
+  text: string;
+  createdBy?: { name?: string; email?: string };
+  createdAt: string;
+}
+
+interface SmDiscussion {
+  id: number;
+  parentType: string; // 'ROW', 'SHEET'
+  parentId: number;
+  commentCount?: number; // total comments in the thread per Smartsheet metadata
+  comments?: SmComment[];
+}
+
+interface SmWorkspace {
+  id: number;
+  name: string;
+}
+
+interface SmPaginated<T> {
+  data: T[];
+  totalPages?: number;
+  pageNumber?: number;
+  totalCount?: number;
+}
+
+// Shared context passed to normaliseRow to avoid long parameter lists
+interface RowContext {
+  columnMap: Map<number, SmColumn>;
+  attachmentsByRow: Map<number, SmAttachment[]>;
+  commentsByRow: Map<number, NormalisedComment[]>;
+  childrenByParentId: Map<number, SmRow[]>;
+  rowNumberToId: Map<number, number>; // rowNumber → internal row id
+}
+
+// ---------------------------------------------------------------------------
+// Column type helpers
+// ---------------------------------------------------------------------------
+
+// Types shown as non-migratable in the field mapping UI (no useful Asana equivalent)
+const NON_MIGRATABLE_TYPES = new Set(['DURATION', 'AUTO_NUMBER']);
+// Types whose cell values are skipped when building task.customFields.
+// PREDECESSOR is excluded here because its data is extracted into task.dependencyIds instead —
+// it migrates natively as Asana dependencies and doesn't need a custom field mapping.
+const SKIP_CELL_TYPES = new Set([...NON_MIGRATABLE_TYPES]);
+
+function normaliseColumnType(type: string): NormalisedFieldType {
+  switch (type) {
+    case 'TEXT_NUMBER':           return 'text';
+    case 'DATE':
+    case 'DATETIME':
+    case 'ABSTRACT_DATETIME':     return 'date';
+    case 'CHECKBOX':              return 'checkbox';
+    case 'CONTACT_LIST':
+    case 'MULTI_CONTACT_LIST':    return 'people';
+    case 'PICKLIST':              return 'dropdown';
+    default:                      return 'unknown';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SmartsheetConnector
+// ---------------------------------------------------------------------------
+
+export class SmartsheetConnector implements SourceConnector {
+  readonly platform = 'smartsheet' as const;
+  private token: string;
+  private activeSheetId: string | null = null;
+
+  constructor(token: string) {
+    this.token = token.trim();
+  }
+
+  setActiveSheetId(sheetId: string): void {
+    this.activeSheetId = sheetId;
+  }
+
+  async refreshAttachmentUrl(assetId: string): Promise<string | null> {
+    if (!this.activeSheetId) return null;
+    try {
+      const detail = await this.get<SmAttachment>(`/sheets/${this.activeSheetId}/attachments/${assetId}`);
+      return detail.url ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ---- HTTP helpers ----
+
+  private async get<T = unknown>(
+    path: string,
+    params: Record<string, string> = {},
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const url = new URL(`${SS_API}${path}`);
+    for (const [k, v] of Object.entries(params)) {
+      url.searchParams.set(k, v);
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${this.token}` },
+      signal: signal ?? AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`Smartsheet API error (${res.status}): ${text.slice(0, 200)}`);
+      (err as NodeJS.ErrnoException).code = String(res.status);
+      throw err;
+    }
+
+    return res.json() as Promise<T>;
+  }
+
+  /** Fetch all pages of a paginated endpoint and return a flat array. */
+  private async getAllPages<T>(
+    path: string,
+    params: Record<string, string> = {},
+    pageSize = 500,
+  ): Promise<T[]> {
+    const results: T[] = [];
+    let page = 1;
+
+    while (true) {
+      const res = await this.get<SmPaginated<T>>(path, {
+        ...params,
+        pageSize: String(pageSize),
+        pageNumber: String(page),
+      });
+
+      const items = res.data ?? [];
+      results.push(...items);
+
+      // Prefer totalPages; fall back to computing it from totalCount so we don't
+      // stop early when the API omits totalPages (observed on the discussions endpoint).
+      const totalPages =
+        res.totalPages ??
+        (res.totalCount != null ? Math.ceil(res.totalCount / pageSize) : undefined);
+
+      if (!totalPages || page >= totalPages || items.length === 0) break;
+      page++;
+    }
+
+    return results;
+  }
+
+  // ---- SourceConnector implementation ----
+
+  async testConnection(): Promise<{ workspaceName: string }> {
+    const me = await this.get<SmUser>('/users/me');
+    const name = [me.firstName, me.lastName].filter(Boolean).join(' ') || me.email;
+    return { workspaceName: name };
+  }
+
+  async getUsers(): Promise<NormalisedUser[]> {
+    // Smartsheet has no "list all org users" endpoint without enterprise admin access.
+    // Return the authenticated user only. Additional users are collected from CONTACT_LIST
+    // cells during getProjectData() and surfaced through project.users.
+    const me = await this.get<SmUser>('/users/me');
+    return [this.userFromSmUser(me)];
+  }
+
+  async getWorkspaces(): Promise<Array<{ id: string; name: string }>> {
+    const workspaces = await this.getAllPages<SmWorkspace>('/workspaces');
+    return workspaces.map((w) => ({ id: String(w.id), name: w.name }));
+  }
+
+  async getProjects(workspaceId?: string): Promise<ProjectListItem[]> {
+    if (workspaceId) {
+      const res = await this.get<{ sheets?: Array<{ id: number; name: string }> }>(
+        `/workspaces/${workspaceId}`,
+        { include: 'sheets' },
+      );
+      return (res.sheets ?? []).map((s) => ({ id: String(s.id), name: s.name }));
+    }
+
+    const sheets = await this.getAllPages<{ id: number; name: string }>('/sheets');
+    return sheets.map((s) => ({ id: String(s.id), name: s.name }));
+  }
+
+  /** Fetch just the name and ID of a sheet — much lighter than getProjectData. */
+  async getProjectInfo(sheetId: string): Promise<{ id: string; name: string }> {
+    // pageSize=1 limits row payload; we only need top-level name/id from the response.
+    const sheet = await this.get<{ id: number; name: string }>(`/sheets/${sheetId}`, { pageSize: '1' });
+    return { id: String(sheet.id), name: sheet.name };
+  }
+
+  async getProjectFields(sheetId: string): Promise<NormalisedField[]> {
+    // A lightweight fetch — only need columns, not rows
+    const sheet = await this.get<Pick<SmSheet, 'columns'>>(`/sheets/${sheetId}`, {
+      include: 'columns',
+    });
+    return this.normaliseColumns(sheet.columns ?? []);
+  }
+
+  async getProjectData(sheetId: string): Promise<NormalisedProject> {
+    this.activeSheetId = sheetId;
+    logger.info({ sheetId }, 'Smartsheet: fetching sheet');
+
+    // Phase 1: full sheet — all rows, columns, and predecessor links
+    const sheet = await this.get<SmSheet>(`/sheets/${sheetId}`, {
+      include: 'objectValue',
+    }, AbortSignal.timeout(60_000));
+
+    logger.info({ sheetId, rows: sheet.rows.length }, 'Smartsheet: sheet loaded');
+
+    const fetchWarnings: MigrationReportItem[] = [];
+
+    // Phase 2: all file attachments on rows OR comments (both parentType values).
+    // Comment attachments need Phase 3 (discussions) to map commentId → rowId,
+    // so URL resolution happens here but the attachmentsByRow map is built after Phase 3.
+    // The list endpoint returns metadata only — no download URL.
+    // We must fetch each FILE attachment individually to get its url.
+    const allAttachmentsRaw = await this.getAllPages<SmAttachment>(`/sheets/${sheetId}/attachments`);
+    // Deduplicate by ID — paginated results can contain the same item on multiple pages
+    // if new attachments are inserted between page fetches (shifted offsets).
+    const allAttachments = [...new Map(allAttachmentsRaw.map((a) => [a.id, a])).values()];
+    const dupeCount = allAttachmentsRaw.length - allAttachments.length;
+    if (dupeCount > 0) {
+      const msg = `${dupeCount} duplicate attachment ID(s) were found in the sheet attachment list and removed. This can occur when attachments are added during the fetch. The deduplicated list was used.`;
+      logger.warn({ sheetId, dupeCount }, msg);
+      fetchWarnings.push({ taskId: 'fetch-phase', taskName: 'Attachments', status: 'warning', message: msg });
+    }
+
+    const fileAttachments = allAttachments.filter(
+      (a) => (a.parentType === 'ROW' || a.parentType === 'COMMENT') && a.attachmentType === 'FILE',
+    );
+    const byParentType: Record<string, number> = {};
+    for (const a of allAttachments) byParentType[a.parentType] = (byParentType[a.parentType] ?? 0) + 1;
+    logger.info({ sheetId, total: allAttachments.length, byParentType, fileCount: fileAttachments.length }, 'Smartsheet: attachments fetched');
+
+    // Store a sentinel URL instead of resolving the pre-signed download URL now.
+    // Smartsheet pre-signed URLs expire in ~30 seconds — far too short to survive until the
+    // migration engine reaches each attachment. The real URL is fetched on demand via
+    // refreshAttachmentUrl() at download time, guaranteeing a fresh URL for every transfer.
+    const resolvedAttachments: SmAttachment[] = fileAttachments.map((att) => ({
+      ...att,
+      url: `smartsheet-attachment:${att.id}`,
+    }));
+    logger.info(
+      { sheetId, fileCount: fileAttachments.length },
+      'Smartsheet: attachments registered with sentinel URLs (resolved at download time)',
+    );
+
+    // Phase 3: discussions and comments.
+    //
+    // Step 3a — Fetch ALL discussions with inline comments in one call using includeAll=true.
+    // includeAll bypasses pagination entirely; include=comments embeds comment arrays per discussion.
+    // This avoids the pageNumber-ignored bug and the ~500-discussion cap of the paginated endpoint.
+    // If the API rejects includeAll on this endpoint, we fall back to the paginated approach.
+    let allDiscussions: SmDiscussion[] = [];
+    let usedIncludeAll = false;
+    try {
+      const res = await this.get<SmPaginated<SmDiscussion>>(
+        `/sheets/${sheetId}/discussions`,
+        { include: 'comments', includeAll: 'true' },
+        AbortSignal.timeout(120_000),
+      );
+      allDiscussions = res.data ?? [];
+      usedIncludeAll = true;
+      logger.info(
+        { sheetId, total: allDiscussions.length },
+        'Smartsheet: all discussions fetched via includeAll',
+      );
+    } catch (err) {
+      logger.warn({ err, sheetId }, 'Smartsheet: includeAll failed for discussions — falling back to paginated fetch');
+    }
+
+    if (!usedIncludeAll) {
+      // Fallback: paginated fetch without include=comments (caps at ~500, misses some discussions).
+      const allDiscussionsRaw = await this.getAllPages<SmDiscussion>(`/sheets/${sheetId}/discussions`);
+      allDiscussions = [...new Map(allDiscussionsRaw.map((d) => [d.id, d])).values()];
+      logger.warn(
+        { sheetId, fetched: allDiscussions.length },
+        'Smartsheet: discussions fetched via paginated fallback — sheet-level discussions beyond position 500 may be missing',
+      );
+    }
+
+    // Separate row vs sheet discussions; build discussionIdToRowId for COMMENT attachment routing.
+    const sheetDiscussions: SmDiscussion[] = [];
+    const discussionIdToRowId = new Map<number, number>();
+
+    for (const disc of allDiscussions) {
+      if (disc.parentType === 'ROW') {
+        discussionIdToRowId.set(disc.id, disc.parentId);
+      } else if (disc.parentType === 'SHEET') {
+        sheetDiscussions.push(disc);
+      }
+    }
+
+    // Step 3b — If we used includeAll, comments are already embedded on each discussion.
+    // If we used the paginated fallback, fetch comments for sheet discussions separately.
+    const COMMENT_BATCH = 20;
+    if (!usedIncludeAll && sheetDiscussions.length > 0) {
+      for (let i = 0; i < sheetDiscussions.length; i += COMMENT_BATCH) {
+        const batch = sheetDiscussions.slice(i, i + COMMENT_BATCH);
+        await Promise.all(
+          batch.map(async (disc) => {
+            try {
+              disc.comments = await this.getAllPages<SmComment>(
+                `/sheets/${sheetId}/discussions/${disc.id}/comments`,
+              );
+            } catch (err) {
+              logger.warn({ err, discussionId: disc.id }, 'Smartsheet: failed to fetch sheet discussion comments');
+              disc.comments = [];
+            }
+          }),
+        );
+      }
+    }
+
+    // Step 3d — Fetch comments per row for ALL rows.
+    // We iterate every row rather than only rows known from the sheet-level discussion list,
+    // because the sheet-level endpoint caps at 500 discussions and may miss rows entirely.
+    // Empty responses (rows with no discussions) are fast. This guarantees full coverage.
+    // GET /rows/{rowId}/discussions?include=comments returns all discussions with inline
+    // comments scoped to that row — already bucketed, no routing needed.
+    // Comments are de-duped by ID within each row (Smartsheet can create multiple discussion
+    // objects for a single image-only comment).
+    const commentsByRow = new Map<number, NormalisedComment[]>();
+    const commentIdToRowId = new Map<number, number>();
+
+    const allRowIds = sheet.rows.map((r) => r.id);
+    for (let i = 0; i < allRowIds.length; i += COMMENT_BATCH) {
+      const batch = allRowIds.slice(i, i + COMMENT_BATCH);
+      await Promise.all(
+        batch.map(async (rowId) => {
+          try {
+            const discussions = await this.getAllPages<SmDiscussion>(
+              `/sheets/${sheetId}/rows/${rowId}/discussions`,
+              { include: 'comments' },
+            );
+            const seenIds = new Set<number>();
+            const comments: NormalisedComment[] = [];
+            for (const disc of discussions) {
+              for (const c of disc.comments ?? []) {
+                if (seenIds.has(c.id)) continue;
+                seenIds.add(c.id);
+                commentIdToRowId.set(c.id, rowId);
+                comments.push({
+                  id: String(c.id),
+                  authorId: c.createdBy?.email ?? 'unknown',
+                  authorName: c.createdBy?.name ?? c.createdBy?.email ?? 'Unknown',
+                  text: c.text ?? '',
+                  createdAt: c.createdAt,
+                });
+              }
+            }
+            commentsByRow.set(rowId, comments);
+          } catch (err) {
+            logger.warn({ err, rowId }, 'Smartsheet: failed to fetch discussions for row');
+            commentsByRow.set(rowId, []);
+          }
+        }),
+      );
+    }
+
+    const totalRowComments = [...commentsByRow.values()].reduce((s, arr) => s + arr.length, 0);
+    const rowsWithComments = [...commentsByRow.values()].filter((arr) => arr.length > 0).length;
+    const totalSheetComments = sheetDiscussions.reduce((s, d) => s + (d.comments?.length ?? 0), 0);
+    logger.info(
+      {
+        sheetId,
+        totalRows: sheet.rows.length,
+        rowsWithComments,
+        totalRowComments,
+        totalSheetComments,
+        totalComments: totalRowComments + totalSheetComments,
+      },
+      'Smartsheet: comments fetched',
+    );
+
+    // Build two lookup maps for routing COMMENT-type attachments to their row.
+    // The Smartsheet API sets parentType='COMMENT' and parentId to either:
+    //   (a) the discussion ID — when the attachment was added to the discussion thread, or
+    //   (b) the comment ID    — when added to a specific comment within the thread.
+    // commentIdToRowId is built above from the per-row fetch (complete data).
+    // discussionIdToRowId is built above from the sheet-level discussion list.
+
+    // Build attachmentsByRow — route both ROW-level and COMMENT-level attachments.
+    const sheetFallbackAttachments: SmAttachment[] = [];
+    const attachmentsByRow = new Map<number, SmAttachment[]>();
+    for (const att of resolvedAttachments) {
+      if (!att.url) continue;
+      let rowId: number;
+      if (att.parentType === 'ROW') {
+        rowId = att.parentId;
+      } else {
+        // COMMENT attachment — try discussion ID, then comment ID, then live API lookups.
+        let rid: number | undefined =
+          discussionIdToRowId.get(att.parentId) ??
+          commentIdToRowId.get(att.parentId);
+
+        if (rid == null) {
+          // Fallback A: treat parentId as a discussion ID and fetch it directly.
+          // Handles cases where the discussion was not included in the paginated allDiscussions fetch.
+          try {
+            const disc = await this.get<{ id: number; parentType: string; parentId: number }>(
+              `/sheets/${sheetId}/discussions/${att.parentId}`,
+            );
+            if (disc.parentType === 'ROW') {
+              rid = disc.parentId;
+              logger.info(
+                { attachmentId: att.id, discussionId: att.parentId, rowId: rid },
+                'Smartsheet: COMMENT attachment resolved via direct discussion lookup',
+              );
+            }
+          } catch { /* not a discussion ID — try comment ID */ }
+        }
+
+        if (rid == null) {
+          // Fallback B: treat parentId as a comment ID, fetch the comment to get its discussionId,
+          // then resolve that discussion to its row.
+          try {
+            const comment = await this.get<{ id: number; discussionId: number }>(
+              `/sheets/${sheetId}/comments/${att.parentId}`,
+            );
+            rid = discussionIdToRowId.get(comment.discussionId);
+            if (rid == null) {
+              const disc = await this.get<{ id: number; parentType: string; parentId: number }>(
+                `/sheets/${sheetId}/discussions/${comment.discussionId}`,
+              );
+              if (disc.parentType === 'ROW') rid = disc.parentId;
+            }
+            if (rid != null) {
+              logger.info(
+                { attachmentId: att.id, commentId: att.parentId, rowId: rid },
+                'Smartsheet: COMMENT attachment resolved via comment → discussion lookup',
+              );
+            }
+          } catch { /* ignore — will warn below */ }
+        }
+
+        if (rid == null) {
+          // Could not route to any row — fall through to the sheet-level attachment list
+          // so it ends up on the [Sheet Discussions] synthetic task rather than being lost.
+          logger.warn(
+            { attachmentId: att.id, attachmentName: att.name, parentId: att.parentId },
+            'Smartsheet: COMMENT attachment could not be routed to a row; will be added to [Sheet Discussions]',
+          );
+          sheetFallbackAttachments.push(att);
+          continue;
+        }
+        rowId = rid;
+      }
+      const existing = attachmentsByRow.get(rowId) ?? [];
+      existing.push(att);
+      attachmentsByRow.set(rowId, existing);
+    }
+
+    const bucketedTotal = [...attachmentsByRow.values()].reduce((sum, arr) => sum + arr.length, 0);
+    logger.info(
+      { sheetId, resolvedCount: resolvedAttachments.length, bucketedRows: attachmentsByRow.size, bucketedTotal },
+      'Smartsheet: attachments bucketed into rows',
+    );
+
+    // Build indexes
+    const columnMap = new Map<number, SmColumn>(sheet.columns.map((c) => [c.id, c]));
+    const rowMap = new Map<number, SmRow>(sheet.rows.map((r) => [r.id, r]));
+
+    // Collect unique users from CONTACT_LIST cells
+    const usersMap = new Map<string, NormalisedUser>();
+    for (const row of sheet.rows) {
+      for (const cell of row.cells) {
+        const col = columnMap.get(cell.columnId);
+        if (!col) continue;
+        if (col.type === 'CONTACT_LIST') {
+          const u = this.extractContact(cell);
+          if (u) usersMap.set(u.id, u);
+        } else if (col.type === 'MULTI_CONTACT_LIST') {
+          for (const u of this.extractMultiContacts(cell)) usersMap.set(u.id, u);
+        }
+      }
+    }
+
+    // Partition rows into top-level tasks and a direct-parent → children map.
+    // The full hierarchy is preserved so normaliseRow can recurse to arbitrary depth.
+    const topLevelRows: SmRow[] = [];
+    const childrenByParentId = new Map<number, SmRow[]>();
+
+    for (const row of sheet.rows) {
+      if (!row.parentId || !rowMap.has(row.parentId)) {
+        topLevelRows.push(row);
+      } else {
+        const existing = childrenByParentId.get(row.parentId) ?? [];
+        existing.push(row);
+        childrenByParentId.set(row.parentId, existing);
+      }
+    }
+
+    const rowNumberToId = new Map<number, number>(
+      sheet.rows.filter((r) => r.rowNumber != null).map((r) => [r.rowNumber!, r.id]),
+    );
+
+    const ctx: RowContext = { columnMap, attachmentsByRow, commentsByRow, childrenByParentId, rowNumberToId };
+
+    const tasks: NormalisedTask[] = topLevelRows.map((row) => this.normaliseRow(row, ctx));
+
+    // Synthetic task for sheet-level discussions and attachments.
+    // These are comments/files attached to the sheet itself (not to any row) and would
+    // otherwise be silently dropped. We collect them into a single dedicated Asana task
+    // appended at the end of the project so the content is preserved.
+    // sheetDiscussions already have comments fetched (Phase 3c).
+    const seenSheetCommentIds = new Set<number>();
+    const sheetComments: NormalisedComment[] = [];
+    for (const disc of sheetDiscussions) {
+      for (const c of disc.comments ?? []) {
+        if (seenSheetCommentIds.has(c.id)) continue;
+        seenSheetCommentIds.add(c.id);
+        sheetComments.push({
+          id: String(c.id),
+          authorId: c.createdBy?.email ?? 'unknown',
+          authorName: c.createdBy?.name ?? c.createdBy?.email ?? 'Unknown',
+          text: c.text ?? '',
+          createdAt: c.createdAt,
+        });
+      }
+    }
+    const sheetAttachments: NormalisedAttachment[] = [
+      ...allAttachments
+        .filter((a) => a.parentType === 'SHEET' && a.attachmentType === 'FILE')
+        .map((a) => ({ id: String(a.id), name: a.name, url: `smartsheet-attachment:${a.id}`, mimeType: a.mimeType })),
+      ...sheetFallbackAttachments
+        .map((a) => ({ id: String(a.id), name: a.name, url: a.url!, mimeType: a.mimeType })),
+    ];
+
+    if (sheetComments.length > 0 || sheetAttachments.length > 0) {
+      tasks.push({
+        id: '__sheet_discussions__',
+        name: '[Sheet Discussions]',
+        description: 'Sheet-level discussions and file attachments from Smartsheet. These were not tied to any specific row.',
+        completed: false,
+        customFields: {},
+        subtasks: [],
+        comments: sheetComments,
+        attachments: sheetAttachments,
+        dependencyIds: [],
+      });
+      logger.info(
+        { sheetId, sheetComments: sheetComments.length, sheetAttachments: sheetAttachments.length },
+        'Smartsheet: sheet-level discussions captured into synthetic task',
+      );
+    }
+
+    return {
+      id: String(sheet.id),
+      name: sheet.name,
+      tasks,
+      fields: this.normaliseColumns(sheet.columns),
+      users: Array.from(usersMap.values()),
+      sections: [], // Smartsheet has no section/group concept
+      fetchWarnings: fetchWarnings.length > 0 ? fetchWarnings : undefined,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normalisation helpers
+  // ---------------------------------------------------------------------------
+
+  private userFromSmUser(u: SmUser): NormalisedUser {
+    const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email;
+    return { id: u.email, name, email: u.email };
+  }
+
+  private normaliseColumns(columns: SmColumn[]): NormalisedField[] {
+    return columns
+      .filter((c) => !c.primary && c.type !== 'PREDECESSOR') // primary = task name; PREDECESSOR = handled natively as dependencies
+      .map((c): NormalisedField => {
+        const isNonMig = NON_MIGRATABLE_TYPES.has(c.type);
+        const field: NormalisedField = {
+          id: String(c.id),
+          name: c.title,
+          type: isNonMig ? 'unknown' : normaliseColumnType(c.type),
+          nonMigratable: isNonMig || undefined,
+        };
+        if (c.type === 'PICKLIST' && c.options?.length) {
+          field.options = c.options.map((opt) => ({ id: opt, name: opt }));
+        }
+        return field;
+      });
+  }
+
+  private normaliseRow(row: SmRow, ctx: RowContext): NormalisedTask {
+    const { columnMap, attachmentsByRow, commentsByRow, childrenByParentId, rowNumberToId } = ctx;
+
+    const customFields: Record<string, string | string[] | null> = {};
+    const dependencyIds: string[] = [];
+    let name = `Row ${row.rowNumber ?? row.id} (${row.id})`;
+    let assigneeId: string | undefined;
+    let dueDate: string | undefined;
+
+    for (const cell of row.cells) {
+      const col = columnMap.get(cell.columnId);
+      if (!col) continue;
+
+      if (col.primary) {
+        name = String(cell.displayValue ?? cell.value ?? '').trim() || name;
+        continue;
+      }
+
+      if (SKIP_CELL_TYPES.has(col.type)) continue;
+
+      // PREDECESSOR cells carry dependency data — extract row IDs, don't put in customFields.
+      // Prefer objectValue (contains internal rowId directly); fall back to parsing the cell
+      // value as a row number and converting via rowNumberToId.
+      if (col.type === 'PREDECESSOR') {
+        const obj = cell.objectValue as SmPredecessorList | undefined;
+        if (obj?.objectType === 'PREDECESSOR_LIST' && Array.isArray(obj.predecessors)) {
+          for (const pred of obj.predecessors) {
+            dependencyIds.push(String(pred.rowId));
+          }
+        } else if (cell.value != null) {
+          // Cell value is a row number (or comma-separated row numbers e.g. "2" or "1,3")
+          const raw = String(cell.value);
+          for (const part of raw.split(',')) {
+            const rowNum = parseInt(part.trim(), 10);
+            const rowId = !isNaN(rowNum) ? rowNumberToId.get(rowNum) : undefined;
+            if (rowId != null) dependencyIds.push(String(rowId));
+          }
+        }
+        continue;
+      }
+
+      const fieldId = String(col.id);
+
+      switch (col.type) {
+        case 'CONTACT_LIST': {
+          const contact = this.extractContact(cell);
+          if (contact) {
+            if (!assigneeId) assigneeId = contact.id; // first contact column drives assignee
+            customFields[fieldId] = contact.email;
+          } else {
+            customFields[fieldId] = null;
+          }
+          break;
+        }
+        case 'MULTI_CONTACT_LIST': {
+          const contacts = this.extractMultiContacts(cell);
+          customFields[fieldId] = contacts.length ? contacts.map((c) => c.email) : null;
+          break;
+        }
+        case 'DATE':
+        case 'DATETIME':
+        case 'ABSTRACT_DATETIME': {
+          // Smartsheet date values are already YYYY-MM-DD strings
+          const raw = cell.value != null ? String(cell.value) : null;
+          customFields[fieldId] = raw;
+          break;
+        }
+        case 'CHECKBOX': {
+          customFields[fieldId] = cell.value ? 'true' : 'false';
+          break;
+        }
+        default: {
+          // Explicitly coerce to string — cell.value may be a number at runtime (TEXT_NUMBER columns)
+          const val = cell.displayValue != null
+            ? String(cell.displayValue)
+            : (cell.value != null ? String(cell.value) : null);
+          customFields[fieldId] = val;
+        }
+      }
+    }
+
+    const attachments: NormalisedAttachment[] = (attachmentsByRow.get(row.id) ?? [])
+      .filter((a) => !!a.url)
+      .map((a) => ({ id: String(a.id), name: a.name, url: a.url!, mimeType: a.mimeType }));
+
+    // Comments are already de-duped and bucketed by row during Phase 3 (per-row discussion fetch).
+    const comments: NormalisedComment[] = commentsByRow.get(row.id) ?? [];
+
+    // Store the Smartsheet row number under a reserved key so the migration engine
+    // can write it to the 'm_SmartSheetRow' field without needing an extra parameter.
+    if (row.rowNumber != null) {
+      customFields['__smartsheet_row__'] = String(row.rowNumber);
+    }
+
+    // Subtasks: direct children only — recursion into ctx preserves the full hierarchy.
+    const subtasks = (childrenByParentId.get(row.id) ?? []).map((sub) => this.normaliseRow(sub, ctx));
+
+    return {
+      id: String(row.id),
+      name,
+      assigneeId,
+      dueDate,
+      completed: false, // Smartsheet has no built-in per-row completion state
+      customFields,
+      subtasks,
+      comments,
+      attachments,
+      dependencyIds,
+    };
+  }
+
+  private extractContact(cell: SmCell): NormalisedUser | null {
+    const obj = cell.objectValue as SmContact | undefined;
+    if (obj?.objectType === 'CONTACT' && obj.email) {
+      return { id: obj.email, name: obj.name ?? obj.email, email: obj.email };
+    }
+    // Fallback: cell.value is the email string for CONTACT_LIST cells
+    const email = typeof cell.value === 'string' ? cell.value.trim() : null;
+    if (email) return { id: email, name: email, email };
+    return null;
+  }
+
+  private extractMultiContacts(cell: SmCell): NormalisedUser[] {
+    const obj = cell.objectValue as SmMultiContact | undefined;
+    if (obj?.objectType === 'MULTI_CONTACT' && Array.isArray(obj.values)) {
+      return obj.values
+        .filter((c): c is SmContact & { email: string } => !!c.email)
+        .map((c) => ({ id: c.email, name: c.name ?? c.email, email: c.email }));
+    }
+    return [];
+  }
+
+
+}

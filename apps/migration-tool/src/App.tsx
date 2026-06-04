@@ -32,7 +32,7 @@ import type {
   SectionMappingEntry,
   SourcePlatform,
   UserMappingEntry,
-} from './types/index.ts';
+} from '@cirface/core/types';
 
 // ---------------------------------------------------------------------------
 // Wizard steps
