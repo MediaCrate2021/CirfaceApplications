@@ -330,6 +330,12 @@ export default function App() {
         <div className="header-left">
           <img src="/logo" alt="Cirface" className="header-logo" />
           <h1>Migration Tool</h1>
+          {state.appEnv === 'development' && (
+            <span style={{ background: '#16b4bf', color: '#fff', padding: '2px 8px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em' }}>DEV</span>
+          )}
+          {state.appEnv === 'staging' && (
+            <span style={{ background: '#ffa100', color: '#1a1a1a', padding: '2px 8px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em' }}>STAGING</span>
+          )}
         </div>
         <div className="header-right">
           {state.appEnv !== 'production' && (
