@@ -8,7 +8,7 @@
 // Disclaimer: This code was created with the help of Claude.AI
 //-------------------------//
 
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import StepIndicator from '@cirface/core/components/shared/StepIndicator';
 import LoginPage from './components/LoginPage.tsx';
 import ConnectSource from './components/steps/ConnectSource.tsx';
@@ -45,6 +45,7 @@ type Action =
   | { type: 'RESTORE_SESSION'; platform: SourcePlatform }
   | { type: 'SOURCE_CONNECTED'; platform: SourcePlatform }
   | { type: 'PROJECTS_SELECTED'; projects: Array<{ id: string; name: string }> }
+  | { type: 'BACK_TO_PROJECTS' }
   | { type: 'ANALYSIS_COMPLETE'; report: AnalysisReportType }
   | { type: 'RESET' };
 
@@ -70,6 +71,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, step: 'select-projects', platform: action.platform, selectedProjects: [] };
     case 'PROJECTS_SELECTED':
       return { ...state, step: 'analyzing', selectedProjects: action.projects };
+    case 'BACK_TO_PROJECTS':
+      return { ...state, step: 'select-projects' };
     case 'ANALYSIS_COMPLETE':
       return { ...state, step: 'report', report: action.report };
     case 'RESET':
@@ -117,6 +120,7 @@ const ENV_BADGE: Record<AppState['appEnv'], { label: string; style: React.CSSPro
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [authChecked, setAuthChecked] = useState(false);
 
   // On mount: check auth status, then restore source session if already connected
   useEffect(() => {
@@ -137,12 +141,14 @@ export default function App() {
                 dispatch({ type: 'RESTORE_SESSION', platform: src.platform });
               }
             })
-            .catch(() => {});
-        } else if (validEnv) {
-          dispatch({ type: 'SET_ENV', env: validEnv });
+            .catch(() => {})
+            .finally(() => setAuthChecked(true));
+        } else {
+          if (validEnv) dispatch({ type: 'SET_ENV', env: validEnv });
+          setAuthChecked(true);
         }
       })
-      .catch(() => {});
+      .catch(() => { setAuthChecked(true); });
   }, []);
 
   function handleReset() {
@@ -155,6 +161,8 @@ export default function App() {
   const completedUpTo = sidebarIndex >= 0 ? sidebarIndex : SIDEBAR_STEPS.length;
 
   const badge = ENV_BADGE[state.appEnv];
+
+  if (!authChecked) return null;
 
   if (!state.authenticated) {
     return <LoginPage appEnv={state.appEnv} />;
@@ -208,6 +216,7 @@ export default function App() {
               projectIds={state.selectedProjects.map((p) => p.id)}
               projectCount={state.selectedProjects.length}
               onComplete={(report) => dispatch({ type: 'ANALYSIS_COMPLETE', report })}
+              onBack={() => dispatch({ type: 'BACK_TO_PROJECTS' })}
             />
           )}
 

@@ -15,9 +15,10 @@ interface Props {
   projectIds: string[];
   projectCount: number;
   onComplete: (report: AnalysisReport) => void;
+  onBack: () => void;
 }
 
-export default function RunAnalysis({ projectIds, projectCount, onComplete }: Props) {
+export default function RunAnalysis({ projectIds, projectCount, onComplete, onBack }: Props) {
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
@@ -87,7 +88,14 @@ export default function RunAnalysis({ projectIds, projectCount, onComplete }: Pr
         <span className="progress-label">{done} / {projectCount} projects</span>
       </div>
 
-      {error && <p className="error-text" style={{ marginTop: '12px' }}>{error}</p>}
+      {error && (
+        <div style={{ marginTop: '12px' }}>
+          <p className="error-text">{error}</p>
+          <div className="step-actions" style={{ marginTop: '12px' }}>
+            <button className="btn btn-ghost" onClick={onBack}>Back to project selection</button>
+          </div>
+        </div>
+      )}
 
       <div className="run-log" ref={logRef}>
         {lines.map((line, i) => (

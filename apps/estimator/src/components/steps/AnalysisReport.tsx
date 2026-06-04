@@ -14,6 +14,7 @@ interface Props {
 
 export default function AnalysisReport({ report, onRunAnother }: Props) {
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
 
   const totals = report.projects.reduce(
     (acc, p) => ({
@@ -28,6 +29,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
 
   async function handleDownload() {
     setDownloading(true);
+    setDownloadError('');
     try {
       const res = await fetch('/api/report/download');
       if (!res.ok) throw new Error('Download failed');
@@ -40,7 +42,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      alert('Download failed. Please try again.');
+      setDownloadError('Download failed. Please try again.');
     } finally {
       setDownloading(false);
     }
@@ -99,6 +101,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
       ))}
 
       {/* Actions */}
+      {downloadError && <p className="error-text" style={{ marginTop: '12px' }}>{downloadError}</p>}
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onRunAnother}>
           Start Over
