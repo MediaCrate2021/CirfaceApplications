@@ -11,7 +11,9 @@
     "./connectors/wrike":       "./src/connectors/wrike.ts",
     "./destinations/asana":     "./src/destinations/asana.ts",
     "./types":                  "./src/types/index.ts",
-    "./logger":                 "./src/logger.ts"
+    "./logger":                 "./src/logger.ts",
+    "./styles/global.css":      "./src/styles/global.css",
+    "./components/shared/*":    "./src/components/shared/*.tsx"
   },
   "dependencies": {
     "pino": "^10.3.1"

@@ -224,7 +224,7 @@ const LOGO_ENVS = new Set(['development', 'staging', 'production']);
 const logoFile = LOGO_ENVS.has(APP_ENV) ? APP_ENV : 'development';
 app.get('/logo', (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(__dirname, 'public', 'images', `logo-${logoFile}.png`));
+  res.sendFile(path.join(__dirname, '..', '..', 'packages', 'core', 'public', 'images', `logo-${logoFile}.png`));
 });
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+sessions/
+.env
+dist/
+node_modules/
+.dev-config.json

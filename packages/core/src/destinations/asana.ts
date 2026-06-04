@@ -1261,7 +1261,7 @@ export class AsanaDestination {
   }
 
   /** Short summary for the Asana task notes field. */
-  private formatAnalysisReportSummary(report: AnalysisReport, writerName?: string): string {
+  public formatAnalysisReportSummary(report: AnalysisReport, writerName?: string): string {
     const lines: string[] = [
       `Analysis Report — ${report.sourcePlatform}`,
       writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool',
@@ -1284,7 +1284,7 @@ export class AsanaDestination {
   }
 
   /** Full analysis log with per-project field tables, written to the attached .txt file. */
-  private formatAnalysisReportLog(report: AnalysisReport, writerName?: string): string {
+  public formatAnalysisReportLog(report: AnalysisReport, writerName?: string): string {
     const sep = (label: string) => `\n${'='.repeat(60)}\n${label}\n${'='.repeat(60)}`;
     const lines: string[] = [];
 
