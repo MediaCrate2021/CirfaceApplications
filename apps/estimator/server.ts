@@ -15,6 +15,7 @@ import express from 'express';
 import session from 'express-session';
 import helmet from 'helmet';
 import cors from 'cors';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -50,6 +51,11 @@ const PORT = Number(process.env.PORT) || 3001;
 
 declare module 'express-session' {
   interface SessionData {
+    oauthState?: string;
+    oauthPlatform?: SourcePlatform;
+    returnTo?: string;
+    accessToken?: string;
+    user?: { gid: string; name: string; email: string };
     sourceConfig?: { platform: SourcePlatform; token: string };
     lastAnalysisReport?: AnalysisReport;
     analysisInProgress?: boolean;
@@ -112,6 +118,18 @@ app.set('trust proxy', 1);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function requireAuth(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  if (!req.session.accessToken) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+  next();
+}
 
 function requireSourceConnected(
   req: express.Request,
@@ -180,14 +198,53 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// OAuth provider capabilities — tells the frontend which platforms have OAuth
+// configured so it can show buttons vs token forms
+// ---------------------------------------------------------------------------
+
+app.get('/api/auth/providers', (_req, res) => {
+  res.json({
+    asana:       !!(process.env.ASANA_CLIENT_ID       && process.env.ASANA_CLIENT_SECRET),
+    monday:      !!(process.env.MONDAY_CLIENT_ID      && process.env.MONDAY_CLIENT_SECRET),
+    smartsheet:  !!(process.env.SMARTSHEET_CLIENT_ID  && process.env.SMARTSHEET_CLIENT_SECRET),
+  });
+});
+
+// Auth status — public, used by the frontend to decide whether to show the login page
+app.get('/api/auth/status', (req, res) => {
+  res.json({
+    authenticated: !!req.session.accessToken,
+    user:          req.session.user ?? null,
+    appEnv:        APP_ENV,
+  });
+});
+
+app.get('/api/auth/logout', (req, res) => {
+  const user = req.session.user?.name;
+  req.session.destroy(() => {
+    logger.info({ user }, 'user logged out');
+    res.redirect('/');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Source connection
 // ---------------------------------------------------------------------------
 
-app.post('/api/source/connect', async (req, res) => {
-  const { platform, token } = req.body as { platform: SourcePlatform; token: string };
+app.post('/api/source/connect', requireAuth, async (req, res) => {
+  const { platform, token: bodyToken } = req.body as { platform: SourcePlatform; token?: string };
 
-  if (!platform || !token) {
-    return res.status(400).json({ error: 'platform and token are required' });
+  if (!platform) {
+    return res.status(400).json({ error: 'platform is required' });
+  }
+
+  // Asana can reuse the OAuth token that authenticated the user — no PAT needed
+  const token = (platform === 'asana' && !bodyToken)
+    ? req.session.accessToken!
+    : bodyToken;
+
+  if (!token) {
+    return res.status(400).json({ error: 'token is required' });
   }
 
   try {
@@ -196,14 +253,14 @@ app.post('/api/source/connect', async (req, res) => {
     req.session.sourceConfig = { platform, token };
     req.session.lastAnalysisReport = undefined;
     req.session.analysisInProgress = false;
-    logger.info({ platform }, 'source connected');
+    logger.info({ platform, user: req.session.user?.name }, 'source connected');
     res.json({ ok: true, platform });
   } catch (err) {
     apiError(res, err, { route: 'POST /api/source/connect', platform });
   }
 });
 
-app.get('/api/source/status', (req, res) => {
+app.get('/api/source/status', requireAuth, (req, res) => {
   if (req.session.sourceConfig) {
     res.json({ connected: true, platform: req.session.sourceConfig.platform });
   } else {
@@ -211,13 +268,246 @@ app.get('/api/source/status', (req, res) => {
   }
 });
 
-app.post('/api/source/disconnect', (req, res) => {
+app.post('/api/source/disconnect', requireAuth, (req, res) => {
   req.session.sourceConfig = undefined;
   req.session.lastAnalysisReport = undefined;
   res.json({ ok: true });
 });
 
-app.get('/api/source/workspaces', requireSourceConnected, async (req, res) => {
+// ---------------------------------------------------------------------------
+// OAuth flows — Asana, Monday, Smartsheet
+// Each login route stores a CSRF state token and redirects to the provider.
+// Each callback exchanges the code for an access token and stores it as
+// session.sourceConfig so the rest of the API works transparently.
+// ---------------------------------------------------------------------------
+
+// Helper: capture the origin of the referring React app so we can redirect
+// back to it after OAuth (handles dev where Vite runs on a different port).
+function captureReturnTo(req: express.Request): void {
+  const referer = req.get('referer') ?? req.get('origin');
+  if (referer) {
+    try { req.session.returnTo = new URL(referer).origin; } catch { /* ignore */ }
+  }
+}
+
+// --- Asana ---
+
+app.get('/auth/asana/login', (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState    = state;
+  req.session.oauthPlatform = 'asana';
+  captureReturnTo(req);
+
+  const params = new URLSearchParams({
+    client_id:     process.env.ASANA_CLIENT_ID!,
+    redirect_uri:  process.env.ASANA_REDIRECT_URI!,
+    response_type: 'code',
+    state,
+  });
+
+  req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save error before Asana OAuth');
+    res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);
+  });
+});
+
+app.get('/auth/asana/callback', async (req, res) => {
+  const { code, state, error } = req.query as Record<string, string>;
+  const returnTo = req.session.returnTo ?? '/';
+
+  if (error) {
+    logger.warn({ error }, 'Asana OAuth access denied');
+    return res.redirect(`${returnTo}?error=access_denied`);
+  }
+  if (state !== req.session.oauthState) {
+    logger.warn('Asana OAuth state mismatch — possible CSRF attempt');
+    return res.status(403).send('State mismatch');
+  }
+  delete req.session.oauthState;
+  delete req.session.oauthPlatform;
+  delete req.session.returnTo;
+
+  try {
+    const tokenRes = await fetch('https://app.asana.com/-/oauth_token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'authorization_code',
+        client_id:     process.env.ASANA_CLIENT_ID!,
+        client_secret: process.env.ASANA_CLIENT_SECRET!,
+        redirect_uri:  process.env.ASANA_REDIRECT_URI!,
+        code,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.error({ status: tokenRes.status }, 'Asana token exchange failed');
+      return res.redirect(`${returnTo}?error=token_exchange_failed`);
+    }
+
+    const data = await tokenRes.json() as {
+      access_token: string;
+      data?: { gid: string; name: string; email: string };
+    };
+
+    req.session.accessToken = data.access_token;
+    req.session.user        = data.data;
+    logger.info({ name: data.data?.name, email: data.data?.email }, 'user authenticated via Asana OAuth');
+    res.redirect(returnTo);
+  } catch (err) {
+    logger.error({ err }, 'Asana token exchange exception');
+    res.redirect(`${returnTo}?error=token_exchange_failed`);
+  }
+});
+
+// --- Monday.com ---
+
+app.get('/auth/monday/login', (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState    = state;
+  req.session.oauthPlatform = 'monday';
+  captureReturnTo(req);
+
+  const params = new URLSearchParams({
+    client_id:     process.env.MONDAY_CLIENT_ID!,
+    redirect_uri:  process.env.MONDAY_REDIRECT_URI!,
+    response_type: 'install',
+    state,
+  });
+
+  req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save error before Monday OAuth');
+    res.redirect(`https://auth.monday.com/oauth2/authorize?${params}`);
+  });
+});
+
+app.get('/auth/monday/callback', async (req, res) => {
+  const { code, state, error } = req.query as Record<string, string>;
+  const returnTo = req.session.returnTo ?? '/';
+
+  if (error) {
+    logger.warn({ error }, 'Monday OAuth access denied');
+    return res.redirect(`${returnTo}?error=access_denied`);
+  }
+  if (state !== req.session.oauthState) {
+    logger.warn('Monday OAuth state mismatch — possible CSRF attempt');
+    return res.status(403).send('State mismatch');
+  }
+  delete req.session.oauthState;
+  delete req.session.oauthPlatform;
+  delete req.session.returnTo;
+
+  try {
+    const tokenRes = await fetch('https://auth.monday.com/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'authorization_code',
+        client_id:     process.env.MONDAY_CLIENT_ID!,
+        client_secret: process.env.MONDAY_CLIENT_SECRET!,
+        redirect_uri:  process.env.MONDAY_REDIRECT_URI!,
+        code,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.error({ status: tokenRes.status }, 'Monday token exchange failed');
+      return res.redirect(`${returnTo}?error=token_exchange_failed`);
+    }
+
+    const data = await tokenRes.json() as { access_token: string };
+
+    req.session.sourceConfig        = { platform: 'monday', token: data.access_token };
+    req.session.lastAnalysisReport  = undefined;
+    req.session.analysisInProgress  = false;
+    logger.info('Monday source connected via OAuth');
+    res.redirect(returnTo);
+  } catch (err) {
+    logger.error({ err }, 'Monday token exchange exception');
+    res.redirect(`${returnTo}?error=token_exchange_failed`);
+  }
+});
+
+// --- Smartsheet ---
+// Note: Smartsheet OAuth requires app-review approval from their Developer Program.
+// These routes are scaffolded but will only activate once SMARTSHEET_CLIENT_ID
+// and SMARTSHEET_CLIENT_SECRET are set in the environment.
+// Token exchange requires a SHA-256 hash of (client_secret + "|" + code).
+
+app.get('/auth/smartsheet/login', (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState    = state;
+  req.session.oauthPlatform = 'smartsheet';
+  captureReturnTo(req);
+
+  const params = new URLSearchParams({
+    client_id:     process.env.SMARTSHEET_CLIENT_ID!,
+    redirect_uri:  process.env.SMARTSHEET_REDIRECT_URI!,
+    response_type: 'code',
+    scope:         'READ_ALL',
+    state,
+  });
+
+  req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save error before Smartsheet OAuth');
+    res.redirect(`https://app.smartsheet.com/b/authorize?${params}`);
+  });
+});
+
+app.get('/auth/smartsheet/callback', async (req, res) => {
+  const { code, state, error } = req.query as Record<string, string>;
+  const returnTo = req.session.returnTo ?? '/';
+
+  if (error) {
+    logger.warn({ error }, 'Smartsheet OAuth access denied');
+    return res.redirect(`${returnTo}?error=access_denied`);
+  }
+  if (state !== req.session.oauthState) {
+    logger.warn('Smartsheet OAuth state mismatch — possible CSRF attempt');
+    return res.status(403).send('State mismatch');
+  }
+  delete req.session.oauthState;
+  delete req.session.oauthPlatform;
+  delete req.session.returnTo;
+
+  try {
+    // Smartsheet requires a SHA-256 hash of (client_secret + "|" + code)
+    const hash = crypto
+      .createHash('sha256')
+      .update(`${process.env.SMARTSHEET_CLIENT_SECRET}|${code}`)
+      .digest('hex');
+
+    const tokenRes = await fetch('https://api.smartsheet.com/2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'authorization_code',
+        client_id:     process.env.SMARTSHEET_CLIENT_ID!,
+        redirect_uri:  process.env.SMARTSHEET_REDIRECT_URI!,
+        code,
+        hash,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.error({ status: tokenRes.status }, 'Smartsheet token exchange failed');
+      return res.redirect(`${returnTo}?error=token_exchange_failed`);
+    }
+
+    const data = await tokenRes.json() as { access_token: string };
+
+    req.session.sourceConfig        = { platform: 'smartsheet', token: data.access_token };
+    req.session.lastAnalysisReport  = undefined;
+    req.session.analysisInProgress  = false;
+    logger.info('Smartsheet source connected via OAuth');
+    res.redirect(returnTo);
+  } catch (err) {
+    logger.error({ err }, 'Smartsheet token exchange exception');
+    res.redirect(`${returnTo}?error=token_exchange_failed`);
+  }
+});
+
+app.get('/api/source/workspaces', requireAuth, requireSourceConnected, async (req, res) => {
   try {
     const { platform, token } = req.session.sourceConfig!;
     const connector = makeConnector(platform, token);
@@ -229,7 +519,7 @@ app.get('/api/source/workspaces', requireSourceConnected, async (req, res) => {
   }
 });
 
-app.get('/api/source/projects', requireSourceConnected, async (req, res) => {
+app.get('/api/source/projects', requireAuth, requireSourceConnected, async (req, res) => {
   try {
     const { platform, token } = req.session.sourceConfig!;
     const { workspaceId } = req.query as { workspaceId?: string };
@@ -245,7 +535,7 @@ app.get('/api/source/projects', requireSourceConnected, async (req, res) => {
 // Analysis — streaming via SSE
 // ---------------------------------------------------------------------------
 
-app.get('/api/analyze', requireSourceConnected, async (req, res) => {
+app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) => {
   if (req.session.analysisInProgress) {
     return res.status(409).json({ error: 'An analysis is already running' });
   }
@@ -361,7 +651,7 @@ app.get('/api/analyze', requireSourceConnected, async (req, res) => {
 // Report download
 // ---------------------------------------------------------------------------
 
-app.get('/api/report/download', requireSourceConnected, (req, res) => {
+app.get('/api/report/download', requireAuth, requireSourceConnected, (req, res) => {
   const report = req.session.lastAnalysisReport;
   if (!report) {
     return res.status(404).json({ error: 'No report available. Run an analysis first.' });

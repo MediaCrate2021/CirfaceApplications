@@ -10,6 +10,7 @@
 
 import { useEffect, useReducer } from 'react';
 import StepIndicator from '@cirface/core/components/shared/StepIndicator';
+import LoginPage from './components/LoginPage.tsx';
 import ConnectSource from './components/steps/ConnectSource.tsx';
 import SelectProjects from './components/steps/SelectProjects.tsx';
 import RunAnalysis from './components/steps/RunAnalysis.tsx';
@@ -22,9 +23,17 @@ import type { AnalysisReport as AnalysisReportType, SourcePlatform } from '@cirf
 
 export type WizardStep = 'connect' | 'select-projects' | 'analyzing' | 'report';
 
+export interface AppUser {
+  gid: string;
+  name: string;
+  email: string;
+}
+
 export interface AppState {
   step: WizardStep;
   appEnv: 'development' | 'staging' | 'production';
+  authenticated: boolean;
+  user: AppUser | null;
   platform: SourcePlatform | null;
   selectedProjects: Array<{ id: string; name: string }>;
   report: AnalysisReportType | null;
@@ -32,6 +41,8 @@ export interface AppState {
 
 type Action =
   | { type: 'SET_ENV'; env: AppState['appEnv'] }
+  | { type: 'AUTHENTICATED'; user: AppUser; env?: AppState['appEnv'] }
+  | { type: 'RESTORE_SESSION'; platform: SourcePlatform }
   | { type: 'SOURCE_CONNECTED'; platform: SourcePlatform }
   | { type: 'PROJECTS_SELECTED'; projects: Array<{ id: string; name: string }> }
   | { type: 'ANALYSIS_COMPLETE'; report: AnalysisReportType }
@@ -40,6 +51,8 @@ type Action =
 const initialState: AppState = {
   step: 'connect',
   appEnv: 'development',
+  authenticated: false,
+  user: null,
   platform: null,
   selectedProjects: [],
   report: null,
@@ -49,6 +62,10 @@ function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'SET_ENV':
       return { ...state, appEnv: action.env };
+    case 'AUTHENTICATED':
+      return { ...state, authenticated: true, user: action.user, appEnv: action.env ?? state.appEnv };
+    case 'RESTORE_SESSION':
+      return { ...state, step: 'select-projects', platform: action.platform };
     case 'SOURCE_CONNECTED':
       return { ...state, step: 'select-projects', platform: action.platform, selectedProjects: [] };
     case 'PROJECTS_SELECTED':
@@ -56,7 +73,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'ANALYSIS_COMPLETE':
       return { ...state, step: 'report', report: action.report };
     case 'RESET':
-      return { ...initialState, appEnv: state.appEnv };
+      return { ...initialState, appEnv: state.appEnv, authenticated: state.authenticated, user: state.user };
     default:
       return state;
   }
@@ -101,17 +118,31 @@ const ENV_BADGE: Record<AppState['appEnv'], { label: string; style: React.CSSPro
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  // Fetch environment from server once on mount
+  // On mount: check auth status, then restore source session if already connected
   useEffect(() => {
-    fetch('/api/health')
+    fetch('/api/auth/status')
       .then((r) => r.json())
-      .then((data: { env?: string }) => {
-        const env = data.env as AppState['appEnv'];
-        if (env === 'staging' || env === 'production' || env === 'development') {
-          dispatch({ type: 'SET_ENV', env });
+      .then((data: { authenticated: boolean; user?: AppUser; appEnv?: string }) => {
+        const env = data.appEnv as AppState['appEnv'];
+        const validEnv = (env === 'development' || env === 'staging' || env === 'production') ? env : undefined;
+
+        if (data.authenticated && data.user) {
+          dispatch({ type: 'AUTHENTICATED', user: data.user, env: validEnv });
+
+          // Check if source was already connected (e.g. page refresh mid-session)
+          fetch('/api/source/status')
+            .then((r) => r.json())
+            .then((src: { connected: boolean; platform?: SourcePlatform }) => {
+              if (src.connected && src.platform) {
+                dispatch({ type: 'RESTORE_SESSION', platform: src.platform });
+              }
+            })
+            .catch(() => {});
+        } else if (validEnv) {
+          dispatch({ type: 'SET_ENV', env: validEnv });
         }
       })
-      .catch(() => { /* keep default */ });
+      .catch(() => {});
   }, []);
 
   function handleReset() {
@@ -124,6 +155,10 @@ export default function App() {
   const completedUpTo = sidebarIndex >= 0 ? sidebarIndex : SIDEBAR_STEPS.length;
 
   const badge = ENV_BADGE[state.appEnv];
+
+  if (!state.authenticated) {
+    return <LoginPage appEnv={state.appEnv} />;
+  }
 
   return (
     <div className="app-shell">
@@ -139,6 +174,9 @@ export default function App() {
               Start Over
             </button>
           )}
+          <a href="/api/auth/logout" className="btn btn-ghost" style={{ marginLeft: '0.5rem' }}>
+            Sign out
+          </a>
         </div>
       </header>
 
@@ -152,6 +190,7 @@ export default function App() {
         <main className="wizard-content">
           {state.step === 'connect' && (
             <ConnectSource
+              user={state.user!}
               onConnected={(platform) => dispatch({ type: 'SOURCE_CONNECTED', platform })}
             />
           )}

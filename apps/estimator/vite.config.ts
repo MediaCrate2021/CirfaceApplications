@@ -16,6 +16,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api':   'http://localhost:3001',
+      '/auth':  'http://localhost:3001',
       '/logo':  'http://localhost:3001',
     },
   },
