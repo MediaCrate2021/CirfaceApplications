@@ -214,6 +214,9 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         </div>
       )}
 
+      <p className="step-notice">
+        Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
+      </p>
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
         <button

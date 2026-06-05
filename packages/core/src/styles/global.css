@@ -340,6 +340,12 @@ a:hover { text-decoration: underline; }
   line-height: 1.6;
 }
 
+.step-notice {
+  font-size: 0.85rem;
+  color: var(--color-muted);
+  margin-bottom: 0.5rem;
+}
+
 .project-name-banner {
   display: flex;
   align-items: center;
