@@ -17,6 +17,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedTeam, setSelectedTeam] = useState('');
+  const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -38,16 +39,18 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
     const url = selectedWorkspace
       ? `/api/source/teams?workspaceId=${encodeURIComponent(selectedWorkspace)}`
       : '/api/source/teams';
+    setTeamsLoaded(false);
     fetch(url)
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
-      .then((ts) => setTeams(ts))
-      .catch(() => { /* teams are optional */ });
+      .then((ts) => { setTeams(ts); setTeamsLoaded(true); })
+      .catch(() => { setTeamsLoaded(true); /* teams are optional */ });
     setSelectedTeam('');
   }, [selectedWorkspace]);
 
   // Load projects — wait for workspace and team to be selected
   useEffect(() => {
     if (!selectedWorkspace) return;
+    if (!teamsLoaded) return;
     if (teams.length > 0 && !selectedTeam) return;
     setLoading(true);
     setError('');
@@ -61,7 +64,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
         setError('Failed to load projects. Check your source connection.');
         setLoading(false);
       });
-  }, [workspaces.length, teams.length, selectedWorkspace, selectedTeam]);
+  }, [workspaces.length, teamsLoaded, teams.length, selectedWorkspace, selectedTeam]);
 
   function toggleProject(id: string) {
     setChecked((prev) => {
