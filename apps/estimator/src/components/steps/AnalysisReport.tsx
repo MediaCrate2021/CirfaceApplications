@@ -68,7 +68,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
               <li key={p.projectId} className="analysis-project-list-item">
                 <a href={`#project-${p.projectId}`}>{i + 1}. {p.projectName}</a>
                 {sourceUrl && (
-                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="analysis-source-link" style={{ marginLeft: '0.5rem' }}>
+                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="analysis-source-link">
                     Open in {report.sourcePlatform}
                   </a>
                 )}
@@ -82,16 +82,24 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
       {report.projects.length > 1 && (
         <div className="review-section review-section-full" style={{ marginBottom: '24px' }}>
           <h3 className="review-section-title">Totals across all projects</h3>
-          <dl className="review-dl">
-            <dt>Projects</dt><dd>{report.projects.length}</dd>
-            <dt>Tasks</dt><dd>{totals.tasks}</dd>
-            <dt>Subtasks</dt><dd>{totals.subtasks}</dd>
-            <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
-            <dt>Comments</dt><dd>{totals.comments}</dd>
-            <dt>Attachments</dt><dd>{totals.attachments}</dd>
-            <dt><strong>Total items</strong></dt>
-            <dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
-          </dl>
+          <div className="review-grid" style={{ marginTop: '0.5rem' }}>
+            <div>
+              <dl className="review-dl">
+                <dt>Projects</dt><dd>{report.projects.length}</dd>
+              </dl>
+            </div>
+            <div>
+              <dl className="review-dl">
+                <dt>Tasks</dt><dd>{totals.tasks}</dd>
+                <dt>Subtasks</dt><dd>{totals.subtasks}</dd>
+                <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
+                <dt>Comments</dt><dd>{totals.comments}</dd>
+                <dt>Attachments</dt><dd>{totals.attachments}</dd>
+                <dt><strong>Total items</strong></dt>
+                <dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
+              </dl>
+            </div>
+          </div>
         </div>
       )}
 
@@ -123,10 +131,12 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
 // ---------------------------------------------------------------------------
 
 function ProjectSection({ project, platform }: { project: ProjectAnalysis; platform: string }) {
-  const migratable    = project.fields.filter((f) => !f.nonMigratable);
-  const nonMigratable = project.fields.filter((f) => f.nonMigratable);
-  const parentFields  = migratable.filter((f) => !f.isSubitemField);
-  const subitemFields = migratable.filter((f) => f.isSubitemField);
+  const migratable      = project.fields.filter((f) => !f.nonMigratable);
+  const nonMigratable   = project.fields.filter((f) => f.nonMigratable);
+  const parentFields    = migratable.filter((f) => !f.isSubitemField);
+  const subitemFields   = migratable.filter((f) => f.isSubitemField);
+  const libraryFields   = migratable.filter((f) => !f.isSubitemField && f.isLibraryField);
+  const projectFields   = migratable.filter((f) => !f.isSubitemField && !f.isLibraryField);
 
   return (
     <div id={`project-${project.projectId}`} className="analysis-project-section">
@@ -152,8 +162,13 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
           <dl className="review-dl">
             <dt>Users in source</dt>    <dd>{project.users}</dd>
             <dt>Migratable fields</dt>  <dd>{migratable.length}</dd>
-            <dt>Parent fields</dt>      <dd>{parentFields.length}</dd>
-            {subitemFields.length > 0 && <><dt>Subitem fields</dt><dd>{subitemFields.length}</dd></>}
+            {platform === 'asana' ? (<>
+              {libraryFields.length > 0 && <><dt>Library fields</dt><dd>{libraryFields.length}</dd></>}
+              {projectFields.length > 0 && <><dt>Project fields</dt><dd>{projectFields.length}</dd></>}
+            </>) : (<>
+              <dt>Main task fields</dt>   <dd>{parentFields.length}</dd>
+              {subitemFields.length > 0 && <><dt>Subitem fields</dt><dd>{subitemFields.length}</dd></>}
+            </>)}
             {nonMigratable.length > 0 && <><dt>Non-migratable</dt><dd>{nonMigratable.length}</dd></>}
           </dl>
         </div>

@@ -607,6 +607,20 @@ a:hover { text-decoration: underline; }
 .review-dl dd { font-weight: 500; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .review-row-action { font-weight: 400; }
+
+.analysis-project-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.analysis-project-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  font-size: 0.9rem;
+}
 .skip-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--color-muted); cursor: pointer; user-select: none; }
 .skip-toggle input[type="checkbox"] { cursor: pointer; }
 

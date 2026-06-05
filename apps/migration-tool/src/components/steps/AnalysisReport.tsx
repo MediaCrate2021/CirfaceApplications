@@ -38,12 +38,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
               <li key={p.projectId} className="analysis-project-list-item">
                 <a href={`#project-${p.projectId}`}>{i + 1}. {p.projectName}</a>
                 {sourceUrl && (
-                  <a
-                    href={sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="analysis-source-link"
-                  >
+                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="analysis-source-link">
                     Open in {report.sourcePlatform}
                   </a>
                 )}
@@ -57,15 +52,24 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
       {report.projects.length > 1 && (
         <div className="review-section review-section-full" style={{ marginBottom: '24px' }}>
           <h3 className="review-section-title">Totals across all projects</h3>
-          <dl className="review-dl">
-            <dt>Projects</dt><dd>{report.projects.length}</dd>
-            <dt>Tasks</dt><dd>{totals.tasks}</dd>
-            <dt>Subtasks</dt><dd>{totals.subtasks}</dd>
-            <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
-            <dt>Comments</dt><dd>{totals.comments}</dd>
-            <dt>Attachments</dt><dd>{totals.attachments}</dd>
-            <dt><strong>Total</strong></dt><dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
-          </dl>
+          <div className="review-grid" style={{ marginTop: '0.5rem' }}>
+            <div>
+              <dl className="review-dl">
+                <dt>Projects</dt><dd>{report.projects.length}</dd>
+              </dl>
+            </div>
+            <div>
+              <dl className="review-dl">
+                <dt>Tasks</dt><dd>{totals.tasks}</dd>
+                <dt>Subtasks</dt><dd>{totals.subtasks}</dd>
+                <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
+                <dt>Comments</dt><dd>{totals.comments}</dd>
+                <dt>Attachments</dt><dd>{totals.attachments}</dd>
+                <dt><strong>Total items</strong></dt>
+                <dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
+              </dl>
+            </div>
+          </div>
         </div>
       )}
 
@@ -94,10 +98,12 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
     });
   }
 
-  const migratable = project.fields.filter((f) => !f.nonMigratable);
+  const migratable    = project.fields.filter((f) => !f.nonMigratable);
   const nonMigratable = project.fields.filter((f) => f.nonMigratable);
-  const parentFields = migratable.filter((f) => !f.isSubitemField);
+  const parentFields  = migratable.filter((f) => !f.isSubitemField);
   const subitemFields = migratable.filter((f) => f.isSubitemField);
+  const libraryFields = migratable.filter((f) => !f.isSubitemField && f.isLibraryField);
+  const projectFields = migratable.filter((f) => !f.isSubitemField && !f.isLibraryField);
 
   return (
     <div id={`project-${project.projectId}`} className="analysis-project-section">
@@ -123,8 +129,13 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
           <dl className="review-dl">
             <dt>Users in source</dt><dd>{project.users}</dd>
             <dt>Migratable fields</dt><dd>{migratable.length}</dd>
-            <dt>Parent fields</dt><dd>{parentFields.length}</dd>
-            {subitemFields.length > 0 && <><dt>Subitem fields</dt><dd>{subitemFields.length}</dd></>}
+            {platform === 'asana' ? (<>
+              {libraryFields.length > 0 && <><dt>Library fields</dt><dd>{libraryFields.length}</dd></>}
+              {projectFields.length > 0 && <><dt>Project fields</dt><dd>{projectFields.length}</dd></>}
+            </>) : (<>
+              <dt>Main task fields</dt><dd>{parentFields.length}</dd>
+              {subitemFields.length > 0 && <><dt>Subitem fields</dt><dd>{subitemFields.length}</dd></>}
+            </>)}
             {nonMigratable.length > 0 && <><dt>Non-migratable</dt><dd>{nonMigratable.length}</dd></>}
           </dl>
         </div>
@@ -151,7 +162,7 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
             </thead>
             <tbody>
               {project.fields.map((f) => (
-                <FieldRow key={f.id} field={f} />
+                <FieldRow key={f.id} field={f} platform={platform} />
               ))}
             </tbody>
           </table>
@@ -161,14 +172,19 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
   );
 }
 
-function FieldRow({ field }: { field: NormalisedField }) {
-  const source = field.isSubitemField ? 'Subitem' : 'Parent';
+function fieldSource(field: NormalisedField, platform: string): string {
+  if (platform === 'monday') return field.isSubitemField ? 'Subitem' : 'Main task';
+  if (platform === 'asana')  return field.isLibraryField ? 'Library' : 'Project';
+  return '—';
+}
+
+function FieldRow({ field, platform }: { field: NormalisedField; platform: string }) {
   const optionCount = field.options?.length ?? 0;
   return (
     <tr className={field.nonMigratable ? 'row-muted' : ''}>
       <td>{field.name}</td>
       <td><span className="type-pill">{field.type}</span></td>
-      <td>{source}</td>
+      <td>{fieldSource(field, platform)}</td>
       <td>{optionCount > 0 ? optionCount : '—'}</td>
       <td>{field.nonMigratable ? <span className="badge badge-warning">non-migratable</span> : ''}</td>
     </tr>
@@ -203,7 +219,7 @@ function buildCopyText(project: ProjectAnalysis, platform: string): string {
     lines.push(
       pad(f.name, colWidths.name) +
       pad(f.type, colWidths.type) +
-      pad(f.isSubitemField ? 'Subitem' : 'Parent', colWidths.source) +
+      pad(fieldSource(f, platform), colWidths.source) +
       pad(f.options?.length ? String(f.options.length) : '—', colWidths.options) +
       (f.nonMigratable ? 'non-migratable' : ''),
     );
