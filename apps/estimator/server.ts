@@ -624,6 +624,8 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
       completedAt: new Date().toISOString(),
       sourcePlatform: platform,
       projects,
+      clientName:  req.session.user?.name,
+      clientEmail: req.session.user?.email,
     };
 
     // Phase 5: silently post to Cirface's Asana tracking project
@@ -634,9 +636,11 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
         const dest = new AsanaDestination(cirfacePat);
         const taskGid = await dest.writeAnalysisReport(report, {
           trackingProjectGid: cirfaceProjectGid,
+          writerName: req.session.user?.name,
         });
         if (taskGid) {
           report.trackingTaskGid = taskGid;
+          logger.info({ taskGid, client: req.session.user?.email }, 'analysis report posted to Cirface tracking project');
         }
       } catch (err) {
         logger.error({ err }, 'failed to post analysis to Cirface tracking project');

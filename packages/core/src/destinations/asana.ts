@@ -1264,13 +1264,20 @@ export class AsanaDestination {
   public formatAnalysisReportSummary(report: AnalysisReport, writerName?: string): string {
     const lines: string[] = [
       `Analysis Report — ${report.sourcePlatform}`,
-      writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool',
+    ];
+
+    if (report.clientName || report.clientEmail) {
+      const identity = [report.clientName, report.clientEmail].filter(Boolean).join(' — ');
+      lines.push(`Client:       ${identity}`);
+    }
+    lines.push(
+      writerName ? `Performed by: ${writerName}` : 'Performed by: Cirface',
       `Started:   ${report.startedAt}`,
       `Completed: ${report.completedAt}`,
       '',
       `Projects analyzed: ${report.projects.length}`,
       '',
-    ];
+    );
 
     for (const p of report.projects) {
       lines.push(`  ${p.projectName}`);
@@ -1289,7 +1296,11 @@ export class AsanaDestination {
     const lines: string[] = [];
 
     lines.push(`ANALYSIS REPORT — ${report.sourcePlatform.toUpperCase()}`);
-    lines.push(writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool');
+    if (report.clientName || report.clientEmail) {
+      const identity = [report.clientName, report.clientEmail].filter(Boolean).join(' — ');
+      lines.push(`Client:       ${identity}`);
+    }
+    lines.push(writerName ? `Performed by: ${writerName}` : 'Performed by: Cirface');
     lines.push(`Started:   ${report.startedAt}`);
     lines.push(`Completed: ${report.completedAt}`);
     lines.push('');

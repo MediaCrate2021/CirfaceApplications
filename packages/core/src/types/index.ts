@@ -277,6 +277,8 @@ export interface AnalysisReport {
   sourcePlatform: string;
   projects: ProjectAnalysis[];
   trackingTaskGid?: string;
+  clientName?: string;
+  clientEmail?: string;
 }
 
 // ---------------------------------------------------------------------------
