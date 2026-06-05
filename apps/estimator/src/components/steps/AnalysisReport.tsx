@@ -81,25 +81,16 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
       {/* Grand totals (multi-project only) */}
       {report.projects.length > 1 && (
         <div className="review-section review-section-full" style={{ marginBottom: '24px' }}>
-          <h3 className="review-section-title">Totals across all projects</h3>
-          <div className="review-grid" style={{ marginTop: '0.5rem' }}>
-            <div>
-              <dl className="review-dl">
-                <dt>Projects</dt><dd>{report.projects.length}</dd>
-              </dl>
-            </div>
-            <div>
-              <dl className="review-dl">
-                <dt>Tasks</dt><dd>{totals.tasks}</dd>
-                <dt>Subtasks</dt><dd>{totals.subtasks}</dd>
-                <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
-                <dt>Comments</dt><dd>{totals.comments}</dd>
-                <dt>Attachments</dt><dd>{totals.attachments}</dd>
-                <dt><strong>Total items</strong></dt>
-                <dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
-              </dl>
-            </div>
-          </div>
+          <h3 className="review-section-title">Item Totals Across All {report.projects.length} Projects</h3>
+          <dl className="review-dl">
+            <dt>Tasks</dt><dd>{totals.tasks}</dd>
+            <dt>Subtasks</dt><dd>{totals.subtasks}</dd>
+            <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
+            <dt>Comments</dt><dd>{totals.comments}</dd>
+            <dt>Attachments</dt><dd>{totals.attachments}</dd>
+            <dt><strong>Total items</strong></dt>
+            <dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
+          </dl>
         </div>
       )}
 
@@ -131,6 +122,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
 // ---------------------------------------------------------------------------
 
 function ProjectSection({ project, platform }: { project: ProjectAnalysis; platform: string }) {
+  const [fieldsOpen, setFieldsOpen] = useState(false);
   const migratable      = project.fields.filter((f) => !f.nonMigratable);
   const nonMigratable   = project.fields.filter((f) => f.nonMigratable);
   const parentFields    = migratable.filter((f) => !f.isSubitemField);
@@ -144,59 +136,64 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
         <h3 className="analysis-project-title">{project.projectName}</h3>
       </div>
 
-      <div className="review-grid" style={{ marginBottom: '20px' }}>
-        <div className="review-section">
-          <h4 className="review-section-title">Content</h4>
-          <dl className="review-dl">
-            <dt>Tasks</dt>        <dd>{project.tasks}</dd>
-            <dt>Subtasks</dt>     <dd>{project.subtasks}</dd>
-            <dt>Dependencies</dt> <dd>{project.dependencies}</dd>
-            <dt>Comments</dt>     <dd>{project.comments}</dd>
-            <dt>Attachments</dt>  <dd>{project.attachments}</dd>
-            <dt><strong>Total</strong></dt>
-            <dd><strong>{project.tasks + project.subtasks + project.dependencies + project.comments + project.attachments}</strong></dd>
-          </dl>
-        </div>
-        <div className="review-section">
-          <h4 className="review-section-title">Structure</h4>
-          <dl className="review-dl">
-            <dt>Users in source</dt>    <dd>{project.users}</dd>
-            <dt>Migratable fields</dt>  <dd>{migratable.length}</dd>
-            {platform === 'asana' ? (<>
-              {libraryFields.length > 0 && <><dt>Library fields</dt><dd>{libraryFields.length}</dd></>}
-              {projectFields.length > 0 && <><dt>Project fields</dt><dd>{projectFields.length}</dd></>}
-            </>) : (<>
-              <dt>Main task fields</dt>   <dd>{parentFields.length}</dd>
-              {subitemFields.length > 0 && <><dt>Subitem fields</dt><dd>{subitemFields.length}</dd></>}
-            </>)}
-            {nonMigratable.length > 0 && <><dt>Non-migratable</dt><dd>{nonMigratable.length}</dd></>}
-          </dl>
+      <div className="analysis-project-body">
+        <div className="review-grid" style={{ marginBottom: '0' }}>
+          <div className="review-section">
+            <h4 className="review-section-title">Content</h4>
+            <dl className="review-dl">
+              <dt>Tasks</dt>        <dd>{project.tasks}</dd>
+              <dt>Subtasks</dt>     <dd>{project.subtasks}</dd>
+              <dt>Dependencies</dt> <dd>{project.dependencies}</dd>
+              <dt>Comments</dt>     <dd>{project.comments}</dd>
+              <dt>Attachments</dt>  <dd>{project.attachments}</dd>
+              <dt><strong>Total</strong></dt>
+              <dd><strong>{project.tasks + project.subtasks + project.dependencies + project.comments + project.attachments}</strong></dd>
+            </dl>
+          </div>
+          <div className="review-section">
+            <h4 className="review-section-title">Structure</h4>
+            <dl className="review-dl">
+              <dt>Users in source</dt>    <dd>{project.users}</dd>
+              <dt>Migratable fields</dt>  <dd>{migratable.length}</dd>
+              {platform === 'asana' ? (<>
+                {libraryFields.length > 0 && <><dt>Library fields</dt><dd>{libraryFields.length}</dd></>}
+                {projectFields.length > 0 && <><dt>Project fields</dt><dd>{projectFields.length}</dd></>}
+              </>) : (<>
+                <dt>Main task fields</dt>   <dd>{parentFields.length}</dd>
+                {subitemFields.length > 0 && <><dt>Subitem fields</dt><dd>{subitemFields.length}</dd></>}
+              </>)}
+              {nonMigratable.length > 0 && <><dt>Non-migratable</dt><dd>{nonMigratable.length}</dd></>}
+            </dl>
+          </div>
         </div>
       </div>
 
-      {project.fields.length > 0 && (
-        <div className="analysis-field-table-wrap">
-          <div className="analysis-field-table-toolbar">
-            <span className="analysis-field-table-label">Custom Fields</span>
+      {project.fields.length > 0 && (<>
+        <button className="analysis-fields-toggle" onClick={() => setFieldsOpen((o) => !o)}>
+          Custom Fields ({project.fields.length})
+          <span className={`analysis-fields-toggle-icon ${fieldsOpen ? 'open' : ''}`}>▼</span>
+        </button>
+        {fieldsOpen && (
+          <div className="analysis-field-table-wrap">
+            <table className="mapping-table analysis-field-table">
+              <thead>
+                <tr>
+                  <th>Field Name</th>
+                  <th>Type</th>
+                  <th>Source</th>
+                  <th>Options</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {project.fields.map((f) => (
+                  <FieldRow key={f.id} field={f} platform={platform} />
+                ))}
+              </tbody>
+            </table>
           </div>
-          <table className="mapping-table analysis-field-table">
-            <thead>
-              <tr>
-                <th>Field Name</th>
-                <th>Type</th>
-                <th>Source</th>
-                <th>Options</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {project.fields.map((f) => (
-                <FieldRow key={f.id} field={f} platform={platform} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        )}
+      </>)}
     </div>
   );
 }

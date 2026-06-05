@@ -621,6 +621,67 @@ a:hover { text-decoration: underline; }
   padding: 0.3rem 0;
   font-size: 0.9rem;
 }
+
+/* Per-project card */
+.analysis-project-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+.analysis-project-section {
+  background: var(--color-surface);
+}
+
+.analysis-project-header {
+  padding: 1rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.analysis-project-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.analysis-project-body {
+  padding: 1.25rem;
+}
+
+/* Custom fields accordion */
+.analysis-fields-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  padding: 0.75rem 1.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.analysis-fields-toggle:hover {
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+}
+
+.analysis-fields-toggle-icon {
+  font-size: 0.75rem;
+  transition: transform 0.2s;
+}
+
+.analysis-fields-toggle-icon.open {
+  transform: rotate(180deg);
+}
+
+.analysis-field-table-wrap {
+  padding: 0 1.25rem 1.25rem;
+}
 .skip-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--color-muted); cursor: pointer; user-select: none; }
 .skip-toggle input[type="checkbox"] { cursor: pointer; }
 
