@@ -44,8 +44,10 @@ export interface NormalisedField {
   type: NormalisedFieldType;
   options?: NormalisedFieldOption[]; // for dropdown fields
   description?: string;
-  /** True when this field exists only on the subitem sub-board (not on the parent board). */
+  /** True when this field exists only on the subitem sub-board (not on the parent board). Monday only. */
   isSubitemField?: boolean;
+  /** True when this field comes from the organisation-level library. Asana only. */
+  isLibraryField?: boolean;
   /** True when this field type cannot be meaningfully migrated (e.g. pulse_id, button, autonumber). */
   nonMigratable?: boolean;
 }

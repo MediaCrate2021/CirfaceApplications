@@ -123,16 +123,6 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
 // ---------------------------------------------------------------------------
 
 function ProjectSection({ project, platform }: { project: ProjectAnalysis; platform: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function copyFields() {
-    const text = buildCopyText(project, platform);
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
   const migratable    = project.fields.filter((f) => !f.nonMigratable);
   const nonMigratable = project.fields.filter((f) => f.nonMigratable);
   const parentFields  = migratable.filter((f) => !f.isSubitemField);
@@ -158,7 +148,7 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
           </dl>
         </div>
         <div className="review-section">
-          <h4 className="review-section-title">Fields</h4>
+          <h4 className="review-section-title">Structure</h4>
           <dl className="review-dl">
             <dt>Users in source</dt>    <dd>{project.users}</dd>
             <dt>Migratable fields</dt>  <dd>{migratable.length}</dd>
@@ -173,9 +163,6 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
         <div className="analysis-field-table-wrap">
           <div className="analysis-field-table-toolbar">
             <span className="analysis-field-table-label">Custom Fields</span>
-            <button className="btn btn-ghost btn-sm" onClick={copyFields}>
-              {copied ? 'Copied!' : 'Copy field list'}
-            </button>
           </div>
           <table className="mapping-table analysis-field-table">
             <thead>
@@ -189,7 +176,7 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
             </thead>
             <tbody>
               {project.fields.map((f) => (
-                <FieldRow key={f.id} field={f} />
+                <FieldRow key={f.id} field={f} platform={platform} />
               ))}
             </tbody>
           </table>
@@ -199,13 +186,19 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
   );
 }
 
-function FieldRow({ field }: { field: NormalisedField }) {
+function fieldSource(field: NormalisedField, platform: string): string {
+  if (platform === 'monday') return field.isSubitemField ? 'Subitem' : 'Main task';
+  if (platform === 'asana')  return field.isLibraryField ? 'Library' : 'Project';
+  return '—';
+}
+
+function FieldRow({ field, platform }: { field: NormalisedField; platform: string }) {
   const optionCount = field.options?.length ?? 0;
   return (
     <tr className={field.nonMigratable ? 'row-muted' : ''}>
       <td>{field.name}</td>
       <td><span className="type-pill">{field.type}</span></td>
-      <td>{field.isSubitemField ? 'Subitem' : 'Parent'}</td>
+      <td>{fieldSource(field, platform)}</td>
       <td>{optionCount > 0 ? optionCount : '—'}</td>
       <td>{field.nonMigratable ? <span className="badge badge-warning">non-migratable</span> : ''}</td>
     </tr>
@@ -218,29 +211,3 @@ function getSourceLink(platform: string, projectId: string): string | null {
   return null;
 }
 
-function buildCopyText(project: ProjectAnalysis, platform: string): string {
-  const lines: string[] = [];
-  lines.push(`Fields in "${project.projectName}" (${platform})`);
-  lines.push('='.repeat(60));
-  lines.push('');
-
-  const w = { name: 30, type: 16, source: 10, options: 8 };
-  const pad = (s: string, n: number) => s.slice(0, n).padEnd(n);
-
-  lines.push(pad('Field Name', w.name) + pad('Type', w.type) + pad('Source', w.source) + pad('Options', w.options) + 'Notes');
-  lines.push('-'.repeat(w.name + w.type + w.source + w.options + 16));
-
-  for (const f of project.fields) {
-    lines.push(
-      pad(f.name, w.name) +
-      pad(f.type, w.type) +
-      pad(f.isSubitemField ? 'Subitem' : 'Parent', w.source) +
-      pad(f.options?.length ? String(f.options.length) : '—', w.options) +
-      (f.nonMigratable ? 'non-migratable' : ''),
-    );
-  }
-
-  lines.push('');
-  lines.push(`Tasks: ${project.tasks}  Subtasks: ${project.subtasks}  Comments: ${project.comments}  Attachments: ${project.attachments}  Dependencies: ${project.dependencies}`);
-  return lines.join('\n');
-}

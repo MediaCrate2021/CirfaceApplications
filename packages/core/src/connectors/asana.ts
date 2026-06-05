@@ -199,14 +199,19 @@ export class AsanaConnector implements SourceConnector {
         gid: string;
         name: string;
         resource_subtype: string;
+        is_global_to_workspace: boolean;
         enum_options?: Array<{ gid: string; name: string; color?: string }>;
       };
     }>(
       `/projects/${projectId}/custom_field_settings` +
       `?opt_fields=custom_field.gid,custom_field.name,custom_field.resource_subtype` +
+      `,custom_field.is_global_to_workspace` +
       `,custom_field.enum_options,custom_field.enum_options.gid,custom_field.enum_options.name`,
     );
-    return settings.map((s) => this.normaliseField(s.custom_field));
+    return settings.map((s) => ({
+      ...this.normaliseField(s.custom_field),
+      isLibraryField: s.custom_field.is_global_to_workspace === true,
+    }));
   }
 
   async getProjectData(projectId: string): Promise<NormalisedProject> {
