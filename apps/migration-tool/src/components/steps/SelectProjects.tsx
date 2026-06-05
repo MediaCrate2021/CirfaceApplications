@@ -14,6 +14,8 @@ interface Props {
 export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [sourceWorkspaces, setSourceWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedSourceWorkspace, setSelectedSourceWorkspace] = useState('');
+  const [sourceTeams, setSourceTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedSourceTeam, setSelectedSourceTeam] = useState('');
   const [sourceProjects, setSourceProjects]   = useState<SourceProject[]>([]);
   const [destWorkspaces, setDestWorkspaces]   = useState<Array<{ id: string; name: string }>>([]);
   const [selectedDestWorkspaceGid, setSelectedDestWorkspaceGid] = useState(state.destWorkspaceGid ?? '');
@@ -39,7 +41,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const typeaheadRef = useRef<HTMLDivElement>(null);
 
-  const [loadingSource, setLoadingSource]   = useState(true);
+  const [loadingSource, setLoadingSource]   = useState(false);
   const [loadingTeams, setLoadingTeams]     = useState(true);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState('');
@@ -103,6 +105,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
     setSelectedSource('');
     setSelectedSourceWorkspace('');
+    setSelectedSourceTeam('');
     setSelectedTeamGid('');
     setSelectedDest('');
     setProjectQuery('');
@@ -111,11 +114,14 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     setReloadCount((c) => c + 1);
   }
 
-  // Load source workspaces, destination workspaces, and Asana teams on mount (and on reload)
+  // Load source workspaces, destination workspaces on mount (and on reload)
   useEffect(() => {
     fetch('/api/source/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
-      .then((ws) => setSourceWorkspaces(ws))
+      .then((ws) => {
+        setSourceWorkspaces(ws);
+        if (ws.length > 0 && !selectedSourceWorkspace) setSelectedSourceWorkspace(ws[0].id);
+      })
       .catch(() => { /* workspaces are optional — fail silently */ });
 
     fetch('/api/destination/workspaces')
@@ -123,6 +129,18 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
       .then((ws) => setDestWorkspaces(ws))
       .catch(() => { /* fail silently — workspace picker is optional */ });
   }, [reloadCount]);
+
+  // Reload source teams when source workspace changes
+  useEffect(() => {
+    const url = selectedSourceWorkspace
+      ? `/api/source/teams?workspaceId=${selectedSourceWorkspace}`
+      : '/api/source/teams';
+    fetch(url)
+      .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
+      .then((ts) => setSourceTeams(ts))
+      .catch(() => { /* teams are optional */ });
+    setSelectedSourceTeam('');
+  }, [selectedSourceWorkspace, reloadCount]);
 
   // Reload destination teams when workspace changes (or on reload)
   useEffect(() => {
@@ -136,18 +154,21 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
       });
   }, [reloadCount, destWorkspaceVersion]);
 
-  // Reload source projects when workspace filter changes (or on reload)
+  // Reload source projects when workspace/team filter changes (or on reload)
   useEffect(() => {
+    if (!selectedSourceWorkspace) return;
+    if (sourceTeams.length > 0 && !selectedSourceTeam) return;
     setLoadingSource(true);
     setSelectedSource('');
-    const url = selectedSourceWorkspace
-      ? `/api/source/projects?workspaceId=${encodeURIComponent(selectedSourceWorkspace)}`
-      : '/api/source/projects';
+    const params = new URLSearchParams();
+    if (selectedSourceWorkspace) params.set('workspaceId', selectedSourceWorkspace);
+    if (selectedSourceTeam) params.set('teamId', selectedSourceTeam);
+    const url = params.size > 0 ? `/api/source/projects?${params}` : '/api/source/projects';
     fetch(url)
       .then((r) => r.json() as Promise<SourceProject[]>)
       .then((src) => { setSourceProjects([...src].sort((a, b) => a.name.localeCompare(b.name))); setLoadingSource(false); })
       .catch(() => { setError('Failed to load source projects'); setLoadingSource(false); });
-  }, [selectedSourceWorkspace, reloadCount]);
+  }, [sourceWorkspaces.length, sourceTeams.length, selectedSourceWorkspace, selectedSourceTeam, reloadCount]);
 
   // When source project changes or mode switches to 'new', default the new project name to the source name
   useEffect(() => {
@@ -303,17 +324,30 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
             {sourceWorkspaces.length > 0 && (
               <div className="field-group">
-                <label htmlFor="source-workspace">
-                  {state.sourceWorkspaceName ?? 'Source'} Workspace <span className="field-hint-inline">(filters list)</span>
-                </label>
+                <label htmlFor="source-workspace">Workspace</label>
                 <select
                   id="source-workspace"
                   value={selectedSourceWorkspace}
-                  onChange={(e) => setSelectedSourceWorkspace(e.target.value)}
+                  onChange={(e) => { setSelectedSourceWorkspace(e.target.value); setSelectedSourceTeam(''); }}
                 >
-                  <option value="">— All workspaces —</option>
                   {sourceWorkspaces.map((w) => (
                     <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {sourceTeams.length > 0 && (
+              <div className="field-group">
+                <label htmlFor="source-team">Team</label>
+                <select
+                  id="source-team"
+                  value={selectedSourceTeam}
+                  onChange={(e) => setSelectedSourceTeam(e.target.value)}
+                >
+                  <option value="">— Select a team —</option>
+                  {sourceTeams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>
               </div>

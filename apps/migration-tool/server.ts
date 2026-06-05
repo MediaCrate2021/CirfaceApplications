@@ -427,13 +427,27 @@ app.get('/api/source/workspaces', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/source/projects', requireAuth, async (req, res) => {
+app.get('/api/source/teams', requireAuth, async (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   try {
     const { platform, token } = req.session.sourceConfig;
     const { workspaceId } = req.query as { workspaceId?: string };
     const connector = makeConnector(platform, token);
-    const projects = await connector.getProjects(workspaceId);
+    if (!connector.getTeams) return res.json([]);
+    const teams = await connector.getTeams(workspaceId);
+    res.json(teams);
+  } catch (err) {
+    apiError(res, err, { user: req.session.user?.name, route: 'source/teams' });
+  }
+});
+
+app.get('/api/source/projects', requireAuth, async (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  try {
+    const { platform, token } = req.session.sourceConfig;
+    const { workspaceId, teamId } = req.query as { workspaceId?: string; teamId?: string };
+    const connector = makeConnector(platform, token);
+    const projects = await connector.getProjects(workspaceId, teamId);
     res.json(projects);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/projects' });
