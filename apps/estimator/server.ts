@@ -369,15 +369,15 @@ app.get('/auth/monday/login', (req, res) => {
   captureReturnTo(req);
 
   const params = new URLSearchParams({
-    client_id:     process.env.MONDAY_CLIENT_ID!,
-    redirect_uri:  process.env.MONDAY_REDIRECT_URI!,
-    response_type: 'install',
+    client_id: process.env.MONDAY_CLIENT_ID!,
     state,
   });
 
   req.session.save((err) => {
     if (err) logger.error({ err }, 'session save error before Monday OAuth');
-    res.redirect(`https://auth.monday.com/oauth2/authorize?${params}`);
+    const authUrl = `https://auth.monday.com/oauth2/authorize?${params}`;
+    logger.info({ authUrl }, 'Monday OAuth redirect');
+    res.redirect(authUrl);
   });
 });
 
@@ -405,7 +405,6 @@ app.get('/auth/monday/callback', async (req, res) => {
         grant_type:    'authorization_code',
         client_id:     process.env.MONDAY_CLIENT_ID!,
         client_secret: process.env.MONDAY_CLIENT_SECRET!,
-        redirect_uri:  process.env.MONDAY_REDIRECT_URI!,
         code,
       }),
     });

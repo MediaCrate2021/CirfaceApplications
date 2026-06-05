@@ -50,11 +50,18 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       .then((ws) => setWorkspaces(ws))
       .catch(() => { /* workspaces are optional */ });
 
-    fetch('/api/source/teams')
+  }, []);
+
+  useEffect(() => {
+    const url = selectedWorkspace
+      ? `/api/source/teams?workspaceId=${selectedWorkspace}`
+      : '/api/source/teams';
+    fetch(url)
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
       .then((ts) => setTeams(ts))
       .catch(() => { /* teams are optional */ });
-  }, []);
+    setSelectedTeam('');
+  }, [selectedWorkspace]);
 
   useEffect(() => {
     setLoading(true);
