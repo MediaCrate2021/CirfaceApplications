@@ -12,49 +12,61 @@ interface Props {
   onBack: () => void;
 }
 
-export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props) {
+export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
   const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
+  const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedTeam, setSelectedTeam] = useState('');
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Load workspaces (optional — platforms like Monday support them)
+  // Load workspaces on mount — auto-select first
   useEffect(() => {
     fetch('/api/source/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
-      .then((ws) => setWorkspaces(ws))
+      .then((ws) => {
+        setWorkspaces(ws);
+        if (ws.length > 0) setSelectedWorkspace(ws[0].id);
+      })
       .catch(() => { /* workspaces are optional */ });
   }, []);
 
-  // Load projects when workspace filter changes
+  // Reload teams when workspace changes
   useEffect(() => {
+    const url = selectedWorkspace
+      ? `/api/source/teams?workspaceId=${encodeURIComponent(selectedWorkspace)}`
+      : '/api/source/teams';
+    fetch(url)
+      .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
+      .then((ts) => setTeams(ts))
+      .catch(() => { /* teams are optional */ });
+    setSelectedTeam('');
+  }, [selectedWorkspace]);
+
+  // Load projects — wait for workspace and team to be selected
+  useEffect(() => {
+    if (!selectedWorkspace) return;
+    if (teams.length > 0 && !selectedTeam) return;
     setLoading(true);
     setError('');
-    const url = selectedWorkspace
-      ? `/api/source/projects?workspaceId=${encodeURIComponent(selectedWorkspace)}`
-      : '/api/source/projects';
-    fetch(url)
+    const params = new URLSearchParams();
+    if (selectedWorkspace) params.set('workspaceId', selectedWorkspace);
+    if (selectedTeam) params.set('teamId', selectedTeam);
+    fetch(`/api/source/projects?${params}`)
       .then((r) => r.json() as Promise<SourceProject[]>)
-      .then((list) => {
-        setProjects(list);
-        setLoading(false);
-      })
+      .then((list) => { setProjects(list); setLoading(false); })
       .catch(() => {
         setError('Failed to load projects. Check your source connection.');
         setLoading(false);
       });
-  }, [selectedWorkspace]);
+  }, [workspaces.length, teams.length, selectedWorkspace, selectedTeam]);
 
   function toggleProject(id: string) {
     setChecked((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
   }
@@ -88,14 +100,26 @@ export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props
           <select
             id="workspace-filter"
             value={selectedWorkspace}
-            onChange={(e) => {
-              setSelectedWorkspace(e.target.value);
-              setChecked(new Set());
-            }}
+            onChange={(e) => { setSelectedWorkspace(e.target.value); setSelectedTeam(''); setChecked(new Set()); }}
           >
-            <option value="">All workspaces</option>
             {workspaces.map((ws) => (
               <option key={ws.id} value={ws.id}>{ws.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {teams.length > 0 && (
+        <div className="field-group" style={{ maxWidth: '360px', marginBottom: '20px' }}>
+          <label htmlFor="team-filter">Filter by team</label>
+          <select
+            id="team-filter"
+            value={selectedTeam}
+            onChange={(e) => { setSelectedTeam(e.target.value); setChecked(new Set()); }}
+          >
+            <option value="">— Select a team —</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         </div>
@@ -104,7 +128,11 @@ export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props
       {loading && <p className="loading-text">Loading projects…</p>}
       {error && <p className="error-text">{error}</p>}
 
-      {!loading && !error && projects.length === 0 && (
+      {!loading && !error && teams.length > 0 && !selectedTeam && (
+        <p className="step-desc">Select a team to load projects.</p>
+      )}
+
+      {!loading && !error && selectedTeam && projects.length === 0 && (
         <p className="empty-text">No projects found.</p>
       )}
 
