@@ -68,7 +68,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
               <li key={p.projectId} className="analysis-project-list-item">
                 <a href={`#project-${p.projectId}`}>{i + 1}. {p.projectName}</a>
                 {sourceUrl && (
-                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="analysis-source-link">
+                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="analysis-source-link" style={{ marginLeft: '0.5rem' }}>
                     Open in {report.sourcePlatform}
                   </a>
                 )}

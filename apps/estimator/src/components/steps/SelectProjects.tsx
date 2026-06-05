@@ -41,15 +41,17 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     fetch('/api/source/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
-      .then((ws) => setWorkspaces(ws))
+      .then((ws) => {
+        setWorkspaces(ws);
+        if (ws.length > 0) setSelectedWorkspace(ws[0].id);
+      })
       .catch(() => { /* workspaces are optional */ });
-
   }, []);
 
   useEffect(() => {
@@ -64,6 +66,10 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   }, [selectedWorkspace]);
 
   useEffect(() => {
+    // Wait until workspace is selected (if platform has workspaces)
+    if (workspaces.length > 0 && !selectedWorkspace) return;
+    // Wait until team is selected (if teams are available) — avoids loading entire workspace
+    if (teams.length > 0 && !selectedTeam) return;
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
@@ -79,7 +85,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         setError(`Failed to load ${PROJECT_NOUN[platform]}s. Check your source connection.`);
         setLoading(false);
       });
-  }, [selectedWorkspace, selectedTeam, platform]);
+  }, [workspaces.length, teams.length, selectedWorkspace, selectedTeam, platform]);
 
   const filtered = filter.trim()
     ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
@@ -136,7 +142,6 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
             value={selectedWorkspace}
             onChange={(e) => { setSelectedWorkspace(e.target.value); setSelectedTeam(''); setChecked(new Set()); }}
           >
-            <option value="">All workspaces</option>
             {workspaces.map((ws) => (
               <option key={ws.id} value={ws.id}>{ws.name}</option>
             ))}
@@ -215,6 +220,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       )}
 
       <p className="step-notice">
+        <span>&#9888;</span>
         Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
       </p>
       <div className="step-actions">

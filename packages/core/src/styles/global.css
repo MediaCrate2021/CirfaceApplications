@@ -341,9 +341,12 @@ a:hover { text-decoration: underline; }
 }
 
 .step-notice {
-  font-size: 0.85rem;
-  color: var(--color-muted);
-  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  color: #c0392b;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
 }
 
 .project-name-banner {
