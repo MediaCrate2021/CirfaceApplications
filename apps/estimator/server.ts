@@ -68,6 +68,11 @@ declare module 'express-session' {
 
 const app = express();
 
+// Must be set before session middleware so that req.secure is evaluated correctly
+// when running behind Railway's HTTPS proxy. Without this, secure cookies are never
+// set in production because Express doesn't trust the X-Forwarded-Proto header.
+app.set('trust proxy', 1);
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
   origin: APP_ENV === 'production'
@@ -112,8 +117,6 @@ if (logger.isLevelEnabled('debug')) {
     next();
   });
 }
-
-app.set('trust proxy', 1);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -353,7 +356,10 @@ app.get('/auth/asana/callback', async (req, res) => {
     req.session.accessToken = data.access_token;
     req.session.user        = data.data;
     logger.info({ name: data.data?.name, email: data.data?.email }, 'user authenticated via Asana OAuth');
-    res.redirect(returnTo);
+    req.session.save((saveErr) => {
+      if (saveErr) logger.error({ err: saveErr }, 'session save error after Asana OAuth');
+      res.redirect(returnTo);
+    });
   } catch (err) {
     logger.error({ err }, 'Asana token exchange exception');
     res.redirect(`${returnTo}?error=token_exchange_failed`);
