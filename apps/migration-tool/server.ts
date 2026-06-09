@@ -347,6 +347,7 @@ app.get('/auth/callback', async (req, res) => {
 
 app.get('/auth/status', (req, res) => {
   const appEnv = process.env.APP_ENV ?? 'development';
+  res.set('Cache-Control', 'no-store');
   if (req.session.accessToken) {
     return res.json({ authenticated: true, user: req.session.user, appEnv });
   }

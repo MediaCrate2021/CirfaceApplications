@@ -215,6 +215,7 @@ app.get('/api/auth/providers', (_req, res) => {
 
 // Auth status — public, used by the frontend to decide whether to show the login page
 app.get('/api/auth/status', (req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.json({
     authenticated: !!req.session.accessToken,
     user:          req.session.user ?? null,
@@ -264,6 +265,7 @@ app.post('/api/source/connect', requireAuth, async (req, res) => {
 });
 
 app.get('/api/source/status', requireAuth, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   if (req.session.sourceConfig) {
     res.json({ connected: true, platform: req.session.sourceConfig.platform });
   } else {
