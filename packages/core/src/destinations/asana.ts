@@ -1250,6 +1250,8 @@ export class AsanaDestination {
     report: AnalysisReport,
     options: {
       trackingProjectGid: string;
+      /** If provided, the report task is placed in this section instead of the project root. */
+      resultsSectionGid?: string;
       trackingToken?: string;
       writerName?: string;
     },
@@ -1260,11 +1262,15 @@ export class AsanaDestination {
     const taskName = `Analysis Report: ${projectNames} (${date})`;
 
     try {
-      const task = await this.request<{ gid: string }>('POST', '/tasks', {
+      const taskBody: Record<string, unknown> = {
         projects: [options.trackingProjectGid],
         name: taskName,
         notes: this.formatAnalysisReportSummary(report, options.writerName),
-      }, tt);
+      };
+      if (options.resultsSectionGid) {
+        taskBody.memberships = [{ project: options.trackingProjectGid, section: options.resultsSectionGid }];
+      }
+      const task = await this.request<{ gid: string }>('POST', '/tasks', taskBody, tt);
 
       const filename = `analysis-report-${new Date().toISOString().slice(0, 10)}.txt`;
       await this.uploadTextAttachment(task.gid, filename, this.formatAnalysisReportLog(report, options.writerName), tt);

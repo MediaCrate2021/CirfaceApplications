@@ -56,6 +56,7 @@ declare module 'express-session' {
     returnTo?: string;
     accessToken?: string;
     user?: { gid: string; name: string; email: string };
+    accessApproved?: boolean;
     sourceConfig?: { platform: SourcePlatform; token: string };
     lastAnalysisReport?: AnalysisReport;
     analysisInProgress?: boolean;
@@ -116,6 +117,64 @@ if (logger.isLevelEnabled('debug')) {
     logger.debug({ method: req.method, path: req.path }, 'request');
     next();
   });
+}
+
+// ---------------------------------------------------------------------------
+// Access list
+// ---------------------------------------------------------------------------
+
+// All three sections live inside CIRFACE_TRACKING_PROJECT_GID.
+// Set the section GIDs in .env:
+//   CIRFACE_RESULTS_SECTION_GID       — where analysis reports are posted
+//   CIRFACE_ACCESS_LIST_SECTION_GID   — task names are approved emails / domains
+//   CIRFACE_ACCESS_REQUESTS_SECTION_GID — where contact form submissions land
+
+interface AccessListCache {
+  entries: string[]; // lowercase approved emails and domains
+  fetchedAt: number;
+}
+
+let accessListCache: AccessListCache | null = null;
+const ACCESS_LIST_TTL_MS = 5 * 60 * 1_000; // re-fetch every 5 minutes
+
+/**
+ * Check whether an email is on the Cirface access list.
+ * Each task name in the Access List section is an approved entry —
+ * either an exact email (user@company.com) or a domain (company.com).
+ * Returns true if CIRFACE_ACCESS_LIST_SECTION_GID is not set (open access for dev).
+ */
+async function isAccessApproved(email: string): Promise<boolean> {
+  const pat        = process.env.CIRFACE_ASANA_PAT;
+  const sectionGid = process.env.CIRFACE_ACCESS_LIST_SECTION_GID;
+  if (!pat || !sectionGid) return true;
+
+  const now = Date.now();
+  if (!accessListCache || now - accessListCache.fetchedAt > ACCESS_LIST_TTL_MS) {
+    try {
+      const res = await fetch(
+        `https://app.asana.com/api/1.0/sections/${encodeURIComponent(sectionGid)}/tasks?opt_fields=name&limit=100`,
+        { headers: { Authorization: `Bearer ${pat}` } },
+      );
+      const json = await res.json() as { data?: Array<{ name: string }> };
+      const entries = (json.data ?? [])
+        .map((t) => {
+          // Expected format: "Access for: user@company.com" or "Access for: company.com"
+          const raw = t.name.trim().toLowerCase();
+          return raw.startsWith('access for:') ? raw.replace('access for:', '').trim() : raw;
+        })
+        .filter(Boolean);
+      accessListCache = { entries, fetchedAt: now };
+      logger.info({ count: entries.length }, 'access list refreshed');
+    } catch (err) {
+      logger.error({ err }, 'failed to fetch access list from Asana');
+      if (!accessListCache) return false;
+      // use stale cache on transient error rather than blocking everyone
+    }
+  }
+
+  const emailLower = email.toLowerCase();
+  const domain     = emailLower.split('@')[1] ?? '';
+  return accessListCache!.entries.some((e) => e === emailLower || e === domain);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,11 +275,56 @@ app.get('/api/auth/providers', (_req, res) => {
 // Auth status — public, used by the frontend to decide whether to show the login page
 app.get('/api/auth/status', (req, res) => {
   res.set('Cache-Control', 'no-store');
+  const authenticated = !!req.session.accessToken;
+  // Sessions created before access control was deployed won't have accessApproved set.
+  // Treat as approved so existing sessions aren't invalidated on deploy.
+  const accessApproved = authenticated ? (req.session.accessApproved ?? true) : false;
   res.json({
-    authenticated: !!req.session.accessToken,
-    user:          req.session.user ?? null,
-    appEnv:        APP_ENV,
+    authenticated,
+    accessApproved,
+    user:   req.session.user ?? null,
+    appEnv: APP_ENV,
   });
+});
+
+app.post('/api/access/request', async (req, res) => {
+  const { name, email, company, note } = req.body as {
+    name?: string; email?: string; company?: string; note?: string;
+  };
+
+  logger.info({ name, email, company }, 'access request received');
+
+  const pat        = process.env.CIRFACE_ASANA_PAT;
+  const projectGid = process.env.CIRFACE_TRACKING_PROJECT_GID;
+  const sectionGid = process.env.CIRFACE_ACCESS_REQUESTS_SECTION_GID;
+
+  if (pat && projectGid) {
+    try {
+      const taskName = `Access Request: ${name ?? email ?? 'Unknown'}${company ? ` — ${company}` : ''}`;
+      const notes = [
+        `Name:    ${name    ?? '—'}`,
+        `Email:   ${email   ?? '—'}`,
+        `Company: ${company ?? '—'}`,
+        note ? `\nNote:\n${note}` : '',
+      ].filter(Boolean).join('\n');
+
+      const taskBody: Record<string, unknown> = { projects: [projectGid], name: taskName, notes };
+      if (sectionGid) {
+        taskBody.memberships = [{ project: projectGid, section: sectionGid }];
+      }
+
+      await fetch('https://app.asana.com/api/1.0/tasks', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: taskBody }),
+      });
+      logger.info({ name, email }, 'access request posted to Asana');
+    } catch (err) {
+      logger.error({ err }, 'failed to post access request to Asana');
+    }
+  }
+
+  res.json({ ok: true });
 });
 
 app.get('/api/auth/logout', (req, res) => {
@@ -357,7 +461,12 @@ app.get('/auth/asana/callback', async (req, res) => {
 
     req.session.accessToken = data.access_token;
     req.session.user        = data.data;
-    logger.info({ name: data.data?.name, email: data.data?.email }, 'user authenticated via Asana OAuth');
+
+    const email = data.data?.email ?? '';
+    const approved = await isAccessApproved(email);
+    req.session.accessApproved = approved;
+    logger.info({ name: data.data?.name, email, approved }, 'user authenticated via Asana OAuth');
+
     req.session.save((saveErr) => {
       if (saveErr) logger.error({ err: saveErr }, 'session save error after Asana OAuth');
       res.redirect(returnTo);
@@ -723,6 +832,7 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
         const dest = new AsanaDestination(cirfacePat);
         const taskGid = await dest.writeAnalysisReport(report, {
           trackingProjectGid: cirfaceProjectGid,
+          resultsSectionGid: process.env.CIRFACE_RESULTS_SECTION_GID,
           writerName: req.session.user?.name,
         });
         if (taskGid) {

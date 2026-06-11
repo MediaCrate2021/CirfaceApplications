@@ -115,6 +115,9 @@ a:hover { text-decoration: underline; }
 .input-with-button { display: flex; gap: 0.5rem; }
 .input-with-button input { flex: 1; }
 
+/* Read-only display inputs — pre-filled, non-editable */
+.input-readonly { background: var(--color-bg); color: var(--color-muted); cursor: default; }
+
 /* Tracking project validated state */
 .validated-project {
   display: flex; align-items: center; gap: 0.75rem;

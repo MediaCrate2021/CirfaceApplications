@@ -11,6 +11,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import StepIndicator from '@cirface/core/components/shared/StepIndicator';
 import LoginPage from './components/LoginPage.tsx';
+import AccessDenied from './components/AccessDenied.tsx';
 import ConnectSource from './components/steps/ConnectSource.tsx';
 import SelectProjects from './components/steps/SelectProjects.tsx';
 import RunAnalysis from './components/steps/RunAnalysis.tsx';
@@ -33,6 +34,7 @@ export interface AppState {
   step: WizardStep;
   appEnv: 'development' | 'staging' | 'production';
   authenticated: boolean;
+  accessApproved: boolean;
   user: AppUser | null;
   platform: SourcePlatform | null;
   selectedProjects: Array<{ id: string; name: string; ownerName?: string; startDate?: string; endDate?: string }>;
@@ -41,7 +43,8 @@ export interface AppState {
 
 type Action =
   | { type: 'SET_ENV'; env: AppState['appEnv'] }
-  | { type: 'AUTHENTICATED'; user: AppUser; env?: AppState['appEnv'] }
+  | { type: 'AUTHENTICATED'; user: AppUser; accessApproved: boolean; env?: AppState['appEnv'] }
+  | { type: 'ACCESS_DENIED'; user: AppUser; env?: AppState['appEnv'] }
   | { type: 'RESTORE_SESSION'; platform: SourcePlatform }
   | { type: 'SOURCE_CONNECTED'; platform: SourcePlatform }
   | { type: 'PROJECTS_SELECTED'; projects: Array<{ id: string; name: string; ownerName?: string; startDate?: string; endDate?: string }> }
@@ -53,6 +56,7 @@ const initialState: AppState = {
   step: 'connect',
   appEnv: 'development',
   authenticated: false,
+  accessApproved: false,
   user: null,
   platform: null,
   selectedProjects: [],
@@ -64,7 +68,9 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_ENV':
       return { ...state, appEnv: action.env };
     case 'AUTHENTICATED':
-      return { ...state, authenticated: true, user: action.user, appEnv: action.env ?? state.appEnv };
+      return { ...state, authenticated: true, accessApproved: action.accessApproved, user: action.user, appEnv: action.env ?? state.appEnv };
+    case 'ACCESS_DENIED':
+      return { ...state, authenticated: true, accessApproved: false, user: action.user, appEnv: action.env ?? state.appEnv };
     case 'RESTORE_SESSION':
       return { ...state, step: 'select-projects', platform: action.platform };
     case 'SOURCE_CONNECTED':
@@ -126,12 +132,17 @@ export default function App() {
   useEffect(() => {
     fetch('/api/auth/status')
       .then((r) => r.json())
-      .then((data: { authenticated: boolean; user?: AppUser; appEnv?: string }) => {
+      .then((data: { authenticated: boolean; accessApproved?: boolean; user?: AppUser; appEnv?: string }) => {
         const env = data.appEnv as AppState['appEnv'];
         const validEnv = (env === 'development' || env === 'staging' || env === 'production') ? env : undefined;
 
         if (data.authenticated && data.user) {
-          dispatch({ type: 'AUTHENTICATED', user: data.user, env: validEnv });
+          if (data.accessApproved === false) {
+            dispatch({ type: 'ACCESS_DENIED', user: data.user, env: validEnv });
+            setAuthChecked(true);
+            return;
+          }
+          dispatch({ type: 'AUTHENTICATED', user: data.user, accessApproved: true, env: validEnv });
 
           // Check if source was already connected (e.g. page refresh mid-session)
           fetch('/api/source/status')
@@ -166,6 +177,10 @@ export default function App() {
 
   if (!state.authenticated) {
     return <LoginPage appEnv={state.appEnv} />;
+  }
+
+  if (!state.accessApproved) {
+    return <AccessDenied user={state.user!} />;
   }
 
   return (
