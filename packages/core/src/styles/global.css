@@ -353,10 +353,10 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
-  padding: 0.65rem 0.9rem;
+  padding: 0.9rem 0.9rem;
   margin-bottom: 1.25rem;
-  background: #f0f4ff;
-  border: 1px solid #c7d7f9;
+  background: #ffffff;
+  border: 1px solid #0d9488;
   border-radius: var(--radius-sm);
   font-size: 0.875rem;
   color: var(--color-text);
