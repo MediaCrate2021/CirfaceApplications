@@ -591,6 +591,13 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
   };
   const finish = () => { clearInterval(keepalive); res.end(); };
 
+  logger.info({
+    analysisInProgress: req.session.analysisInProgress ?? false,
+    hasReport: !!req.session.lastAnalysisReport,
+    sessionID: req.sessionID,
+    projectCount: projectIds.length,
+  }, 'analyze SSE connect');
+
   // ── Reconnect case A: analysis already in progress (connection dropped mid-run) ──
   // Poll the session until it finishes, then forward the cached report.
   if (req.session.analysisInProgress) {
@@ -643,6 +650,13 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
   // ── Normal path: start a new analysis ──
   req.session.lastAnalysisReport = undefined; // clear any stale report from a previous run
   req.session.analysisInProgress = true;
+  // Persist immediately so reconnecting clients see analysisInProgress=true before the analysis finishes.
+  // Without this, express-session only saves on res.end() (after the analysis), so a reconnect
+  // that arrives mid-analysis reads a stale session and incorrectly starts a second analysis.
+  await new Promise<void>((resolve) => req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save failed before analysis start');
+    resolve();
+  }));
 
   try {
     const { platform, token } = req.session.sourceConfig!;
@@ -723,6 +737,10 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
 
     req.session.analysisInProgress = false;
     req.session.lastAnalysisReport = report;
+    await new Promise<void>((resolve) => req.session.save((err) => {
+      if (err) logger.error({ err }, 'session save failed after analysis complete');
+      resolve();
+    }));
     logger.info({ platform, projects: projects.length }, 'analysis complete');
 
     send('complete', report);
@@ -730,6 +748,10 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ err }, 'analysis failed');
     req.session.analysisInProgress = false;
+    await new Promise<void>((resolve) => req.session.save((err2) => {
+      if (err2) logger.error({ err: err2 }, 'session save failed after analysis error');
+      resolve();
+    }));
     send('error-msg', { message: msg });
   } finally {
     clearInterval(keepalive);
