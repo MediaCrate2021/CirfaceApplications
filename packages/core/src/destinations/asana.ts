@@ -1280,9 +1280,27 @@ export class AsanaDestination {
     );
 
     for (const p of report.projects) {
+      const total = p.tasks + p.subtasks + p.dependencies + p.comments + p.attachments;
       lines.push(`  ${p.projectName}`);
-      lines.push(`    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}`);
+      lines.push(`    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}  Total: ${total}`);
       lines.push(`    Users: ${p.users}  Fields: ${p.fields.length}`);
+      lines.push('');
+    }
+
+    if (report.projects.length > 1) {
+      const gt = report.projects.reduce(
+        (acc, p) => ({
+          tasks: acc.tasks + p.tasks,
+          subtasks: acc.subtasks + p.subtasks,
+          comments: acc.comments + p.comments,
+          attachments: acc.attachments + p.attachments,
+          dependencies: acc.dependencies + p.dependencies,
+        }),
+        { tasks: 0, subtasks: 0, comments: 0, attachments: 0, dependencies: 0 },
+      );
+      const grandTotal = gt.tasks + gt.subtasks + gt.dependencies + gt.comments + gt.attachments;
+      lines.push(`Grand totals across ${report.projects.length} projects:`);
+      lines.push(`  Tasks: ${gt.tasks}  Subtasks: ${gt.subtasks}  Comments: ${gt.comments}  Attachments: ${gt.attachments}  Dependencies: ${gt.dependencies}  Total: ${grandTotal}`);
       lines.push('');
     }
 
@@ -1306,7 +1324,31 @@ export class AsanaDestination {
     lines.push('');
     lines.push(`Projects analyzed: ${report.projects.length}`);
 
+    if (report.projects.length > 1) {
+      const gt = report.projects.reduce(
+        (acc, p) => ({
+          tasks: acc.tasks + p.tasks,
+          subtasks: acc.subtasks + p.subtasks,
+          comments: acc.comments + p.comments,
+          attachments: acc.attachments + p.attachments,
+          dependencies: acc.dependencies + p.dependencies,
+        }),
+        { tasks: 0, subtasks: 0, comments: 0, attachments: 0, dependencies: 0 },
+      );
+      const grandTotal = gt.tasks + gt.subtasks + gt.dependencies + gt.comments + gt.attachments;
+      lines.push(sep(`GRAND TOTALS — ${report.projects.length} PROJECTS`));
+      lines.push('');
+      lines.push(`Tasks:        ${gt.tasks}`);
+      lines.push(`Subtasks:     ${gt.subtasks}`);
+      lines.push(`Comments:     ${gt.comments}`);
+      lines.push(`Attachments:  ${gt.attachments}`);
+      lines.push(`Dependencies: ${gt.dependencies}`);
+      lines.push(`Total items:  ${grandTotal}`);
+      lines.push('');
+    }
+
     for (const p of report.projects) {
+      const total = p.tasks + p.subtasks + p.dependencies + p.comments + p.attachments;
       lines.push(sep(p.projectName));
       lines.push('');
       lines.push(`Tasks:        ${p.tasks}`);
@@ -1314,6 +1356,7 @@ export class AsanaDestination {
       lines.push(`Comments:     ${p.comments}`);
       lines.push(`Attachments:  ${p.attachments}`);
       lines.push(`Dependencies: ${p.dependencies}`);
+      lines.push(`Total items:  ${total}`);
       lines.push(`Users:        ${p.users}`);
       lines.push(`Fields:       ${p.fields.length}`);
       lines.push('');
