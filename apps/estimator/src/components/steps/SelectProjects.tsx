@@ -44,7 +44,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -91,10 +91,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       });
   }, [workspaces.length, teamsLoaded, teams.length, selectedWorkspace, selectedTeam, platform]);
 
-  const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
-  const filtered = filter.trim()
-    ? sorted.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
-    : sorted;
+  const filtered = [...projects].sort((a, b) => a.name.localeCompare(b.name));
 
   const allChecked = filtered.length > 0 && filtered.every((p) => checked.has(p.id));
   const someChecked = filtered.some((p) => checked.has(p.id)) && !allChecked;
@@ -180,17 +177,6 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         </div>
       )}
 
-      {!loading && projects.length > 5 && (
-        <div className="field-group" style={{ maxWidth: '360px', marginBottom: '16px' }}>
-          <input
-            type="search"
-            placeholder={`Search ${noun}s…`}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        </div>
-      )}
-
       {loading && <p className="loading-text">Loading {noun}s…</p>}
       {error && <p className="error-text">{error}</p>}
       {!loading && !error && filtered.length === 0 && (
@@ -226,16 +212,10 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
                     checked={checked.has(p.id)}
                     onChange={() => toggle(p.id)}
                   />
-                  <span className="project-checklist-item-body">
-                    <span className="project-checklist-item-name">{p.name}</span>
-                    {(p.ownerName || p.startDate || p.endDate) && (
-                      <span className="project-checklist-item-meta">
-                        {p.ownerName && <span>{p.ownerName}</span>}
-                        {p.startDate && <span>{formatDate(p.startDate)}{p.endDate ? ` – ${formatDate(p.endDate)}` : ''}</span>}
-                        {!p.startDate && p.endDate && <span>Due {formatDate(p.endDate)}</span>}
-                      </span>
-                    )}
-                  </span>
+                  <span>{p.name}</span>
+                  {p.ownerName && <span className="project-checklist-item-meta">{p.ownerName}</span>}
+                  {p.startDate && <span className="project-checklist-item-meta">{formatDate(p.startDate)}{p.endDate ? ` – ${formatDate(p.endDate)}` : ''}</span>}
+                  {!p.startDate && p.endDate && <span className="project-checklist-item-meta">Due {formatDate(p.endDate)}</span>}
                 </label>
               </li>
             ))}
