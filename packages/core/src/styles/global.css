@@ -356,7 +356,7 @@ a:hover { text-decoration: underline; }
   padding: 1.2rem 1.2rem;
   margin-bottom: 1.25rem;
   background: #ffffff;
-  border: 1px solid --color-verdigris;
+  border: 1px solid var(--color-verdigris);
   border-radius: var(--radius-sm);
   font-size: 0.875rem;
   color: var(--color-text);
