@@ -285,6 +285,10 @@ export interface AnalysisReport {
   completedAt: string;
   sourcePlatform: string;
   projects: ProjectAnalysis[];
+  /** True when one or more projects failed mid-analysis — results are incomplete. */
+  partial?: boolean;
+  /** Projects that could not be analysed, with the error message for each. */
+  failedProjects?: Array<{ id: string; name: string; error: string }>;
   trackingTaskGid?: string;
   clientName?: string;
   clientEmail?: string;

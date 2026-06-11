@@ -772,47 +772,65 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
     const connector = makeConnector(platform, token);
     const startedAt = new Date().toISOString();
     const projects: AnalysisReport['projects'] = [];
+    const failedProjects: NonNullable<AnalysisReport['failedProjects']> = [];
 
     for (let i = 0; i < projectIds.length; i++) {
       const projectId = projectIds[i];
+      const metaName = projectMetaMap.get(projectId)?.name ?? projectId;
       send('info', { message: `Fetching project ${i + 1} of ${projectIds.length}…`, done: i });
 
-      // Shallow mode: subtasks are counted from their GID list without recursing
-      // into each one, avoiding thousands of per-subtask API calls on large projects.
-      const project = await connector.getProjectData(projectId, { shallow: true });
-      const counts = countProjectItems(project);
+      try {
+        // Shallow mode: subtasks are counted from their GID list without recursing
+        // into each one, avoiding thousands of per-subtask API calls on large projects.
+        const project = await connector.getProjectData(projectId, { shallow: true });
+        const counts = countProjectItems(project);
 
-      // Merge Monday subitem fields (Monday exposes them via a separate method)
-      let fields = [...project.fields];
-      if (platform === 'monday') {
-        try {
-          const mc = connector as MondayConnector;
-          const subitemFields = await mc.getSubitemFields(projectId);
-          const existingIds = new Set(fields.map((f) => f.id));
-          for (const sf of subitemFields) {
-            if (!existingIds.has(sf.id)) fields.push({ ...sf, isSubitemField: true });
+        // Merge Monday subitem fields (Monday exposes them via a separate method)
+        let fields = [...project.fields];
+        if (platform === 'monday') {
+          try {
+            const mc = connector as MondayConnector;
+            const subitemFields = await mc.getSubitemFields(projectId);
+            const existingIds = new Set(fields.map((f) => f.id));
+            for (const sf of subitemFields) {
+              if (!existingIds.has(sf.id)) fields.push({ ...sf, isSubitemField: true });
+            }
+          } catch {
+            // Non-fatal — proceed with parent fields only
           }
-        } catch {
-          // Non-fatal — proceed with parent fields only
         }
+
+        const meta = projectMetaMap.get(projectId);
+        projects.push({
+          projectId,
+          projectName: project.name,
+          ...counts,
+          users: project.users.length,
+          fields,
+          ...(meta?.ownerName ? { ownerName: meta.ownerName } : {}),
+          ...(meta?.startDate ? { startDate: meta.startDate } : {}),
+          ...(meta?.endDate   ? { endDate:   meta.endDate   } : {}),
+        });
+
+        send('info', {
+          message: `Analyzed "${project.name}" — ${counts.tasks} tasks, ${fields.length} fields`,
+          done: i + 1,
+        });
+      } catch (projectErr) {
+        const msg = projectErr instanceof Error ? projectErr.message : String(projectErr);
+        logger.error({ err: projectErr, projectId }, 'project analysis failed');
+        failedProjects.push({ id: projectId, name: metaName, error: msg });
+        send('warning', { message: `Could not analyze "${metaName}": ${msg}` });
       }
+    }
 
-      const meta = projectMetaMap.get(projectId);
-      projects.push({
-        projectId,
-        projectName: project.name,
-        ...counts,
-        users: project.users.length,
-        fields,
-        ...(meta?.ownerName ? { ownerName: meta.ownerName } : {}),
-        ...(meta?.startDate ? { startDate: meta.startDate } : {}),
-        ...(meta?.endDate   ? { endDate:   meta.endDate   } : {}),
-      });
-
-      send('info', {
-        message: `Analyzed "${project.name}" — ${counts.tasks} tasks, ${fields.length} fields`,
-        done: i + 1,
-      });
+    // If every project failed, there is nothing to report — surface as a hard error.
+    if (projects.length === 0) {
+      throw new Error(
+        failedProjects.length === 1
+          ? failedProjects[0].error
+          : `All ${failedProjects.length} projects failed. First error: ${failedProjects[0]?.error}`
+      );
     }
 
     const report: AnalysisReport = {
@@ -820,6 +838,7 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
       completedAt: new Date().toISOString(),
       sourcePlatform: platform,
       projects,
+      ...(failedProjects.length > 0 ? { partial: true, failedProjects } : {}),
       clientName:  req.session.user?.name,
       clientEmail: req.session.user?.email,
     };

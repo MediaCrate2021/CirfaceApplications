@@ -1341,6 +1341,14 @@ export class AsanaDestination {
       lines.push('');
     }
 
+    if (report.partial && report.failedProjects && report.failedProjects.length > 0) {
+      lines.push(`⚠ PARTIAL RESULTS — ${report.failedProjects.length} project(s) could not be analyzed:`);
+      for (const fp of report.failedProjects) {
+        lines.push(`  • ${fp.name}: ${fp.error}`);
+      }
+      lines.push('');
+    }
+
     lines.push('Full field listing is in the attached report file.');
     return lines.join('\n');
   }
@@ -1350,7 +1358,7 @@ export class AsanaDestination {
     const sep = (label: string) => `\n${'='.repeat(60)}\n${label}\n${'='.repeat(60)}`;
     const lines: string[] = [];
 
-    lines.push(`ANALYSIS REPORT — ${report.sourcePlatform.toUpperCase()}`);
+    lines.push(report.partial ? `ANALYSIS REPORT (PARTIAL) — ${report.sourcePlatform.toUpperCase()}` : `ANALYSIS REPORT — ${report.sourcePlatform.toUpperCase()}`);
     if (report.clientName || report.clientEmail) {
       const identity = [report.clientName, report.clientEmail].filter(Boolean).join(' — ');
       lines.push(`Client:       ${identity}`);
@@ -1360,6 +1368,17 @@ export class AsanaDestination {
     lines.push(`Completed: ${report.completedAt}`);
     lines.push('');
     lines.push(`Projects analyzed: ${report.projects.length}`);
+
+    if (report.partial && report.failedProjects && report.failedProjects.length > 0) {
+      lines.push(`Projects failed:  ${report.failedProjects.length}`);
+      lines.push('');
+      lines.push('FAILED PROJECTS');
+      lines.push('-'.repeat(60));
+      for (const fp of report.failedProjects) {
+        lines.push(`  ${fp.name}`);
+        lines.push(`    Error: ${fp.error}`);
+      }
+    }
 
     if (report.projects.length > 1) {
       const gt = report.projects.reduce(

@@ -58,6 +58,17 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
         )}
       </p>
 
+      {report.partial && report.failedProjects && report.failedProjects.length > 0 && (
+        <div className="notice-box" style={{ marginBottom: '24px', borderColor: 'var(--color-warning)' }}>
+          <strong>Partial results</strong> — {report.failedProjects.length} project{report.failedProjects.length === 1 ? '' : 's'} could not be analyzed and {report.failedProjects.length === 1 ? 'has' : 'have'} been omitted:
+          <ul style={{ margin: '8px 0 0 0', paddingLeft: '1.25rem' }}>
+            {report.failedProjects.map((fp) => (
+              <li key={fp.id}><strong>{fp.name}</strong> — {fp.error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Project TOC */}
       <div className="review-section review-section-full" style={{ marginBottom: '24px' }}>
         <h3 className="review-section-title">Projects Analyzed</h3>
