@@ -85,12 +85,19 @@ export class AsanaConnector implements SourceConnector {
   // HTTP helpers
   // ---------------------------------------------------------------------------
 
-  private async request<T>(path: string): Promise<T> {
+  private async request<T>(path: string, retries = 3): Promise<T> {
     const url = path.startsWith('http') ? path : `${ASANA_BASE}${path}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${this.token}` },
       signal: AbortSignal.timeout(30_000),
     });
+    if (res.status === 429) {
+      if (retries <= 0) throw new Error(`Asana rate limit exceeded: ${path}`);
+      const retryAfter = parseInt(res.headers.get('Retry-After') ?? '10', 10);
+      logger.warn({ path, retryAfter, retries }, 'Asana rate limit — waiting before retry');
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      return this.request<T>(path, retries - 1);
+    }
     if (!res.ok) {
       const json = await res.json().catch(() => ({})) as { errors?: Array<{ message: string }> };
       throw new Error(json.errors?.[0]?.message ?? `Asana API error (${res.status}): ${path}`);
@@ -109,6 +116,12 @@ export class AsanaConnector implements SourceConnector {
         headers: { Authorization: `Bearer ${this.token}` },
         signal: AbortSignal.timeout(30_000),
       });
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('Retry-After') ?? '10', 10);
+        logger.warn({ retryAfter }, 'Asana rate limit on paginated request — waiting before retry');
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        continue; // retry same url
+      }
       if (!res.ok) {
         const json = await res.json().catch(() => ({})) as { errors?: Array<{ message: string }> };
         throw new Error(json.errors?.[0]?.message ?? `Asana API error (${res.status})`);
@@ -120,13 +133,24 @@ export class AsanaConnector implements SourceConnector {
     return results;
   }
 
-  /** Process items in serial batches to avoid hitting Asana's rate limit. */
-  private async batchProcess<T, R>(items: T[], batchSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  /**
+   * Process items in serial batches with an inter-batch delay to stay within
+   * Asana's rate limit (1 500 req/min on paid plans, 150 on free).
+   */
+  private async batchProcess<T, R>(
+    items: T[],
+    batchSize: number,
+    fn: (item: T) => Promise<R>,
+    delayMs = 150,
+  ): Promise<R[]> {
     const results: R[] = [];
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);
       const batchResults = await Promise.all(batch.map(fn));
       results.push(...batchResults);
+      if (i + batchSize < items.length) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
     }
     return results;
   }
@@ -214,8 +238,54 @@ export class AsanaConnector implements SourceConnector {
     }));
   }
 
-  async getProjectData(projectId: string): Promise<NormalisedProject> {
-    logger.info({ projectId }, 'asana source: fetching project data');
+  /**
+   * Phase 2 for shallow mode: walks the stub subtask tree level by level,
+   * fetching stories, attachments, and child subtask GIDs for each stub.
+   * Mutates the tree in place so countProjectItems sees accurate numbers.
+   */
+  private async enrichSubtasks(parents: NormalisedTask[], depth = 0): Promise<void> {
+    if (depth >= 5) return; // stop after 5 levels
+    const stubs = parents.flatMap((p) => p.subtasks);
+    if (stubs.length === 0) return;
+
+    logger.info({ stubCount: stubs.length }, 'asana source: enriching subtask level');
+
+    const enriched = await this.batchProcess(
+      stubs,
+      3,
+      async (stub) => {
+        const [stories, { downloadable, externalLinks }, taskData] = await Promise.all([
+          this.fetchStories(stub.id),
+          this.fetchAttachments(stub.id),
+          this.request<{ subtasks: Array<{ gid: string }> }>(
+            `/tasks/${stub.id}?opt_fields=subtasks.gid`,
+          ),
+        ]);
+        return {
+          ...stub,
+          comments: [...stories, ...externalLinks],
+          attachments: downloadable,
+          subtasks: (taskData.subtasks ?? []).map((s) => this.makeStubTask(s.gid)),
+        };
+      },
+      250,
+    );
+
+    // Write enriched tasks back to their parents in order
+    let offset = 0;
+    for (const parent of parents) {
+      const count = parent.subtasks.length;
+      parent.subtasks = enriched.slice(offset, offset + count);
+      offset += count;
+    }
+
+    // Recurse into the next level (enriched tasks now carry new stubs for their children)
+    await this.enrichSubtasks(enriched, depth + 1);
+  }
+
+  async getProjectData(projectId: string, options?: { shallow?: boolean }): Promise<NormalisedProject> {
+    const shallow = options?.shallow ?? false;
+    logger.info({ projectId, shallow }, 'asana source: fetching project data');
 
     // Fetch project metadata, sections, fields, and users in parallel.
     const [projectMeta, sectionData, fields, allUsers] = await Promise.all([
@@ -249,10 +319,18 @@ export class AsanaConnector implements SourceConnector {
       `/projects/${projectId}/tasks?opt_fields=${TASK_FIELDS}`,
     );
 
-    logger.info({ projectId, taskCount: rawTasks.length }, 'asana source: normalising tasks');
+    logger.info({ projectId, taskCount: rawTasks.length, shallow }, 'asana source: normalising tasks');
 
-    // Process tasks in batches of 5 to stay within Asana's rate limit.
-    const tasks = await this.batchProcess(rawTasks, 5, (t) => this.normaliseTask(t, userMap));
+    // Shallow mode: process tasks in batches of 5 without recursing into subtasks.
+    // Full mode: process in batches of 3 (each task fans out into subtask calls).
+    const batchSize = shallow ? 5 : 3;
+    const tasks = await this.batchProcess(rawTasks, batchSize, (t) => this.normaliseTask(t, userMap, shallow));
+
+    // Phase 2: now that all top-level tasks are done, query each subtask level
+    // by level (up to 5 deep) for accurate comment and attachment counts.
+    if (shallow) {
+      await this.enrichSubtasks(tasks);
+    }
 
     return {
       id: projectId,
@@ -280,11 +358,27 @@ export class AsanaConnector implements SourceConnector {
   // Private normalisation helpers
   // ---------------------------------------------------------------------------
 
-  private async normaliseTask(raw: AsanaTask, userMap: Map<string, NormalisedUser>): Promise<NormalisedTask> {
+  /** Stub task used in shallow mode — carries only the GID for counting, no fetched data. */
+  private makeStubTask(gid: string): NormalisedTask {
+    return {
+      id: gid,
+      name: '',
+      completed: false,
+      customFields: {},
+      subtasks: [],
+      comments: [],
+      attachments: [],
+      dependencyIds: [],
+    };
+  }
+
+  private async normaliseTask(raw: AsanaTask, userMap: Map<string, NormalisedUser>, shallow = false): Promise<NormalisedTask> {
     const [stories, { downloadable, externalLinks }, subtasks] = await Promise.all([
       this.fetchStories(raw.gid),
       this.fetchAttachments(raw.gid),
-      this.batchProcess(raw.subtasks ?? [], 5, (s) => this.fetchAndNormaliseSubtask(s.gid, raw.gid, userMap)),
+      shallow
+        ? Promise.resolve((raw.subtasks ?? []).map((s) => this.makeStubTask(s.gid)))
+        : this.batchProcess(raw.subtasks ?? [], 3, (s) => this.fetchAndNormaliseSubtask(s.gid, raw.gid, userMap)),
     ]);
 
     this.cacheAssignee(raw.assignee, userMap);

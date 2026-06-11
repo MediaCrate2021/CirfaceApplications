@@ -47,8 +47,13 @@ export interface SourceConnector {
   /**
    * Fetch full project data: tasks, subtasks, comments, attachments,
    * dependencies, custom fields, and users.
+   *
+   * `shallow: true` — counts subtasks from their GID list without recursing into
+   * each one. Subtask comments/attachments are not fetched. Use this in the
+   * estimator to avoid the per-subtask API calls that cause rate-limit errors on
+   * large projects.
    */
-  getProjectData(projectId: string): Promise<NormalisedProject>;
+  getProjectData(projectId: string, options?: { shallow?: boolean }): Promise<NormalisedProject>;
 
   /**
    * Return a fresh download URL for a given asset ID.

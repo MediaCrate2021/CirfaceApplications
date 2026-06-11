@@ -594,7 +594,9 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
       const projectId = projectIds[i];
       send('info', { message: `Fetching project ${i + 1} of ${projectIds.length}…`, done: i });
 
-      const project = await connector.getProjectData(projectId);
+      // Shallow mode: subtasks are counted from their GID list without recursing
+      // into each one, avoiding thousands of per-subtask API calls on large projects.
+      const project = await connector.getProjectData(projectId, { shallow: true });
       const counts = countProjectItems(project);
 
       // Merge Monday subitem fields (Monday exposes them via a separate method)
