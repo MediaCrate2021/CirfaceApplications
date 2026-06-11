@@ -30,7 +30,10 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
+  const [reconnecting, setReconnecting] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  // Track consecutive connection errors to distinguish a transient drop from a real failure.
+  const errorCount = useRef(0);
 
   useEffect(() => {
     const params = new URLSearchParams({
@@ -44,6 +47,8 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
     }
 
     es.addEventListener('info', (e) => {
+      errorCount.current = 0;
+      setReconnecting(false);
       const data = JSON.parse(e.data) as { message: string; done?: number };
       addLine('info', data.message);
       if (data.done !== undefined) setDone(data.done);
@@ -58,6 +63,7 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
       const data = JSON.parse(e.data) as { message: string };
       addLine('error', data.message);
       setError(data.message);
+      es.close();
     });
 
     es.addEventListener('complete', (e) => {
@@ -66,9 +72,19 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
       onComplete(JSON.parse(e.data) as AnalysisReport);
     });
 
+    // SSE connection dropped (network blip, Railway proxy reset, etc.).
+    // Don't close — EventSource will reconnect automatically. The server handles
+    // reconnects gracefully: it either polls for the in-progress analysis or
+    // immediately delivers the cached report if the analysis already finished.
     es.addEventListener('error', () => {
-      es.close();
-      setError('Connection lost. Please go back and try again.');
+      errorCount.current += 1;
+      if (errorCount.current >= 5) {
+        // Five consecutive drops with no successful event in between — give up.
+        es.close();
+        setError('Connection lost. Please go back and try again.');
+      } else {
+        setReconnecting(true);
+      }
     });
 
     return () => es.close();
@@ -105,6 +121,12 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
             <button className="btn btn-ghost" onClick={onBack}>Back to project selection</button>
           </div>
         </div>
+      )}
+
+      {reconnecting && !error && (
+        <p className="step-notice" style={{ color: 'var(--color-muted)', marginTop: '8px' }}>
+          Reconnecting…
+        </p>
       )}
 
       <div className="run-log" ref={logRef}>

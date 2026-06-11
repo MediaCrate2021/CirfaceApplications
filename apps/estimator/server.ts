@@ -556,10 +556,6 @@ app.get('/api/source/projects', requireAuth, requireSourceConnected, async (req,
 // ---------------------------------------------------------------------------
 
 app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) => {
-  if (req.session.analysisInProgress) {
-    return res.status(409).json({ error: 'An analysis is already running' });
-  }
-
   const { projectIds: projectIdsRaw, projectMeta: projectMetaRaw } = req.query as { projectIds?: string; projectMeta?: string };
 
   let projectIds: string[];
@@ -570,6 +566,60 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
     return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
   }
 
+  // Switch to SSE before any early-return paths so the client always gets a stream.
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 15_000);
+  const send = (event: string, data: unknown) => {
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* connection closed */ }
+  };
+  const finish = () => { clearInterval(keepalive); res.end(); };
+
+  // ── Reconnect case A: analysis already in progress (connection dropped mid-run) ──
+  // Poll the session until it finishes, then forward the cached report.
+  if (req.session.analysisInProgress) {
+    send('info', { message: 'Reconnected — waiting for analysis to complete…' });
+    const POLL_MS = 1_500;
+    const MAX_WAIT_MS = 20 * 60 * 1_000; // 20 minutes
+    const waitStart = Date.now();
+    const poll = setInterval(() => {
+      req.session.reload((err) => {
+        if (err) { clearInterval(poll); finish(); return; }
+        if (!req.session.analysisInProgress) {
+          clearInterval(poll);
+          if (req.session.lastAnalysisReport) {
+            send('complete', req.session.lastAnalysisReport);
+          } else {
+            send('error-msg', { message: 'Analysis failed while reconnecting. Please try again.' });
+          }
+          finish();
+        } else if (Date.now() - waitStart > MAX_WAIT_MS) {
+          clearInterval(poll);
+          send('error-msg', { message: 'Analysis timed out. Please go back and try again.' });
+          finish();
+        }
+      });
+    }, POLL_MS);
+    req.on('close', () => clearInterval(poll));
+    return;
+  }
+
+  // ── Reconnect case B: analysis already finished (client missed the complete event) ──
+  // If the cached report covers the same project IDs, deliver it immediately.
+  const cachedReport = req.session.lastAnalysisReport;
+  if (cachedReport) {
+    const cachedIds = cachedReport.projects.map((p: { projectId: string }) => p.projectId).sort().join(',');
+    const requestedIds = [...projectIds].sort().join(',');
+    if (cachedIds === requestedIds) {
+      send('complete', cachedReport);
+      finish();
+      return;
+    }
+  }
+
   type ProjectMeta = { id: string; name: string; ownerName?: string; startDate?: string; endDate?: string };
   let projectMetaMap = new Map<string, ProjectMeta>();
   try {
@@ -577,18 +627,8 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
     projectMetaMap = new Map(meta.map((m) => [m.id, m]));
   } catch { /* non-fatal — metadata is optional */ }
 
-  // Switch to SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 20_000);
-
-  const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-
+  // ── Normal path: start a new analysis ──
+  req.session.lastAnalysisReport = undefined; // clear any stale report from a previous run
   req.session.analysisInProgress = true;
 
   try {
