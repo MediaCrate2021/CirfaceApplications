@@ -206,7 +206,7 @@ export class AsanaConnector implements SourceConnector {
   async getPortfolios(workspaceId?: string): Promise<Array<{ id: string; name: string }>> {
     const gid = workspaceId ?? await this.getWorkspaceGid();
     const portfolios = await this.getPaginated<{ gid: string; name: string; resource_type: string }>(
-      `/portfolios?workspace=${gid}&opt_fields=gid,name,resource_type`,
+      `/portfolios?workspace=${gid}&owner=me&opt_fields=gid,name,resource_type`,
     );
     // Portfolios endpoint may return nested portfolios — keep only portfolios (not sub-portfolios of sub-portfolios)
     return portfolios
