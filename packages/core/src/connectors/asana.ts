@@ -204,17 +204,27 @@ export class AsanaConnector implements SourceConnector {
   }
 
   async getProjects(workspaceId?: string, teamId?: string): Promise<ProjectListItem[]> {
+    const OPT_FIELDS = 'gid,name,owner.gid,owner.name,start_on,due_on';
+    type AsanaProjectMeta = { gid: string; name: string; owner?: { name: string } | null; start_on?: string | null; due_on?: string | null };
+    const map = (p: AsanaProjectMeta): ProjectListItem => ({
+      id: p.gid,
+      name: p.name,
+      ...(p.owner?.name ? { ownerName: p.owner.name } : {}),
+      ...(p.start_on ? { startDate: p.start_on } : {}),
+      ...(p.due_on ? { endDate: p.due_on } : {}),
+    });
+
     if (teamId) {
-      const projects = await this.getPaginated<{ gid: string; name: string }>(
-        `/teams/${teamId}/projects?opt_fields=gid,name&archived=false`,
+      const projects = await this.getPaginated<AsanaProjectMeta>(
+        `/teams/${teamId}/projects?opt_fields=${OPT_FIELDS}&archived=false`,
       );
-      return projects.map((p) => ({ id: p.gid, name: p.name }));
+      return projects.map(map);
     }
     const gid = workspaceId ?? await this.getWorkspaceGid();
-    const projects = await this.getPaginated<{ gid: string; name: string }>(
-      `/workspaces/${gid}/projects?opt_fields=gid,name&archived=false`,
+    const projects = await this.getPaginated<AsanaProjectMeta>(
+      `/workspaces/${gid}/projects?opt_fields=${OPT_FIELDS}&archived=false`,
     );
-    return projects.map((p) => ({ id: p.gid, name: p.name }));
+    return projects.map(map);
   }
 
   async getProjectFields(projectId: string): Promise<NormalisedField[]> {

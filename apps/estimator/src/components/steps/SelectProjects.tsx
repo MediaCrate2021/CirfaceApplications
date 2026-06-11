@@ -9,6 +9,9 @@ import type { SourcePlatform } from '@cirface/core/types';
 interface SourceProject {
   id: string;
   name: string;
+  ownerName?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 interface Props {
@@ -88,9 +91,10 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       });
   }, [workspaces.length, teamsLoaded, teams.length, selectedWorkspace, selectedTeam, platform]);
 
+  const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
   const filtered = filter.trim()
-    ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
-    : projects;
+    ? sorted.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
+    : sorted;
 
   const allChecked = filtered.length > 0 && filtered.every((p) => checked.has(p.id));
   const someChecked = filtered.some((p) => checked.has(p.id)) && !allChecked;
@@ -125,6 +129,11 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   }
 
   const noun = PROJECT_NOUN[platform];
+
+  function formatDate(iso: string) {
+    const [y, m, d] = iso.split('-');
+    return `${parseInt(m)}/${parseInt(d)}/${y}`;
+  }
   const label = PLATFORM_LABELS[platform];
 
   return (
@@ -212,7 +221,16 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
                     checked={checked.has(p.id)}
                     onChange={() => toggle(p.id)}
                   />
-                  <span>{p.name}</span>
+                  <span className="project-checklist-item-body">
+                    <span className="project-checklist-item-name">{p.name}</span>
+                    {(p.ownerName || p.startDate || p.endDate) && (
+                      <span className="project-checklist-item-meta">
+                        {p.ownerName && <span>{p.ownerName}</span>}
+                        {p.startDate && <span>{formatDate(p.startDate)}{p.endDate ? ` – ${formatDate(p.endDate)}` : ''}</span>}
+                        {!p.startDate && p.endDate && <span>Due {formatDate(p.endDate)}</span>}
+                      </span>
+                    )}
+                  </span>
                 </label>
               </li>
             ))}

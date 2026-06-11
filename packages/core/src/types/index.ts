@@ -271,6 +271,12 @@ export interface ProjectAnalysis {
   dependencies: number;
   users: number;
   fields: NormalisedField[];
+  /** Display name of the project owner, if available from the source platform. */
+  ownerName?: string;
+  /** Project start date (YYYY-MM-DD), if available. */
+  startDate?: string;
+  /** Project end / due date (YYYY-MM-DD), if available. */
+  endDate?: string;
 }
 
 export interface AnalysisReport {
@@ -290,6 +296,12 @@ export interface AnalysisReport {
 export interface ProjectListItem {
   id: string;
   name: string;
+  /** Display name of the project owner, if available from the source platform. */
+  ownerName?: string;
+  /** Project start date (YYYY-MM-DD), if available. */
+  startDate?: string;
+  /** Project end / due date (YYYY-MM-DD), if available. */
+  endDate?: string;
 }
 
 export interface AsanaProjectListItem {

@@ -11,23 +11,33 @@ interface ProgressLine {
   message: string;
 }
 
+interface ProjectMeta {
+  id: string;
+  name: string;
+  ownerName?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
 interface Props {
-  projectIds: string[];
+  projects: ProjectMeta[];
   projectCount: number;
   onComplete: (report: AnalysisReport) => void;
   onBack: () => void;
 }
 
-export default function RunAnalysis({ projectIds, projectCount, onComplete, onBack }: Props) {
+export default function RunAnalysis({ projects, projectCount, onComplete, onBack }: Props) {
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const es = new EventSource(
-      `/api/analyze?projectIds=${encodeURIComponent(JSON.stringify(projectIds))}`,
-    );
+    const params = new URLSearchParams({
+      projectIds: JSON.stringify(projects.map((p) => p.id)),
+      projectMeta: JSON.stringify(projects),
+    });
+    const es = new EventSource(`/api/analyze?${params}`);
 
     function addLine(type: ProgressLine['type'], message: string) {
       setLines((prev) => [...prev, { type, message }]);

@@ -35,7 +35,7 @@ export interface AppState {
   authenticated: boolean;
   user: AppUser | null;
   platform: SourcePlatform | null;
-  selectedProjects: Array<{ id: string; name: string }>;
+  selectedProjects: Array<{ id: string; name: string; ownerName?: string; startDate?: string; endDate?: string }>;
   report: AnalysisReportType | null;
 }
 
@@ -44,7 +44,7 @@ type Action =
   | { type: 'AUTHENTICATED'; user: AppUser; env?: AppState['appEnv'] }
   | { type: 'RESTORE_SESSION'; platform: SourcePlatform }
   | { type: 'SOURCE_CONNECTED'; platform: SourcePlatform }
-  | { type: 'PROJECTS_SELECTED'; projects: Array<{ id: string; name: string }> }
+  | { type: 'PROJECTS_SELECTED'; projects: Array<{ id: string; name: string; ownerName?: string; startDate?: string; endDate?: string }> }
   | { type: 'BACK_TO_PROJECTS' }
   | { type: 'ANALYSIS_COMPLETE'; report: AnalysisReportType }
   | { type: 'RESET' };
@@ -213,7 +213,7 @@ export default function App() {
 
           {state.step === 'analyzing' && (
             <RunAnalysis
-              projectIds={state.selectedProjects.map((p) => p.id)}
+              projects={state.selectedProjects}
               projectCount={state.selectedProjects.length}
               onComplete={(report) => dispatch({ type: 'ANALYSIS_COMPLETE', report })}
               onBack={() => dispatch({ type: 'BACK_TO_PROJECTS' })}

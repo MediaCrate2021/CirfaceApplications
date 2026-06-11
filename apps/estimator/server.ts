@@ -560,7 +560,7 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
     return res.status(409).json({ error: 'An analysis is already running' });
   }
 
-  const { projectIds: projectIdsRaw } = req.query as { projectIds?: string };
+  const { projectIds: projectIdsRaw, projectMeta: projectMetaRaw } = req.query as { projectIds?: string; projectMeta?: string };
 
   let projectIds: string[];
   try {
@@ -569,6 +569,13 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
   } catch {
     return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
   }
+
+  type ProjectMeta = { id: string; name: string; ownerName?: string; startDate?: string; endDate?: string };
+  let projectMetaMap = new Map<string, ProjectMeta>();
+  try {
+    const meta = JSON.parse(projectMetaRaw ?? '[]') as ProjectMeta[];
+    projectMetaMap = new Map(meta.map((m) => [m.id, m]));
+  } catch { /* non-fatal — metadata is optional */ }
 
   // Switch to SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -614,12 +621,16 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
         }
       }
 
+      const meta = projectMetaMap.get(projectId);
       projects.push({
         projectId,
         projectName: project.name,
         ...counts,
         users: project.users.length,
         fields,
+        ...(meta?.ownerName ? { ownerName: meta.ownerName } : {}),
+        ...(meta?.startDate ? { startDate: meta.startDate } : {}),
+        ...(meta?.endDate   ? { endDate:   meta.endDate   } : {}),
       });
 
       send('info', {

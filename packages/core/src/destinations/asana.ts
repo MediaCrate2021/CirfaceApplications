@@ -1260,6 +1260,12 @@ export class AsanaDestination {
     }
   }
 
+  private sourceProjectUrl(platform: string, projectId: string): string | null {
+    if (platform === 'asana')      return `https://app.asana.com/0/${projectId}/list`;
+    if (platform === 'smartsheet') return `https://app.smartsheet.com/sheets/${projectId}`;
+    return null;
+  }
+
   /** Short summary for the Asana task notes field. */
   public formatAnalysisReportSummary(report: AnalysisReport, writerName?: string): string {
     const lines: string[] = [
@@ -1282,6 +1288,15 @@ export class AsanaDestination {
     for (const p of report.projects) {
       const total = p.tasks + p.subtasks + p.dependencies + p.comments + p.attachments;
       lines.push(`  ${p.projectName}`);
+      if (p.ownerName) lines.push(`    Owner: ${p.ownerName}`);
+      if (p.startDate || p.endDate) {
+        const dates = p.startDate && p.endDate
+          ? `${p.startDate} – ${p.endDate}`
+          : p.startDate ? `Start: ${p.startDate}` : `Due: ${p.endDate}`;
+        lines.push(`    Dates: ${dates}`);
+      }
+      const url = this.sourceProjectUrl(report.sourcePlatform, p.projectId);
+      if (url) lines.push(`    Link:  ${url}`);
       lines.push(`    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}  Total: ${total}`);
       lines.push(`    Users: ${p.users}  Fields: ${p.fields.length}`);
       lines.push('');
@@ -1351,6 +1366,16 @@ export class AsanaDestination {
       const total = p.tasks + p.subtasks + p.dependencies + p.comments + p.attachments;
       lines.push(sep(p.projectName));
       lines.push('');
+      if (p.ownerName) lines.push(`Owner:        ${p.ownerName}`);
+      if (p.startDate || p.endDate) {
+        const dates = p.startDate && p.endDate
+          ? `${p.startDate} – ${p.endDate}`
+          : p.startDate ? `Start: ${p.startDate}` : `Due: ${p.endDate}`;
+        lines.push(`Dates:        ${dates}`);
+      }
+      const url = this.sourceProjectUrl(report.sourcePlatform, p.projectId);
+      if (url) lines.push(`Link:         ${url}`);
+      if (p.ownerName || p.startDate || p.endDate || url) lines.push('');
       lines.push(`Tasks:        ${p.tasks}`);
       lines.push(`Subtasks:     ${p.subtasks}`);
       lines.push(`Comments:     ${p.comments}`);
