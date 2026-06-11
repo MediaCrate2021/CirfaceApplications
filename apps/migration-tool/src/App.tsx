@@ -136,6 +136,7 @@ export interface AppState {
 
   // Migration options
   skipAttachments: boolean;
+  shellOnly: boolean;
 
   // Analyze mode — multi-project selection
   analyzeProjectIds: Array<{ id: string; name: string }>;
@@ -157,6 +158,7 @@ type Action =
   | { type: 'SET_PROJECT_SELECTION'; sourceId: string; sourceName: string; destGid: string; destName: string; teamGid: string | null; teamName: string | null; isNew: boolean; ownerGid: string | null; ownerName: string | null; destWorkspaceGid: string; destWorkspaceName: string }
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[]; externalIdDestFieldGid: string | null }
   | { type: 'SET_SKIP_ATTACHMENTS'; skip: boolean }
+  | { type: 'SET_SHELL_ONLY'; shell: boolean }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
   | { type: 'RELOAD_MAPPING' }
@@ -208,6 +210,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, fieldMapping: action.mapping, sectionMapping: action.sectionMapping, externalIdDestFieldGid: action.externalIdDestFieldGid };
     case 'SET_SKIP_ATTACHMENTS':
       return { ...state, skipAttachments: action.skip };
+    case 'SET_SHELL_ONLY':
+      return { ...state, shellOnly: action.shell };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RELOAD_MAPPING':
@@ -274,6 +278,7 @@ const initialState: AppState = {
   sectionMapping: [],
   externalIdDestFieldGid: null,
   skipAttachments: false,
+  shellOnly: false,
   analyzeProjectIds: [],
   lastReport: null,
   analysisReport: null,
@@ -418,7 +423,14 @@ export default function App() {
           {state.step === 'review' && (
             <ReviewConfirm
               state={state}
-              onConfirm={() => next('running')}
+              onConfirm={() => {
+                dispatch({ type: 'SET_SHELL_ONLY', shell: false });
+                next('running');
+              }}
+              onShellConfirm={() => {
+                dispatch({ type: 'SET_SHELL_ONLY', shell: true });
+                next('running');
+              }}
               onBack={() => next('field-mapping')}
               onReloadMapping={() => {
                 fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});

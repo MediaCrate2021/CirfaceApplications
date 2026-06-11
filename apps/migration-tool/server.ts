@@ -846,13 +846,14 @@ app.post('/api/session/field-mapping', requireAuth, (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.post('/api/migrate', requireAuth, async (req, res) => {
-  const { sourceProjectId, destProjectGid, destProjectName, destTeamGid, isNewProject, skipAttachments } = req.body as {
+  const { sourceProjectId, destProjectGid, destProjectName, destTeamGid, isNewProject, skipAttachments, shellOnly } = req.body as {
     sourceProjectId: string;
     destProjectGid: string;
     destProjectName?: string;
     destTeamGid?: string;
     isNewProject: boolean;
     skipAttachments?: boolean;
+    shellOnly?: boolean;
   };
 
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
@@ -949,6 +950,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
       sourceCount,
       skipAttachments: skipAttachments === true,
+      shellOnly: shellOnly === true,
     });
 
     logger.info({ user: req.session.user?.name, tasks: report.migratedTasks, subtasks: report.migratedSubtasks, attachments: report.migratedAttachments, warnings: report.warnings, errors: report.errors }, 'migration write phase complete');

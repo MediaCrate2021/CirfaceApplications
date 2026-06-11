@@ -77,6 +77,8 @@ export interface WriteOptions {
   sourceCount?: MigrationReport['sourceCount'];
   /** When true, attachment download/upload is skipped entirely. URLs are not posted as fallback comments either. */
   skipAttachments?: boolean;
+  /** When true, only the project structure (custom fields, sections) is created — no tasks are migrated. */
+  shellOnly?: boolean;
 }
 
 export interface ProgressEvent {
@@ -256,6 +258,7 @@ export class AsanaDestination {
       log: [],
       sourceCount: options.sourceCount,
       attachmentsSkipped: options.skipAttachments === true,
+      shellOnly: options.shellOnly === true,
     };
 
     const emit = options.onProgress ?? (() => {});
@@ -444,10 +447,15 @@ export class AsanaDestination {
       : undefined;
     const assigneeOmitted     = assigneeEntry?.omit === true;
 
-    // Step 5: migrate tasks
+    // Step 5: migrate tasks (skipped in shell-only mode)
     const taskGidMap = new Map<string, string>();
     const total = project.tasks.length;
-    log(`${total} tasks found in the source project.`);
+
+    if (options.shellOnly) {
+      log(`Shell mode — skipping task migration (${total} tasks in source project).`);
+    } else {
+      log(`${total} tasks found in the source project.`);
+    }
 
     // Map sourceFieldId → human-readable display name so deeply-nested subtask comments
     // are labelled with field names rather than raw column IDs.
@@ -457,7 +465,7 @@ export class AsanaDestination {
 
     const PROGRESS_INTERVAL = 25;
 
-    for (let i = 0; i < project.tasks.length; i++) {
+    if (!options.shellOnly) for (let i = 0; i < project.tasks.length; i++) {
       if (options.cancelSignal?.aborted) {
         report.cancelled = true;
         log(`Migration cancelled by user after ${i} of ${total} tasks.`, 'warning');
@@ -476,12 +484,14 @@ export class AsanaDestination {
       }
     }
 
-    log(`${report.migratedTasks} tasks processed out of ${total}`);
-    if (report.migratedSubtasks > 0) log(`${report.migratedSubtasks} subtasks migrated.`);
-    if (report.migratedComments > 0) log(`${report.migratedComments} comments migrated.`);
-    if (report.migratedAttachments > 0) log(`${report.migratedAttachments} attachments transferred.`);
+    if (!options.shellOnly) {
+      log(`${report.migratedTasks} tasks processed out of ${total}`);
+      if (report.migratedSubtasks > 0) log(`${report.migratedSubtasks} subtasks migrated.`);
+      if (report.migratedComments > 0) log(`${report.migratedComments} comments migrated.`);
+      if (report.migratedAttachments > 0) log(`${report.migratedAttachments} attachments transferred.`);
+    }
 
-    // Step 6: wire up dependencies (tasks and subtasks)
+    // Step 6: wire up dependencies (tasks and subtasks) — skipped in shell mode
     let depAttempts = 0;
     const wireDependencies = async (task: NormalisedTask): Promise<void> => {
       if (task.dependencyIds.length) {
@@ -516,15 +526,21 @@ export class AsanaDestination {
         await wireDependencies(subtask);
       }
     };
-    for (const task of project.tasks) {
-      await wireDependencies(task);
+    if (!options.shellOnly) {
+      for (const task of project.tasks) {
+        await wireDependencies(task);
+      }
+      if (depAttempts > 0) log(`${report.migratedDependencies} of ${depAttempts} dependencies wired.`);
     }
-    if (depAttempts > 0) log(`${report.migratedDependencies} of ${depAttempts} dependencies wired.`);
 
     if (report.warnings > 0) log(`${report.warnings} warning(s) during migration.`, 'warning');
     if (report.errors > 0) log(`${report.errors} error(s) during migration.`, 'error');
 
-    log(`Migration of '${project.name}' from ${sourcePlatform} to Asana completed.`);
+    if (options.shellOnly) {
+      log(`Shell created for '${project.name}' — project structure, custom fields, and sections only. No tasks migrated.`);
+    } else {
+      log(`Migration of '${project.name}' from ${sourcePlatform} to Asana completed.`);
+    }
     log('Flushing statistics.');
     report.completedAt = new Date().toISOString();
     log('Migration job ended.');
@@ -1439,10 +1455,11 @@ export class AsanaDestination {
   /** Short summary written to the task notes field (visible without opening the attachment). */
   private formatReportSummary(report: MigrationReport, writerName?: string): string {
     const lines = [
-      `Migration Report — ${report.sourceProject}`,
+      report.shellOnly ? `Shell Creation Report — ${report.sourceProject}` : `Migration Report — ${report.sourceProject}`,
       writerName ? `Performed by: ${writerName} (Cirface Migration Tool)` : 'Performed by: Cirface Migration Tool',
       `Started:   ${report.startedAt}`,
       `Completed: ${report.completedAt}`,
+      report.shellOnly ? `STATUS: SHELL ONLY — project structure created, no tasks migrated.` : '',
       report.cancelled ? `STATUS: CANCELLED — migration was stopped before completion.` : '',
       ``,
       `Asana Project: https://app.asana.com/0/${report.destProject}/list`,
@@ -1476,9 +1493,10 @@ export class AsanaDestination {
     const sep = (label: string) => `\n${'='.repeat(60)}\n${label}\n${'='.repeat(60)}`;
     const lines: string[] = [];
 
-    lines.push(`MIGRATION REPORT — ${report.sourceProject}`);
+    lines.push(report.shellOnly ? `SHELL CREATION REPORT — ${report.sourceProject}` : `MIGRATION REPORT — ${report.sourceProject}`);
     lines.push(`Started:   ${report.startedAt}`);
     lines.push(`Completed: ${report.completedAt}`);
+    if (report.shellOnly) lines.push(`STATUS: SHELL ONLY — project structure created, no tasks migrated.`);
     if (report.cancelled) lines.push(`STATUS: CANCELLED — migration was stopped before completion.`);
     lines.push('');
     lines.push(`Asana Project: https://app.asana.com/0/${report.destProject}/list`);

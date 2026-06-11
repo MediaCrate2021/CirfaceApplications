@@ -18,12 +18,13 @@ interface SubitemFieldWarning {
 interface Props {
   state: AppState;
   onConfirm: () => void;
+  onShellConfirm: () => void;
   onBack: () => void;
   onReloadMapping: () => void;
   onSkipAttachmentsChange: (skip: boolean) => void;
 }
 
-export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMapping, onSkipAttachmentsChange }: Props) {
+export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange }: Props) {
   const unmappedUsers = state.userMapping.filter((m) => !m.destId).length;
   const activeFields = state.fieldMapping.filter((f) => !f.omit);
   const mappedFields = activeFields.filter((f) => f.destFieldId || f.destNativeField).length;
@@ -162,6 +163,9 @@ export default function ReviewConfirm({ state, onConfirm, onBack, onReloadMappin
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
         <button className="btn btn-ghost" onClick={onReloadMapping}>
           ↺ Reload &amp; re-map
+        </button>
+        <button className="btn btn-ghost" onClick={onShellConfirm}>
+          Create Shell
         </button>
         <button className="btn btn-primary btn-danger" onClick={onConfirm}>
           Start Migration

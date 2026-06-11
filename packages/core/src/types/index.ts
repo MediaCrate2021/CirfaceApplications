@@ -238,6 +238,7 @@ export interface MigrationReport {
   sourceCount?: { tasks: number; subtasks: number; comments: number; attachments: number; dependencies: number };
   cancelled?: boolean;      // true if the migration was stopped by the user mid-run
   attachmentsSkipped?: boolean; // true if the user opted to skip attachment migration
+  shellOnly?: boolean;      // true if only project structure was created (no tasks migrated)
   trackingTaskGid?: string; // GID of the report task created in Asana
 }
 
