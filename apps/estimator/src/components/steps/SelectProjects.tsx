@@ -144,6 +144,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       <div className="notice-box">
         <span>&#9432;</span>
         Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
+        Archived {noun}s are not shown.
       </div>
 
       {workspaces.length > 0 && (
