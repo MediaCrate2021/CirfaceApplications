@@ -144,6 +144,11 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         generate a detailed report showing tasks, fields, comments, and attachments.
       </p>
 
+      <div className="notice-box">
+        <span>&#9432;</span>
+        Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
+      </div>
+
       {workspaces.length > 0 && (
         <div className="field-group" style={{ maxWidth: '360px', marginBottom: '20px' }}>
           <label htmlFor="workspace-filter">Filter by workspace</label>
@@ -238,10 +243,6 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         </div>
       )}
 
-      <p className="step-notice">
-        <span>&#9888;</span>
-        Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
-      </p>
       <div className="step-actions">
         <button className="btn btn-ghost" onClick={onBack}>Back</button>
         <button
