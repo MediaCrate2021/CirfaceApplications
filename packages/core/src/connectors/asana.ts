@@ -203,9 +203,20 @@ export class AsanaConnector implements SourceConnector {
     return teams.map((t) => ({ id: t.gid, name: t.name }));
   }
 
-  async getProjects(workspaceId?: string, teamId?: string): Promise<ProjectListItem[]> {
+  async getPortfolios(workspaceId?: string): Promise<Array<{ id: string; name: string }>> {
+    const gid = workspaceId ?? await this.getWorkspaceGid();
+    const portfolios = await this.getPaginated<{ gid: string; name: string; resource_type: string }>(
+      `/portfolios?workspace=${gid}&opt_fields=gid,name,resource_type`,
+    );
+    // Portfolios endpoint may return nested portfolios — keep only portfolios (not sub-portfolios of sub-portfolios)
+    return portfolios
+      .filter((p) => p.resource_type === 'portfolio')
+      .map((p) => ({ id: p.gid, name: p.name }));
+  }
+
+  async getProjects(_workspaceId?: string, teamId?: string, portfolioId?: string): Promise<ProjectListItem[]> {
     const OPT_FIELDS = 'gid,name,owner.gid,owner.name,start_on,due_on';
-    type AsanaProjectMeta = { gid: string; name: string; owner?: { name: string } | null; start_on?: string | null; due_on?: string | null };
+    type AsanaProjectMeta = { gid: string; name: string; resource_type?: string; owner?: { name: string } | null; start_on?: string | null; due_on?: string | null };
     const map = (p: AsanaProjectMeta): ProjectListItem => ({
       id: p.gid,
       name: p.name,
@@ -214,17 +225,28 @@ export class AsanaConnector implements SourceConnector {
       ...(p.due_on ? { endDate: p.due_on } : {}),
     });
 
-    if (teamId) {
-      const projects = await this.getPaginated<AsanaProjectMeta>(
-        `/teams/${teamId}/projects?opt_fields=${OPT_FIELDS}&archived=false`,
-      );
-      return projects.map(map);
+    const fetchTeam = teamId
+      ? this.getPaginated<AsanaProjectMeta>(`/teams/${teamId}/projects?opt_fields=${OPT_FIELDS}&archived=false`)
+      : Promise.resolve<AsanaProjectMeta[]>([]);
+
+    const fetchPortfolio = portfolioId
+      ? this.getPaginated<AsanaProjectMeta>(`/portfolios/${portfolioId}/items?opt_fields=${OPT_FIELDS},resource_type`)
+      : Promise.resolve<AsanaProjectMeta[]>([]);
+
+    const [teamProjects, portfolioItems] = await Promise.all([fetchTeam, fetchPortfolio]);
+
+    // Portfolio items may include nested portfolios — keep projects only
+    const portfolioProjects = portfolioItems.filter((p) => p.resource_type === 'project');
+
+    if (!teamId && !portfolioId) return [];
+
+    // Union by GID, team results first
+    const seen = new Set<string>();
+    const merged: AsanaProjectMeta[] = [];
+    for (const p of [...teamProjects, ...portfolioProjects]) {
+      if (!seen.has(p.gid)) { seen.add(p.gid); merged.push(p); }
     }
-    const gid = workspaceId ?? await this.getWorkspaceGid();
-    const projects = await this.getPaginated<AsanaProjectMeta>(
-      `/workspaces/${gid}/projects?opt_fields=${OPT_FIELDS}&archived=false`,
-    );
-    return projects.map(map);
+    return merged.map(map);
   }
 
   async getProjectFields(projectId: string): Promise<NormalisedField[]> {

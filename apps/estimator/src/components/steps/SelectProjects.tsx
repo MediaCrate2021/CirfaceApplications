@@ -42,6 +42,9 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedTeam, setSelectedTeam] = useState('');
   const [teamsLoaded, setTeamsLoaded] = useState(false);
+  const [portfolios, setPortfolios] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedPortfolio, setSelectedPortfolio] = useState('');
+  const [portfoliosLoaded, setPortfoliosLoaded] = useState(false);
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
@@ -66,30 +69,48 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
     fetch(url)
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
       .then((ts) => { setTeams(ts); setTeamsLoaded(true); })
-      .catch(() => { setTeamsLoaded(true); /* teams are optional */ });
+      .catch(() => { setTeamsLoaded(true); });
     setSelectedTeam('');
   }, [selectedWorkspace]);
+
+  // Portfolios are Asana-only — fetch alongside teams when workspace changes
+  useEffect(() => {
+    if (platform !== 'asana') { setPortfoliosLoaded(true); return; }
+    setPortfoliosLoaded(false);
+    const url = selectedWorkspace
+      ? `/api/source/portfolios?workspaceId=${selectedWorkspace}`
+      : '/api/source/portfolios';
+    fetch(url)
+      .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
+      .then((ps) => { setPortfolios(ps); setPortfoliosLoaded(true); })
+      .catch(() => { setPortfoliosLoaded(true); });
+    setSelectedPortfolio('');
+  }, [platform, selectedWorkspace]);
 
   useEffect(() => {
     if (workspaces.length > 0 && !selectedWorkspace) return;
     if (!teamsLoaded) return;
-    if (teams.length > 0 && !selectedTeam) return;
+    if (!portfoliosLoaded) return;
+    // For Asana, require at least one filter; for other platforms keep existing team-required behaviour
+    if (platform === 'asana') {
+      if (!selectedTeam && !selectedPortfolio) { setProjects([]); return; }
+    } else {
+      if (teams.length > 0 && !selectedTeam) return;
+    }
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
     if (selectedWorkspace) params.set('workspaceId', selectedWorkspace);
     if (selectedTeam)      params.set('teamId', selectedTeam);
-    const url = params.size > 0
-      ? `/api/source/projects?${params}`
-      : '/api/source/projects';
-    fetch(url)
+    if (selectedPortfolio) params.set('portfolioId', selectedPortfolio);
+    fetch(`/api/source/projects?${params}`)
       .then((r) => r.json() as Promise<SourceProject[]>)
       .then((list) => { setProjects(list); setLoading(false); })
       .catch(() => {
         setError(`Failed to load ${PROJECT_NOUN[platform]}s. Check your source connection.`);
         setLoading(false);
       });
-  }, [workspaces.length, teamsLoaded, teams.length, selectedWorkspace, selectedTeam, platform]);
+  }, [workspaces.length, teamsLoaded, portfoliosLoaded, teams.length, selectedWorkspace, selectedTeam, selectedPortfolio, platform]);
 
   const filtered = [...projects].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -153,7 +174,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
           <select
             id="workspace-filter"
             value={selectedWorkspace}
-            onChange={(e) => { setSelectedWorkspace(e.target.value); setSelectedTeam(''); setChecked(new Set()); }}
+            onChange={(e) => { setSelectedWorkspace(e.target.value); setSelectedTeam(''); setSelectedPortfolio(''); setChecked(new Set()); }}
           >
             {workspaces.map((ws) => (
               <option key={ws.id} value={ws.id}>{ws.name}</option>
@@ -170,7 +191,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
             value={selectedTeam}
             onChange={(e) => { setSelectedTeam(e.target.value); setChecked(new Set()); }}
           >
-            <option value="">All teams</option>
+            <option value="">— select a team —</option>
             {teams.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
@@ -178,9 +199,25 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         </div>
       )}
 
+      {platform === 'asana' && portfolios.length > 0 && (
+        <div className="field-group" style={{ maxWidth: '360px', marginBottom: '20px' }}>
+          <label htmlFor="portfolio-filter">Filter by portfolio</label>
+          <select
+            id="portfolio-filter"
+            value={selectedPortfolio}
+            onChange={(e) => { setSelectedPortfolio(e.target.value); setChecked(new Set()); }}
+          >
+            <option value="">— select a portfolio —</option>
+            {portfolios.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {loading && <p className="loading-text">Loading {noun}s…</p>}
       {error && <p className="error-text">{error}</p>}
-      {!loading && !error && filtered.length === 0 && (
+      {!loading && !error && filtered.length === 0 && (selectedTeam || selectedPortfolio || platform !== 'asana') && (
         <p className="empty-text">No {noun}s found.</p>
       )}
 
