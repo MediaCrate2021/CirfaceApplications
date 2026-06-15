@@ -297,11 +297,18 @@ export class AsanaDestination {
     let projectGid = options.destProjectGid;
     if (!projectGid) {
       log(`Creating Asana project with the name '${options.destProjectName}'.`);
-      const newProjectPayload: Record<string, string> = {
+      const newProjectPayload: Record<string, unknown> = {
         name: options.destProjectName!,
         workspace: options.destWorkspaceGid,
       };
       if (options.destTeamGid) newProjectPayload.team = options.destTeamGid;
+      // Carry over project-level details when available (populated for Asana source projects)
+      if (project.description)    newProjectPayload.notes            = project.description;
+      if (project.color)          newProjectPayload.color            = project.color;
+      if (project.layout)         newProjectPayload.default_view     = project.layout;
+      if (project.privacySetting) newProjectPayload.privacy_setting  = project.privacySetting;
+      if (project.startDate)      newProjectPayload.start_on         = project.startDate;
+      if (project.endDate)        newProjectPayload.due_on           = project.endDate;
       const created = await this.request<{ gid: string; name: string }>('POST', '/projects', newProjectPayload);
       projectGid = created.gid;
       log(`Asana project '${options.destProjectName}' : '${projectGid}' created successfully.`);
@@ -531,6 +538,29 @@ export class AsanaDestination {
         await wireDependencies(task);
       }
       if (depAttempts > 0) log(`${report.migratedDependencies} of ${depAttempts} dependencies wired.`);
+    }
+
+    // Step 6b: migrate project status updates (Asana source only)
+    if (project.statusUpdates && project.statusUpdates.length > 0) {
+      log(`Migrating ${project.statusUpdates.length} project status update(s).`);
+      report.migratedStatusUpdates = 0;
+      // Post oldest first so the most-recent status ends up on top in Asana
+      const ordered = [...project.statusUpdates].reverse();
+      for (const update of ordered) {
+        if (options.cancelSignal?.aborted) break;
+        try {
+          await this.request('POST', '/project_statuses', {
+            project: projectGid,
+            title: update.title,
+            text: update.text,
+            color: update.color,
+          });
+          report.migratedStatusUpdates++;
+        } catch (err) {
+          warn('setup', update.title, `Failed to migrate status update "${update.title}": ${(err as Error).message}`);
+        }
+      }
+      log(`${report.migratedStatusUpdates} of ${project.statusUpdates.length} status updates migrated.`);
     }
 
     if (report.warnings > 0) log(`${report.warnings} warning(s) during migration.`, 'warning');
@@ -1320,7 +1350,7 @@ export class AsanaDestination {
       const url = this.sourceProjectUrl(report.sourcePlatform, p.projectId);
       if (url) lines.push(`    Link:  ${url}`);
       lines.push(`    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}  Total: ${total}`);
-      lines.push(`    Users: ${p.users}  Fields: ${p.fields.length}`);
+      lines.push(`    Users: ${p.users}  Fields: ${p.fields.length}${p.statusUpdates > 0 ? `  Status updates: ${p.statusUpdates}` : ''}`);
       lines.push('');
     }
 
@@ -1425,6 +1455,7 @@ export class AsanaDestination {
       lines.push(`Total items:  ${total}`);
       lines.push(`Users:        ${p.users}`);
       lines.push(`Fields:       ${p.fields.length}`);
+      if (p.statusUpdates > 0) lines.push(`Status updates: ${p.statusUpdates}`);
       lines.push('');
 
       if (p.fields.length > 0) {

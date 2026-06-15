@@ -31,6 +31,7 @@ import type {
   NormalisedFieldType,
   NormalisedProject,
   NormalisedSection,
+  NormalisedStatusUpdate,
   NormalisedTask,
   NormalisedUser,
   ProjectListItem,
@@ -319,16 +320,26 @@ export class AsanaConnector implements SourceConnector {
     const shallow = options?.shallow ?? false;
     logger.info({ projectId, shallow }, 'asana source: fetching project data');
 
-    // Fetch project metadata, sections, fields, and users in parallel.
-    const [projectMeta, sectionData, fields, allUsers] = await Promise.all([
-      this.request<{ gid: string; name: string; notes: string }>(
-        `/projects/${projectId}?opt_fields=gid,name,notes`,
+    // Fetch project metadata, sections, fields, users, and status updates in parallel.
+    const [projectMeta, sectionData, fields, allUsers, rawStatuses] = await Promise.all([
+      this.request<{
+        gid: string; name: string; notes: string;
+        color: string | null; default_view: string | null;
+        privacy_setting: string | null; start_on: string | null; due_on: string | null;
+      }>(
+        `/projects/${projectId}?opt_fields=gid,name,notes,color,default_view,privacy_setting,start_on,due_on`,
       ),
       this.getPaginated<{ gid: string; name: string }>(
         `/projects/${projectId}/sections?opt_fields=gid,name`,
       ),
       this.getProjectFields(projectId),
       this.getUsers(),
+      this.getPaginated<{
+        gid: string; title: string; text: string; color: string; created_at: string;
+        author: { name: string } | null;
+      }>(
+        `/projects/${projectId}/project_statuses?opt_fields=gid,title,text,color,created_at,author.name`,
+      ),
     ]);
 
     const sections: NormalisedSection[] = sectionData.map((s) => ({ id: s.gid, name: s.name }));
@@ -364,14 +375,29 @@ export class AsanaConnector implements SourceConnector {
       await this.enrichSubtasks(tasks);
     }
 
+    const statusUpdates: NormalisedStatusUpdate[] = rawStatuses.map((s) => ({
+      id: s.gid,
+      title: s.title,
+      text: s.text,
+      color: (s.color as NormalisedStatusUpdate['color']) ?? 'green',
+      createdAt: s.created_at,
+      authorName: s.author?.name ?? 'Unknown',
+    }));
+
     return {
       id: projectId,
       name: projectMeta.name,
       description: projectMeta.notes || undefined,
+      color: projectMeta.color || undefined,
+      layout: projectMeta.default_view || undefined,
+      privacySetting: projectMeta.privacy_setting || undefined,
+      startDate: projectMeta.start_on || undefined,
+      endDate: projectMeta.due_on || undefined,
       tasks,
       fields,
       users: Array.from(userMap.values()),
       sections,
+      statusUpdates,
     };
   }
 

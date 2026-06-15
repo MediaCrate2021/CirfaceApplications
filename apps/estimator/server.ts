@@ -248,7 +248,10 @@ function countProjectItems(project: NormalisedProject) {
     attachments += c.attachments;
     dependencies += c.dependencies;
   }
-  return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies };
+  return {
+    tasks: project.tasks.length, subtasks, comments, attachments, dependencies,
+    statusUpdates: project.statusUpdates?.length ?? 0,
+  };
 }
 
 // ---------------------------------------------------------------------------

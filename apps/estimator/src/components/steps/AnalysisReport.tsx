@@ -18,13 +18,14 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
 
   const totals = report.projects.reduce(
     (acc, p) => ({
-      tasks:        acc.tasks        + p.tasks,
-      subtasks:     acc.subtasks     + p.subtasks,
-      comments:     acc.comments     + p.comments,
-      attachments:  acc.attachments  + p.attachments,
-      dependencies: acc.dependencies + p.dependencies,
+      tasks:          acc.tasks          + p.tasks,
+      subtasks:       acc.subtasks       + p.subtasks,
+      comments:       acc.comments       + p.comments,
+      attachments:    acc.attachments    + p.attachments,
+      dependencies:   acc.dependencies   + p.dependencies,
+      statusUpdates:  acc.statusUpdates  + p.statusUpdates,
     }),
-    { tasks: 0, subtasks: 0, comments: 0, attachments: 0, dependencies: 0 },
+    { tasks: 0, subtasks: 0, comments: 0, attachments: 0, dependencies: 0, statusUpdates: 0 },
   );
 
   async function handleDownload() {
@@ -99,6 +100,7 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
             <dt>Dependencies</dt><dd>{totals.dependencies}</dd>
             <dt>Comments</dt><dd>{totals.comments}</dd>
             <dt>Attachments</dt><dd>{totals.attachments}</dd>
+            {totals.statusUpdates > 0 && <><dt>Status updates</dt><dd>{totals.statusUpdates}</dd></>}
             <dt><strong>Total items</strong></dt>
             <dd><strong>{totals.tasks + totals.subtasks + totals.dependencies + totals.comments + totals.attachments}</strong></dd>
           </dl>
@@ -157,6 +159,7 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
               <dt>Dependencies</dt> <dd>{project.dependencies}</dd>
               <dt>Comments</dt>     <dd>{project.comments}</dd>
               <dt>Attachments</dt>  <dd>{project.attachments}</dd>
+              {project.statusUpdates > 0 && <><dt>Status updates</dt><dd>{project.statusUpdates}</dd></>}
               <dt><strong>Total</strong></dt>
               <dd><strong>{project.tasks + project.subtasks + project.dependencies + project.comments + project.attachments}</strong></dd>
             </dl>

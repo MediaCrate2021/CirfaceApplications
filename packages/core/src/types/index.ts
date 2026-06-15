@@ -106,14 +106,35 @@ export interface NormalisedSection {
   name: string;
 }
 
+export interface NormalisedStatusUpdate {
+  id: string;
+  title: string;
+  text: string;
+  color: 'green' | 'yellow' | 'red' | 'blue';
+  createdAt: string; // ISO 8601
+  authorName: string;
+}
+
 export interface NormalisedProject {
   id: string;
   name: string;
   description?: string;
+  /** Project color name as returned by the source platform (e.g. 'light-green'). Asana only. */
+  color?: string;
+  /** Board layout: 'list' | 'board' | 'timeline' | 'calendar'. Asana only. */
+  layout?: string;
+  /** Privacy setting: 'public_to_workspace' | 'private' | 'private_to_team'. Asana only. */
+  privacySetting?: string;
+  /** Project start date (YYYY-MM-DD). Asana only. */
+  startDate?: string;
+  /** Project end / due date (YYYY-MM-DD). Asana only. */
+  endDate?: string;
   tasks: NormalisedTask[];
   fields: NormalisedField[];
   users: NormalisedUser[];
   sections: NormalisedSection[]; // board groups / Trello lists / etc.
+  /** Status updates in reverse-chronological order (newest first). Asana only. */
+  statusUpdates?: NormalisedStatusUpdate[];
   /** Warnings collected during the fetch/normalisation phase, before migration begins. */
   fetchWarnings?: MigrationReportItem[];
 }
@@ -229,6 +250,7 @@ export interface MigrationReport {
   failedComments: number;
   migratedAttachments: number;
   migratedDependencies: number;
+  migratedStatusUpdates?: number;
   log: Array<{ time: string; message: string }>; // timestamped activity log
   warnings: number;
   errors: number;
@@ -270,6 +292,7 @@ export interface ProjectAnalysis {
   comments: number;
   attachments: number;
   dependencies: number;
+  statusUpdates: number;
   users: number;
   fields: NormalisedField[];
   /** Display name of the project owner, if available from the source platform. */
