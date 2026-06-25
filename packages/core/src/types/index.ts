@@ -330,6 +330,8 @@ export interface ProjectListItem {
   startDate?: string;
   /** Project end / due date (YYYY-MM-DD), if available. */
   endDate?: string;
+  /** True when the project is archived in the source platform. */
+  archived?: boolean;
 }
 
 export interface AsanaProjectListItem {

@@ -39,7 +39,7 @@ export interface SourceConnector {
   getPortfolios?(workspaceId?: string): Promise<Array<{ id: string; name: string }>>;
 
   /** Return a lightweight list of projects (id + name only), optionally filtered by workspace/team/portfolio. */
-  getProjects(workspaceId?: string, teamId?: string, portfolioId?: string): Promise<ProjectListItem[]>;
+  getProjects(workspaceId?: string, teamId?: string, portfolioId?: string, includeArchived?: boolean): Promise<ProjectListItem[]>;
 
   /**
    * Fetch only the custom field definitions for a project — no tasks, no users.

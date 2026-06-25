@@ -667,9 +667,9 @@ app.get('/api/source/portfolios', requireAuth, requireSourceConnected, async (re
 app.get('/api/source/projects', requireAuth, requireSourceConnected, async (req, res) => {
   try {
     const { platform, token } = req.session.sourceConfig!;
-    const { workspaceId, teamId, portfolioId } = req.query as { workspaceId?: string; teamId?: string; portfolioId?: string };
+    const { workspaceId, teamId, portfolioId, includeArchived } = req.query as { workspaceId?: string; teamId?: string; portfolioId?: string; includeArchived?: string };
     const connector = makeConnector(platform, token);
-    const projects = await connector.getProjects(workspaceId, teamId, portfolioId);
+    const projects = await connector.getProjects(workspaceId, teamId, portfolioId, includeArchived === 'true');
     res.json(projects);
   } catch (err) {
     apiError(res, err, { route: 'GET /api/source/projects' });

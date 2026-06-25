@@ -12,6 +12,7 @@ interface SourceProject {
   ownerName?: string;
   startDate?: string;
   endDate?: string;
+  archived?: boolean;
 }
 
 interface Props {
@@ -47,6 +48,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [portfoliosLoaded, setPortfoliosLoaded] = useState(false);
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [includeArchived, setIncludeArchived] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -100,9 +102,10 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
-    if (selectedWorkspace) params.set('workspaceId', selectedWorkspace);
-    if (selectedTeam)      params.set('teamId', selectedTeam);
-    if (selectedPortfolio) params.set('portfolioId', selectedPortfolio);
+    if (selectedWorkspace)  params.set('workspaceId', selectedWorkspace);
+    if (selectedTeam)       params.set('teamId', selectedTeam);
+    if (selectedPortfolio)  params.set('portfolioId', selectedPortfolio);
+    if (includeArchived)    params.set('includeArchived', 'true');
     fetch(`/api/source/projects?${params}`)
       .then((r) => r.json() as Promise<SourceProject[]>)
       .then((list) => { setProjects(list); setLoading(false); })
@@ -110,7 +113,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         setError(`Failed to load ${PROJECT_NOUN[platform]}s. Check your source connection.`);
         setLoading(false);
       });
-  }, [workspaces.length, teamsLoaded, portfoliosLoaded, teams.length, selectedWorkspace, selectedTeam, selectedPortfolio, platform]);
+  }, [workspaces.length, teamsLoaded, portfoliosLoaded, teams.length, selectedWorkspace, selectedTeam, selectedPortfolio, includeArchived, platform]);
 
   const filtered = [...projects].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -165,7 +168,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       <div className="notice-box">
         <span>&#9432;</span>
         Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
-        Archived {noun}s are not shown.
+        Archived {noun}s are hidden by default.
       </div>
 
       {workspaces.length > 0 && (
@@ -215,6 +218,19 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         </div>
       )}
 
+      {platform === 'asana' && (
+        <div style={{ marginBottom: '16px' }}>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(e) => { setIncludeArchived(e.target.checked); setChecked(new Set()); }}
+            />
+            <span>Include archived {noun}s</span>
+          </label>
+        </div>
+      )}
+
       {loading && <p className="loading-text">Loading {noun}s…</p>}
       {error && <p className="error-text">{error}</p>}
       {!loading && !error && filtered.length === 0 && (selectedTeam || selectedPortfolio || platform !== 'asana') && (
@@ -251,6 +267,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
                     onChange={() => toggle(p.id)}
                   />
                   <span>{p.name}</span>
+                  {p.archived && <span className="badge badge-warning" style={{ marginLeft: '6px' }}>Archived</span>}
                   {p.ownerName && <span className="project-checklist-item-meta">{p.ownerName}</span>}
                   {p.startDate && <span className="project-checklist-item-meta">{formatDate(p.startDate)}{p.endDate ? ` – ${formatDate(p.endDate)}` : ''}</span>}
                   {!p.startDate && p.endDate && <span className="project-checklist-item-meta">Due {formatDate(p.endDate)}</span>}

@@ -215,36 +215,50 @@ export class AsanaConnector implements SourceConnector {
       .map((p) => ({ id: p.gid, name: p.name }));
   }
 
-  async getProjects(_workspaceId?: string, teamId?: string, portfolioId?: string): Promise<ProjectListItem[]> {
-    const OPT_FIELDS = 'gid,name,owner.gid,owner.name,start_on,due_on';
-    type AsanaProjectMeta = { gid: string; name: string; resource_type?: string; owner?: { name: string } | null; start_on?: string | null; due_on?: string | null };
+  async getProjects(_workspaceId?: string, teamId?: string, portfolioId?: string, includeArchived = false): Promise<ProjectListItem[]> {
+    const OPT_FIELDS = 'gid,name,archived,owner.gid,owner.name,start_on,due_on';
+    type AsanaProjectMeta = { gid: string; name: string; archived?: boolean; resource_type?: string; owner?: { name: string } | null; start_on?: string | null; due_on?: string | null };
     const map = (p: AsanaProjectMeta): ProjectListItem => ({
       id: p.gid,
       name: p.name,
       ...(p.owner?.name ? { ownerName: p.owner.name } : {}),
       ...(p.start_on ? { startDate: p.start_on } : {}),
       ...(p.due_on ? { endDate: p.due_on } : {}),
+      ...(p.archived ? { archived: true } : {}),
     });
-
-    const fetchTeam = teamId
-      ? this.getPaginated<AsanaProjectMeta>(`/teams/${teamId}/projects?opt_fields=${OPT_FIELDS}&archived=false`)
-      : Promise.resolve<AsanaProjectMeta[]>([]);
-
-    const fetchPortfolio = portfolioId
-      ? this.getPaginated<AsanaProjectMeta>(`/portfolios/${portfolioId}/items?opt_fields=${OPT_FIELDS},resource_type`)
-      : Promise.resolve<AsanaProjectMeta[]>([]);
-
-    const [teamProjects, portfolioItems] = await Promise.all([fetchTeam, fetchPortfolio]);
-
-    // Portfolio items may include nested portfolios — keep projects only
-    const portfolioProjects = portfolioItems.filter((p) => p.resource_type === 'project');
 
     if (!teamId && !portfolioId) return [];
 
-    // Union by GID, team results first
+    // When includeArchived, fetch active and archived in parallel; otherwise fetch active only.
+    const buildTeamUrl = (archived: boolean) =>
+      `/teams/${teamId}/projects?opt_fields=${OPT_FIELDS}&archived=${archived}`;
+    const buildPortfolioUrl = () =>
+      `/portfolios/${portfolioId}/items?opt_fields=${OPT_FIELDS},resource_type`;
+
+    const fetches: Promise<AsanaProjectMeta[]>[] = [];
+
+    if (teamId) {
+      fetches.push(this.getPaginated<AsanaProjectMeta>(buildTeamUrl(false)));
+      if (includeArchived) fetches.push(this.getPaginated<AsanaProjectMeta>(buildTeamUrl(true)));
+    }
+    if (portfolioId) {
+      // Portfolio items endpoint does not support archived filter — returns active only by default.
+      // Archived projects in a portfolio require a separate team fetch.
+      fetches.push(this.getPaginated<AsanaProjectMeta>(buildPortfolioUrl()));
+    }
+
+    const results = await Promise.all(fetches);
+    const all = results.flat();
+
+    // Portfolio items may include nested portfolios — keep projects only
+    const filtered = portfolioId
+      ? all.filter((p) => !p.resource_type || p.resource_type === 'project')
+      : all;
+
+    // Union by GID
     const seen = new Set<string>();
     const merged: AsanaProjectMeta[] = [];
-    for (const p of [...teamProjects, ...portfolioProjects]) {
+    for (const p of filtered) {
       if (!seen.has(p.gid)) { seen.add(p.gid); merged.push(p); }
     }
     return merged.map(map);
