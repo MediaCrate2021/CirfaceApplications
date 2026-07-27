@@ -163,7 +163,7 @@ function countProjectItems(project: NormalisedProject) {
     { projectId: project.id, total: attachments, topLevel: topLevelAttachments, subtask: subtaskAttachments },
     'countProjectItems: attachment breakdown',
   );
-  return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies };
+  return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies, statusUpdates: project.statusUpdates?.length ?? 0 };
 }
 
 // ---------------------------------------------------------------------------
