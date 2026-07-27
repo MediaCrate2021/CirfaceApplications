@@ -33,6 +33,7 @@ import { TrelloConnector } from '@cirface/core/connectors/trello';
 import { SmartsheetConnector } from '@cirface/core/connectors/smartsheet';
 import { AsanaConnector } from '@cirface/core/connectors/asana';
 import { WrikeConnector } from '@cirface/core/connectors/wrike';
+import { WorkfrontConnector } from '@cirface/core/connectors/workfront';
 import { AsanaDestination } from '@cirface/core/destinations/asana';
 import type { SourceConnector } from '@cirface/core/connectors/base';
 import type {
@@ -255,7 +256,8 @@ function makeConnector(platform: SourcePlatform, token: string): SourceConnector
   if (platform === 'trello') return new TrelloConnector(token);
   if (platform === 'smartsheet') return new SmartsheetConnector(token);
   if (platform === 'asana') return new AsanaConnector(token);
-  if (platform === 'wrike') return new WrikeConnector(token);
+  if (platform === 'wrike')     return new WrikeConnector(token);
+  if (platform === 'workfront') return new WorkfrontConnector(token);
   throw new Error(`Unknown platform: ${platform}`);
 }
 

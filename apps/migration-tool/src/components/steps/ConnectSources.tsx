@@ -13,6 +13,9 @@ interface Props {
 export default function ConnectSources({ state, onModeChange, onSourceConnected, onDestConnected, onNext }: Props) {
   const [sourcePlatform, setSourcePlatform] = useState<SourcePlatform>(state.sourcePlatform ?? 'monday');
   const [sourceToken, setSourceToken] = useState('');
+  // Workfront uses two separate fields combined as "apiKey:domain"
+  const [wfApiKey, setWfApiKey] = useState('');
+  const [wfDomain, setWfDomain] = useState('');
   const [destToken, setDestToken] = useState('');
   const [sourceLoading, setSourceLoading] = useState(false);
   const [destLoading, setDestLoading] = useState(false);
@@ -20,14 +23,17 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
   const [destError, setDestError] = useState('');
 
   async function connectSource() {
-    if (!sourceToken.trim()) return;
+    const combinedToken = sourcePlatform === 'workfront'
+      ? `${wfApiKey.trim()}:${wfDomain.trim()}`
+      : sourceToken.trim();
+    if (!combinedToken || combinedToken === ':') return;
     setSourceLoading(true);
     setSourceError('');
     try {
       const res = await fetch('/api/source/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: sourcePlatform, token: sourceToken.trim() }),
+        body: JSON.stringify({ platform: sourcePlatform, token: combinedToken }),
       });
       const data = await res.json() as { ok?: boolean; workspaceName?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? 'Connection failed');
@@ -111,83 +117,123 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                 <select
                   id="source-platform"
                   value={sourcePlatform}
-                  onChange={(e) => setSourcePlatform(e.target.value as SourcePlatform)}
+                  onChange={(e) => { setSourcePlatform(e.target.value as SourcePlatform); setSourceToken(''); setWfApiKey(''); setWfDomain(''); setSourceError(''); }}
                 >
                   <option value="asana">Asana</option>
                   <option value="monday">Monday.com</option>
                   <option value="smartsheet">Smartsheet</option>
                   <option value="trello">Trello</option>
                   <option value="wrike">Wrike</option>
+                  <option value="workfront">Workfront</option>
                 </select>
               </div>
-              <div className="field-group">
-                <label htmlFor="source-token">
-                  {sourcePlatform === 'trello' ? 'API Key & Token' : 'API Token'}
-                  {sourcePlatform === 'monday' && (
-                    <a
-                      className="info-icon"
-                      href="https://developer.monday.com/apps/docs/mondaycode"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-tooltip="How to get your Monday.com API token"
-                    >i</a>
-                  )}
-                  {sourcePlatform === 'smartsheet' && (
-                    <a
-                      className="info-icon"
-                      href="https://help.smartsheet.com/articles/2482389-generate-api-key"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-tooltip="How to generate a Smartsheet API key"
-                    >i</a>
-                  )}
+              {sourcePlatform === 'workfront' ? (
+                <>
+                  <div className="field-group">
+                    <label htmlFor="wf-domain">
+                      Workfront domain
+                      <a
+                        className="info-icon"
+                        href="https://experienceleague.adobe.com/docs/workfront/using/adobe-workfront-api/api-general-information/api-basics.html"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="How to get your Workfront API key"
+                      >i</a>
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <input
+                        id="wf-domain"
+                        type="text"
+                        placeholder="mycompany"
+                        value={wfDomain}
+                        onChange={(e) => { setWfDomain(e.target.value); setSourceError(''); }}
+                        autoComplete="off"
+                        style={{ flex: 1 }}
+                      />
+                      <span className="field-hint" style={{ whiteSpace: 'nowrap', margin: 0 }}>.my.workfront.com</span>
+                    </div>
+                    <p className="field-hint">The subdomain of your Workfront instance.</p>
+                  </div>
+                  <div className="field-group">
+                    <label htmlFor="wf-apikey">API key</label>
+                    <input
+                      id="wf-apikey"
+                      type="password"
+                      placeholder="Workfront API key"
+                      value={wfApiKey}
+                      onChange={(e) => { setWfApiKey(e.target.value); setSourceError(''); }}
+                      autoComplete="off"
+                    />
+                    <p className="field-hint">Find your API key in Workfront: Setup → System → Customer Info.</p>
+                  </div>
+                </>
+              ) : (
+                <div className="field-group">
+                  <label htmlFor="source-token">
+                    {sourcePlatform === 'trello' ? 'API Key & Token' : 'API Token'}
+                    {sourcePlatform === 'monday' && (
+                      <a
+                        className="info-icon"
+                        href="https://developer.monday.com/apps/docs/mondaycode"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="How to get your Monday.com API token"
+                      >i</a>
+                    )}
+                    {sourcePlatform === 'smartsheet' && (
+                      <a
+                        className="info-icon"
+                        href="https://help.smartsheet.com/articles/2482389-generate-api-key"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="How to generate a Smartsheet API key"
+                      >i</a>
+                    )}
+                    {sourcePlatform === 'trello' && (
+                      <a
+                        className="info-icon"
+                        href="https://developer.atlassian.com/cloud/trello/guides/rest-api/authorization/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="How to get your Trello API key & token"
+                      >i</a>
+                    )}
+                    {sourcePlatform === 'wrike' && (
+                      <a
+                        className="info-icon"
+                        href="https://help.wrike.com/hc/en-us/articles/210146065-Wrike-API"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="How to create a Wrike permanent access token"
+                      >i</a>
+                    )}
+                  </label>
+                  <input
+                    id="source-token"
+                    type="password"
+                    placeholder={
+                      sourcePlatform === 'monday'      ? 'Monday.com API token'
+                      : sourcePlatform === 'smartsheet' ? 'Smartsheet Personal Access Token'
+                      : sourcePlatform === 'wrike'      ? 'Wrike permanent access token'
+                      : 'apiKey:token'
+                    }
+                    value={sourceToken}
+                    onChange={(e) => setSourceToken(e.target.value)}
+                    autoComplete="off"
+                  />
                   {sourcePlatform === 'trello' && (
-                    <a
-                      className="info-icon"
-                      href="https://developer.atlassian.com/cloud/trello/guides/rest-api/authorization/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-tooltip="How to get your Trello API key & token"
-                    >i</a>
+                    <p className="field-hint">Paste your API key and token separated by a colon: <code>apiKey:token</code></p>
                   )}
                   {sourcePlatform === 'wrike' && (
-                    <a
-                      className="info-icon"
-                      href="https://help.wrike.com/hc/en-us/articles/210146065-Wrike-API"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-tooltip="How to create a Wrike permanent access token"
-                    >i</a>
+                    <p className="field-hint">Generate a permanent token in Wrike: Profile menu &gt; Apps &amp; Integrations &gt; API &gt; Create permanent token</p>
                   )}
-                </label>
-                <input
-                  id="source-token"
-                  type="password"
-                  placeholder={
-                    sourcePlatform === 'monday'
-                      ? 'Monday.com API token'
-                      : sourcePlatform === 'smartsheet'
-                      ? 'Smartsheet Personal Access Token'
-                      : sourcePlatform === 'wrike'
-                      ? 'Wrike permanent access token'
-                      : 'apiKey:token'
-                  }
-                  value={sourceToken}
-                  onChange={(e) => setSourceToken(e.target.value)}
-                  autoComplete="off"
-                />
-                {sourcePlatform === 'trello' && (
-                  <p className="field-hint">Paste your API key and token separated by a colon: <code>apiKey:token</code></p>
-                )}
-                {sourcePlatform === 'wrike' && (
-                  <p className="field-hint">Generate a permanent token in Wrike: Profile menu &gt; Apps &amp; Integrations &gt; API &gt; Create permanent token</p>
-                )}
-              </div>
+                </div>
+              )}
               {sourceError && <p className="error-text">{sourceError}</p>}
               <button
                 className="btn btn-primary"
                 onClick={connectSource}
-                disabled={!sourceToken.trim() || sourceLoading}
+                disabled={sourcePlatform === 'workfront' ? (!wfApiKey.trim() || !wfDomain.trim() || sourceLoading) : (!sourceToken.trim() || sourceLoading)}
               >
                 {sourceLoading ? 'Connecting…' : 'Connect Source'}
               </button>

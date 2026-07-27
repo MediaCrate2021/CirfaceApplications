@@ -30,6 +30,7 @@ const PLATFORM_LABELS: Record<SourcePlatform, string> = {
   smartsheet:  'Smartsheet',
   trello:      'Trello',
   wrike:       'Wrike',
+  workfront:   'Workfront',
 };
 
 const TOKEN_CONFIG: Record<SourcePlatform, TokenConfig> = {
@@ -53,17 +54,24 @@ const TOKEN_CONFIG: Record<SourcePlatform, TokenConfig> = {
     placeholder: 'Personal Access Token',
     helpText:    'Generate at: Wrike → Profile → Apps & Integrations → API → Create permanent token',
   },
+  workfront: {
+    placeholder: 'apiKey:domain',
+    helpText:    'Combine your Workfront API key and domain as "apiKey:domain" (e.g. abc123:mycompany).',
+  },
 };
 
-// Trello and Wrike use token auth only — no OAuth flow
-const TOKEN_ONLY = new Set<SourcePlatform>(['trello', 'wrike']);
+// Trello, Wrike, and Workfront use token auth only — no OAuth flow
+const TOKEN_ONLY = new Set<SourcePlatform>(['trello', 'wrike', 'workfront']);
 
-const ALL_PLATFORMS: SourcePlatform[] = ['asana', 'monday', 'smartsheet', 'trello', 'wrike'];
+const ALL_PLATFORMS: SourcePlatform[] = ['asana', 'monday', 'smartsheet', 'trello', 'wrike', 'workfront'];
 
 export default function ConnectSource({ user, onConnected }: Props) {
   const [providers, setProviders] = useState<OAuthProviders | null>(null);
   const [platform, setPlatform] = useState<SourcePlatform>('asana');
   const [token, setToken] = useState('');
+  // Workfront uses two separate fields combined as "apiKey:domain"
+  const [wfApiKey, setWfApiKey] = useState('');
+  const [wfDomain, setWfDomain] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -117,7 +125,10 @@ export default function ConnectSource({ user, onConnected }: Props) {
 
   async function handleTokenConnect(e: { preventDefault(): void }) {
     e.preventDefault();
-    if (!token.trim()) return;
+    const combinedToken = platform === 'workfront'
+      ? `${wfApiKey.trim()}:${wfDomain.trim()}`
+      : token.trim();
+    if (!combinedToken || combinedToken === ':') return;
 
     setLoading(true);
     setError('');
@@ -126,7 +137,7 @@ export default function ConnectSource({ user, onConnected }: Props) {
       const res = await fetch('/api/source/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, token: token.trim() }),
+        body: JSON.stringify({ platform, token: combinedToken }),
       });
 
       const data = await res.json() as { ok?: boolean; error?: string };
@@ -162,6 +173,8 @@ export default function ConnectSource({ user, onConnected }: Props) {
           onChange={(e) => {
             setPlatform(e.target.value as SourcePlatform);
             setToken('');
+            setWfApiKey('');
+            setWfDomain('');
             setError('');
           }}
         >
@@ -193,24 +206,57 @@ export default function ConnectSource({ user, onConnected }: Props) {
         </div>
       ) : (
         <form onSubmit={handleTokenConnect}>
-          <div className="field-group">
-            <label htmlFor="token">Access token</label>
-            <input
-              id="token"
-              type="password"
-              autoComplete="off"
-              placeholder={config.placeholder}
-              value={token}
-              onChange={(e) => { setToken(e.target.value); setError(''); }}
-            />
-            <span className="field-hint">{config.helpText}</span>
-          </div>
+          {platform === 'workfront' ? (
+            <>
+              <div className="field-group">
+                <label htmlFor="wf-domain">Workfront domain</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    id="wf-domain"
+                    type="text"
+                    autoComplete="off"
+                    placeholder="mycompany"
+                    value={wfDomain}
+                    onChange={(e) => { setWfDomain(e.target.value); setError(''); }}
+                    style={{ flex: 1 }}
+                  />
+                  <span className="field-hint" style={{ whiteSpace: 'nowrap', margin: 0 }}>.my.workfront.com</span>
+                </div>
+                <span className="field-hint">The subdomain of your Workfront instance.</span>
+              </div>
+              <div className="field-group">
+                <label htmlFor="wf-apikey">API key</label>
+                <input
+                  id="wf-apikey"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Workfront API key"
+                  value={wfApiKey}
+                  onChange={(e) => { setWfApiKey(e.target.value); setError(''); }}
+                />
+                <span className="field-hint">Find your API key in Workfront: Setup → System → Customer Info.</span>
+              </div>
+            </>
+          ) : (
+            <div className="field-group">
+              <label htmlFor="token">Access token</label>
+              <input
+                id="token"
+                type="password"
+                autoComplete="off"
+                placeholder={config.placeholder}
+                value={token}
+                onChange={(e) => { setToken(e.target.value); setError(''); }}
+              />
+              <span className="field-hint">{config.helpText}</span>
+            </div>
+          )}
 
           <div className="step-actions">
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={loading || !token.trim()}
+              disabled={loading || (platform === 'workfront' ? !wfApiKey.trim() || !wfDomain.trim() : !token.trim())}
             >
               {loading ? 'Connecting…' : `Connect to ${PLATFORM_LABELS[platform]}`}
             </button>

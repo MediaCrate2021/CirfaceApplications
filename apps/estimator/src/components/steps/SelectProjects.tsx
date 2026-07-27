@@ -27,6 +27,7 @@ const PLATFORM_LABELS: Record<SourcePlatform, string> = {
   smartsheet: 'Smartsheet',
   trello: 'Trello',
   wrike: 'Wrike',
+  workfront: 'Workfront',
 };
 
 const PROJECT_NOUN: Record<SourcePlatform, string> = {
@@ -35,6 +36,7 @@ const PROJECT_NOUN: Record<SourcePlatform, string> = {
   smartsheet: 'sheet',
   trello: 'board',
   wrike: 'project',
+  workfront: 'project',
 };
 
 export default function SelectProjects({ platform, onSelect, onBack }: Props) {
