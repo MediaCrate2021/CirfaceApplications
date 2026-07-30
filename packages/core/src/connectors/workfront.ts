@@ -54,6 +54,13 @@ interface WFTask {
   parentID?: string | null;
   plannedStartDate?: string;
   indent?: number;
+  priority?: string | null;
+  percentComplete?: number | null;
+  duration?: number | null;
+  durationType?: string | null;
+  actualStartDate?: string | null;
+  actualCompletionDate?: string | null;
+  commitDate?: string | null;
   predecessors?: Array<{ predecessorID?: string }>;
   // Custom form field values — keyed as "DE:Field Name"
   parameterValues?: Record<string, string | null>;
@@ -229,9 +236,15 @@ export class WorkfrontConnector implements SourceConnector {
     }
 
     const standardFields: NormalisedField[] = [
-      { id: 'description',      name: 'Description',        type: 'text' },
-      { id: 'status',           name: 'Status',             type: 'text' },
-      { id: 'plannedStartDate', name: 'Planned Start Date', type: 'date' },
+      { id: 'description',          name: 'Description',            type: 'text' },
+      { id: 'status',               name: 'Status',                 type: 'text' },
+      { id: 'priority',             name: 'Priority',               type: 'text' },
+      { id: 'percentComplete',      name: 'Percent Complete',       type: 'number' },
+      { id: 'duration',             name: 'Duration',               type: 'number' },
+      { id: 'plannedStartDate',     name: 'Planned Start Date',     type: 'date' },
+      { id: 'actualStartDate',      name: 'Actual Start Date',      type: 'date' },
+      { id: 'actualCompletionDate', name: 'Actual Completion Date', type: 'date' },
+      { id: 'commitDate',           name: 'Commit Date',            type: 'date' },
     ];
 
     const customFields: NormalisedField[] = [...customFieldNames].sort().map((name) => ({
@@ -262,7 +275,9 @@ export class WorkfrontConnector implements SourceConnector {
         'ID', 'name', 'description', 'status',
         'plannedCompletionDate', 'plannedStartDate',
         'assignedToID', 'assignedTo', 'parentID', 'indent',
-        'predecessors', 'parameterValues',
+        'priority', 'percentComplete', 'duration', 'durationType',
+        'actualStartDate', 'actualCompletionDate', 'commitDate',
+        'predecessors:predecessorID', 'parameterValues',
       ].join(','),
     });
 
@@ -358,9 +373,15 @@ export class WorkfrontConnector implements SourceConnector {
         dueDate:      raw.plannedCompletionDate?.slice(0, 10),
         completed:    raw.status === TASK_COMPLETE_STATUS,
         customFields: {
-          description:      raw.description ?? null,
-          status:           raw.status ?? null,
-          plannedStartDate: raw.plannedStartDate?.slice(0, 10) ?? null,
+          description:          raw.description ?? null,
+          status:               raw.status ?? null,
+          priority:             raw.priority ?? null,
+          percentComplete:      raw.percentComplete != null ? String(raw.percentComplete) : null,
+          duration:             raw.duration != null ? String(raw.duration) : null,
+          plannedStartDate:     raw.plannedStartDate?.slice(0, 10) ?? null,
+          actualStartDate:      raw.actualStartDate?.slice(0, 10) ?? null,
+          actualCompletionDate: raw.actualCompletionDate?.slice(0, 10) ?? null,
+          commitDate:           raw.commitDate?.slice(0, 10) ?? null,
           // Custom form fields — strip the "DE:" prefix, use "de:" as internal ID prefix
           ...Object.fromEntries(
             Object.entries(raw.parameterValues ?? {})
@@ -413,9 +434,15 @@ function shallowTask(raw: WFTask, allTasks: WFTask[]): NormalisedTask {
     dueDate:      raw.plannedCompletionDate?.slice(0, 10),
     completed:    raw.status === TASK_COMPLETE_STATUS,
     customFields: {
-      description:      raw.description ?? null,
-      status:           raw.status ?? null,
-      plannedStartDate: raw.plannedStartDate?.slice(0, 10) ?? null,
+      description:          raw.description ?? null,
+      status:               raw.status ?? null,
+      priority:             raw.priority ?? null,
+      percentComplete:      raw.percentComplete != null ? String(raw.percentComplete) : null,
+      duration:             raw.duration != null ? String(raw.duration) : null,
+      plannedStartDate:     raw.plannedStartDate?.slice(0, 10) ?? null,
+      actualStartDate:      raw.actualStartDate?.slice(0, 10) ?? null,
+      actualCompletionDate: raw.actualCompletionDate?.slice(0, 10) ?? null,
+      commitDate:           raw.commitDate?.slice(0, 10) ?? null,
       ...Object.fromEntries(
         Object.entries(raw.parameterValues ?? {})
           .filter(([key]) => key.startsWith('DE:'))
