@@ -90,6 +90,7 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
         isNewProject: state.isNewDestProject,
         skipAttachments: state.skipAttachments,
         shellOnly: state.shellOnly,
+        convertParentTasksToSections: state.convertParentTasksToSections,
       }),
     }).then(async (res) => {
       if (res.status === 409) {

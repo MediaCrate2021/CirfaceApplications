@@ -4,9 +4,10 @@ import type { AnalysisReport as AnalysisReportType, NormalisedField, ProjectAnal
 interface Props {
   report: AnalysisReportType;
   onRunAnother: () => void;
+  onProceedToMigrate: () => void;
 }
 
-export default function AnalysisReport({ report, onRunAnother }: Props) {
+export default function AnalysisReport({ report, onRunAnother, onProceedToMigrate }: Props) {
   const totals = report.projects.reduce(
     (acc, p) => ({
       tasks: acc.tasks + p.tasks,
@@ -70,8 +71,11 @@ export default function AnalysisReport({ report, onRunAnother }: Props) {
       ))}
 
       <div className="step-actions">
-        <button className="btn btn-primary" onClick={onRunAnother}>
+        <button className="btn btn-ghost" onClick={onRunAnother}>
           Analyze Another Set
+        </button>
+        <button className="btn btn-primary" onClick={onProceedToMigrate}>
+          Proceed to Migration
         </button>
       </div>
     </div>

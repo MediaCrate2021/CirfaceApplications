@@ -47,6 +47,8 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [error, setError] = useState('');
   const [reloadCount, setReloadCount] = useState(0);
 
+  const [sourceSearch, setSourceSearch]     = useState('');
+
   // Smartsheet manual ID / link entry
   const [sheetIdInput, setSheetIdInput]     = useState('');
   const [sheetIdLookup, setSheetIdLookup]   = useState(false);
@@ -156,7 +158,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
   // Reload source projects when workspace/team filter changes (or on reload)
   useEffect(() => {
-    if (!selectedSourceWorkspace) return;
+    if (sourceWorkspaces.length > 0 && !selectedSourceWorkspace) return;
     if (sourceTeams.length > 0 && !selectedSourceTeam) return;
     setLoadingSource(true);
     setSelectedSource('');
@@ -360,15 +362,27 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
                   : state.sourcePlatform === 'trello' ? 'Trello board'
                   : 'Project'}
               </label>
+              {sourceProjects.length > 10 && (
+                <input
+                  type="search"
+                  placeholder="Search projects…"
+                  value={sourceSearch}
+                  onChange={(e) => { setSourceSearch(e.target.value); setSelectedSource(''); }}
+                  style={{ marginBottom: '6px' }}
+                  autoComplete="off"
+                />
+              )}
               <select
                 id="source-project"
                 value={selectedSource}
                 onChange={(e) => { setSelectedSource(e.target.value); setSheetIdInput(''); setSheetIdError(''); }}
               >
                 <option value="">— Select a project —</option>
-                {sourceProjects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
+                {sourceProjects
+                  .filter((p) => !sourceSearch.trim() || p.name.toLowerCase().includes(sourceSearch.toLowerCase().trim()))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
               </select>
             </div>
 

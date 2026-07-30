@@ -22,9 +22,10 @@ interface Props {
   onBack: () => void;
   onReloadMapping: () => void;
   onSkipAttachmentsChange: (skip: boolean) => void;
+  onConvertParentTasksChange: (convert: boolean) => void;
 }
 
-export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange }: Props) {
+export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange, onConvertParentTasksChange }: Props) {
   const unmappedUsers = state.userMapping.filter((m) => !m.destId).length;
   const activeFields = state.fieldMapping.filter((f) => !f.omit);
   const mappedFields = activeFields.filter((f) => f.destFieldId || f.destNativeField).length;
@@ -129,6 +130,22 @@ export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack
                   </label>
                 }
               />
+              {(state.sourcePlatform === 'workfront' || state.sourcePlatform === 'smartsheet') && (
+                <ReviewRow
+                  label="Parent tasks"
+                  value={state.convertParentTasksToSections ? 'Convert to sections' : 'Keep as tasks'}
+                  action={
+                    <label className="skip-toggle">
+                      <input
+                        type="checkbox"
+                        checked={state.convertParentTasksToSections}
+                        onChange={(e) => onConvertParentTasksChange(e.target.checked)}
+                      />
+                      Convert parent tasks to sections
+                    </label>
+                  }
+                />
+              )}
             </>
           ) : (
             <ReviewRow label="Tasks" value="Could not load counts" />

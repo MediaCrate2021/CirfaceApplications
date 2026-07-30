@@ -52,6 +52,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [includeArchived, setIncludeArchived] = useState(false);
 
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -117,7 +118,9 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       });
   }, [workspaces.length, teamsLoaded, portfoliosLoaded, teams.length, selectedWorkspace, selectedTeam, selectedPortfolio, includeArchived, platform]);
 
-  const filtered = [...projects].sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = [...projects]
+    .filter((p) => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase().trim()))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const allChecked = filtered.length > 0 && filtered.every((p) => checked.has(p.id));
   const someChecked = filtered.some((p) => checked.has(p.id)) && !allChecked;
@@ -230,6 +233,17 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
             />
             <span>Include archived {noun}s</span>
           </label>
+        </div>
+      )}
+
+      {!loading && projects.length > 0 && (
+        <div className="field-group" style={{ maxWidth: '360px', marginBottom: '16px' }}>
+          <input
+            type="search"
+            placeholder={`Search ${noun}s…`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
       )}
 

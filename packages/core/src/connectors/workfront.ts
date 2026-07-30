@@ -52,8 +52,11 @@ interface WFTask {
   assignedToID?: string | null;
   assignedTo?: { name?: string; emailAddr?: string } | null;
   parentID?: string | null;
+  plannedStartDate?: string;
   indent?: number;
   predecessors?: Array<{ predecessorID?: string }>;
+  // Custom form field values — keyed as "DE:Field Name"
+  parameterValues?: Record<string, string | null>;
 }
 
 interface WFUser {
@@ -90,9 +93,8 @@ interface WFSearchResponse<T> {
 const TASK_COMPLETE_STATUS = 'CPL';
 
 // Project statuses considered "active" (not archived).
-// CUR=Current, PLN=Planning, APP=Approved
-// Omitted: CPL=Complete, DED=Dead/Cancelled
-const ACTIVE_PROJECT_STATUSES = 'CUR,PLN,APP';
+// CUR=Current, PLN=Planning, APP=Approved — confirm with client before re-enabling filter.
+// const ACTIVE_PROJECT_STATUSES = 'CUR,PLN,APP';
 
 const PAGE_SIZE = 2000;
 
@@ -193,17 +195,14 @@ export class WorkfrontConnector implements SourceConnector {
     _workspaceId?: string,
     _teamId?: string,
     _portfolioId?: string,
-    includeArchived?: boolean,
+    _includeArchived?: boolean,
   ): Promise<ProjectListItem[]> {
-    const params: Record<string, string> = {
+    // Status filter omitted until client's status codes are confirmed.
+    // TODO: once known, filter to active statuses to exclude dead/cancelled projects.
+    const raw = await this.getAll<WFProject>('/proj/search', {
       fields: 'ID,name,plannedStartDate,plannedCompletionDate,status',
-    };
-    if (!includeArchived) {
-      // Filter to active project statuses only
-      params['status_Mod'] = 'in';
-      params['status']     = ACTIVE_PROJECT_STATUSES;
-    }
-    const raw = await this.getAll<WFProject>('/proj/search', params);
+    });
+    logger.info({ count: raw.length, statuses: [...new Set(raw.map((p) => p.status).filter(Boolean))] }, 'workfront projects fetched');
     return raw.map((p) => ({
       id:        p.ID,
       name:      p.name,
@@ -212,12 +211,38 @@ export class WorkfrontConnector implements SourceConnector {
     }));
   }
 
-  async getProjectFields(_projectId: string): Promise<NormalisedField[]> {
-    // TODO: enumerate custom form fields via Workfront parameter API.
-    // This requires knowing which custom forms are attached to the project's tasks,
-    // then fetching /parameter objects for each form.
-    // Returning empty for now — custom fields will not appear in the field mapping step.
-    return [];
+  async getProjectFields(projectId: string): Promise<NormalisedField[]> {
+    // Fetch parameterValues from all tasks to discover which custom form fields exist.
+    // Workfront stores custom field values as "DE:Field Name" keys on each task.
+    // Field type info requires a separate /parameter API call — all custom fields
+    // default to 'text' here, which is safe for migration purposes.
+    const tasks = await this.getAll<WFTask>('/task/search', {
+      projectID: projectId,
+      fields:    'parameterValues',
+    });
+
+    const customFieldNames = new Set<string>();
+    for (const task of tasks) {
+      for (const key of Object.keys(task.parameterValues ?? {})) {
+        if (key.startsWith('DE:')) customFieldNames.add(key.slice(3));
+      }
+    }
+
+    const standardFields: NormalisedField[] = [
+      { id: 'description',      name: 'Description',        type: 'text' },
+      { id: 'status',           name: 'Status',             type: 'text' },
+      { id: 'plannedStartDate', name: 'Planned Start Date', type: 'date' },
+    ];
+
+    const customFields: NormalisedField[] = [...customFieldNames].sort().map((name) => ({
+      id:   `de:${name}`,
+      name,
+      type: 'text' as const,
+    }));
+
+    logger.info({ projectId, customFieldCount: customFields.length }, 'workfront custom fields discovered');
+
+    return [...standardFields, ...customFields];
   }
 
   async getProjectData(
@@ -237,7 +262,7 @@ export class WorkfrontConnector implements SourceConnector {
         'ID', 'name', 'description', 'status',
         'plannedCompletionDate', 'plannedStartDate',
         'assignedToID', 'assignedTo', 'parentID', 'indent',
-        'predecessors',
+        'predecessors', 'parameterValues',
       ].join(','),
     });
 
@@ -332,7 +357,17 @@ export class WorkfrontConnector implements SourceConnector {
         assigneeId:   raw.assignedToID ?? undefined,
         dueDate:      raw.plannedCompletionDate?.slice(0, 10),
         completed:    raw.status === TASK_COMPLETE_STATUS,
-        customFields: {},
+        customFields: {
+          description:      raw.description ?? null,
+          status:           raw.status ?? null,
+          plannedStartDate: raw.plannedStartDate?.slice(0, 10) ?? null,
+          // Custom form fields — strip the "DE:" prefix, use "de:" as internal ID prefix
+          ...Object.fromEntries(
+            Object.entries(raw.parameterValues ?? {})
+              .filter(([key]) => key.startsWith('DE:'))
+              .map(([key, value]) => [`de:${key.slice(3)}`, value ?? null])
+          ),
+        },
         subtasks:     children.map(buildTask),
         comments,
         attachments,
@@ -377,7 +412,16 @@ function shallowTask(raw: WFTask, allTasks: WFTask[]): NormalisedTask {
     assigneeId:   raw.assignedToID ?? undefined,
     dueDate:      raw.plannedCompletionDate?.slice(0, 10),
     completed:    raw.status === TASK_COMPLETE_STATUS,
-    customFields: {},
+    customFields: {
+      description:      raw.description ?? null,
+      status:           raw.status ?? null,
+      plannedStartDate: raw.plannedStartDate?.slice(0, 10) ?? null,
+      ...Object.fromEntries(
+        Object.entries(raw.parameterValues ?? {})
+          .filter(([key]) => key.startsWith('DE:'))
+          .map(([key, value]) => [`de:${key.slice(3)}`, value ?? null])
+      ),
+    },
     subtasks:     allTasks.filter((t) => t.parentID === raw.ID).map((t) => shallowTask(t, allTasks)),
     comments:     [],
     attachments:  [],

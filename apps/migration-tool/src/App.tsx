@@ -137,6 +137,7 @@ export interface AppState {
   // Migration options
   skipAttachments: boolean;
   shellOnly: boolean;
+  convertParentTasksToSections: boolean;
 
   // Analyze mode — multi-project selection
   analyzeProjectIds: Array<{ id: string; name: string }>;
@@ -159,12 +160,14 @@ type Action =
   | { type: 'SET_FIELD_MAPPING'; mapping: FieldMappingEntry[]; sectionMapping: SectionMappingEntry[]; externalIdDestFieldGid: string | null }
   | { type: 'SET_SKIP_ATTACHMENTS'; skip: boolean }
   | { type: 'SET_SHELL_ONLY'; shell: boolean }
+  | { type: 'SET_CONVERT_PARENT_TASKS'; convert: boolean }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
   | { type: 'RELOAD_MAPPING' }
   | { type: 'SET_ANALYZE_PROJECTS'; projects: Array<{ id: string; name: string }> }
   | { type: 'ANALYSIS_COMPLETE'; report: AnalysisReportType }
-  | { type: 'RUN_ANOTHER_ANALYSIS' };
+  | { type: 'RUN_ANOTHER_ANALYSIS' }
+  | { type: 'PROCEED_TO_MIGRATE' };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -212,6 +215,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, skipAttachments: action.skip };
     case 'SET_SHELL_ONLY':
       return { ...state, shellOnly: action.shell };
+    case 'SET_CONVERT_PARENT_TASKS':
+      return { ...state, convertParentTasksToSections: action.convert };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RELOAD_MAPPING':
@@ -240,6 +245,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, analysisReport: action.report, step: 'analysis-report' };
     case 'RUN_ANOTHER_ANALYSIS':
       return { ...state, step: 'analyze-select', analyzeProjectIds: [], analysisReport: null };
+    case 'PROCEED_TO_MIGRATE':
+      return { ...state, mode: 'migrate', step: 'user-mapping', analyzeProjectIds: [], analysisReport: null };
     default:
       return state;
   }
@@ -279,6 +286,7 @@ const initialState: AppState = {
   externalIdDestFieldGid: null,
   skipAttachments: false,
   shellOnly: false,
+  convertParentTasksToSections: false,
   analyzeProjectIds: [],
   lastReport: null,
   analysisReport: null,
@@ -437,6 +445,7 @@ export default function App() {
                 dispatch({ type: 'RELOAD_MAPPING' });
               }}
               onSkipAttachmentsChange={(skip) => dispatch({ type: 'SET_SKIP_ATTACHMENTS', skip })}
+              onConvertParentTasksChange={(convert) => dispatch({ type: 'SET_CONVERT_PARENT_TASKS', convert })}
             />
           )}
           {state.step === 'running' && (
@@ -479,6 +488,7 @@ export default function App() {
             <AnalysisReport
               report={state.analysisReport!}
               onRunAnother={() => dispatch({ type: 'RUN_ANOTHER_ANALYSIS' })}
+              onProceedToMigrate={() => dispatch({ type: 'PROCEED_TO_MIGRATE' })}
             />
           )}
         </main>

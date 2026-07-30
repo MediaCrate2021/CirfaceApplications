@@ -20,6 +20,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
   const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -49,7 +50,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
 
   // Load projects — wait for workspace and team to be selected
   useEffect(() => {
-    if (!selectedWorkspace) return;
+    if (workspaces.length > 0 && !selectedWorkspace) return;
     if (!teamsLoaded) return;
     if (teams.length > 0 && !selectedTeam) return;
     setLoading(true);
@@ -75,10 +76,10 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
   }
 
   function toggleAll() {
-    if (checked.size === projects.length) {
-      setChecked(new Set());
+    if (allChecked) {
+      setChecked((prev) => { const next = new Set(prev); filtered.forEach((p) => next.delete(p.id)); return next; });
     } else {
-      setChecked(new Set(projects.map((p) => p.id)));
+      setChecked((prev) => { const next = new Set(prev); filtered.forEach((p) => next.add(p.id)); return next; });
     }
   }
 
@@ -87,8 +88,12 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
     onSelect(selected);
   }
 
-  const allChecked = projects.length > 0 && checked.size === projects.length;
-  const someChecked = checked.size > 0 && !allChecked;
+  const filtered = [...projects]
+    .filter((p) => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase().trim()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const allChecked = filtered.length > 0 && filtered.every((p) => checked.has(p.id));
+  const someChecked = filtered.some((p) => checked.has(p.id)) && !allChecked;
 
   return (
     <div className="step-panel">
@@ -135,42 +140,53 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
         <p className="step-desc">Select a team to load projects.</p>
       )}
 
-      {!loading && !error && selectedTeam && projects.length === 0 && (
+      {!loading && !error && projects.length === 0 && (teams.length === 0 || selectedTeam) && (
         <p className="empty-text">No projects found.</p>
       )}
 
       {!loading && projects.length > 0 && (
-        <div className="project-checklist">
-          <div className="project-checklist-header">
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={allChecked}
-                ref={(el) => { if (el) el.indeterminate = someChecked; }}
-                onChange={toggleAll}
-              />
-              <span>{allChecked ? 'Deselect all' : 'Select all'} ({projects.length} projects)</span>
-            </label>
-            {checked.size > 0 && (
-              <span className="badge badge-info">{checked.size} selected</span>
-            )}
+        <>
+          <div className="field-group" style={{ maxWidth: '360px', marginBottom: '16px' }}>
+            <input
+              type="search"
+              placeholder="Search projects…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
 
-          <ul className="project-checklist-list">
-            {projects.map((p) => (
-              <li key={p.id} className={`project-checklist-item ${checked.has(p.id) ? 'selected' : ''}`}>
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={checked.has(p.id)}
-                    onChange={() => toggleProject(p.id)}
-                  />
-                  <span>{p.name}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        </div>
+          <div className="project-checklist">
+            <div className="project-checklist-header">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  ref={(el) => { if (el) el.indeterminate = someChecked; }}
+                  onChange={toggleAll}
+                />
+                <span>{allChecked ? 'Deselect all' : 'Select all'} ({filtered.length} project{filtered.length === 1 ? '' : 's'})</span>
+              </label>
+              {checked.size > 0 && (
+                <span className="badge badge-info">{checked.size} selected</span>
+              )}
+            </div>
+
+            <ul className="project-checklist-list">
+              {filtered.map((p) => (
+                <li key={p.id} className={`project-checklist-item ${checked.has(p.id) ? 'selected' : ''}`}>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(p.id)}
+                      onChange={() => toggleProject(p.id)}
+                    />
+                    <span>{p.name}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
       )}
 
       <div className="step-actions">

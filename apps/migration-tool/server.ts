@@ -166,6 +166,36 @@ function countProjectItems(project: NormalisedProject) {
   return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies, statusUpdates: project.statusUpdates?.length ?? 0 };
 }
 
+/**
+ * Convert top-level parent tasks (tasks that have subtasks) into Asana sections.
+ * The children are promoted to the top level with `sectionId` pointing to the
+ * new section. The parent task itself is removed from the task list.
+ * Any top-level tasks without children are placed in the last active section.
+ */
+function applyParentTasksToSections(project: NormalisedProject): NormalisedProject {
+  const newSections = [...project.sections];
+  const newTopLevelTasks: NormalisedTask[] = [];
+  let currentSectionId: string | undefined;
+
+  for (const task of project.tasks) {
+    if (task.subtasks.length > 0) {
+      // Promote this task to a section
+      const section = { id: task.id, name: task.name };
+      newSections.push(section);
+      currentSectionId = task.id;
+      // Promote children to top-level, tagging them with the new section
+      for (const child of task.subtasks) {
+        newTopLevelTasks.push({ ...child, sectionId: task.id });
+      }
+    } else {
+      // Regular task — assign to the current section (if any)
+      newTopLevelTasks.push(currentSectionId ? { ...task, sectionId: currentSectionId } : task);
+    }
+  }
+
+  return { ...project, sections: newSections, tasks: newTopLevelTasks };
+}
+
 // ---------------------------------------------------------------------------
 // App setup
 // ---------------------------------------------------------------------------
@@ -848,7 +878,7 @@ app.post('/api/session/field-mapping', requireAuth, (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.post('/api/migrate', requireAuth, async (req, res) => {
-  const { sourceProjectId, destProjectGid, destProjectName, destTeamGid, isNewProject, skipAttachments, shellOnly } = req.body as {
+  const { sourceProjectId, destProjectGid, destProjectName, destTeamGid, isNewProject, skipAttachments, shellOnly, convertParentTasksToSections } = req.body as {
     sourceProjectId: string;
     destProjectGid: string;
     destProjectName?: string;
@@ -856,6 +886,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
     isNewProject: boolean;
     skipAttachments?: boolean;
     shellOnly?: boolean;
+    convertParentTasksToSections?: boolean;
   };
 
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
@@ -902,6 +933,12 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       project = await connector.getProjectData(sourceProjectId);
       send('info', { message: `Loaded ${project.tasks.length} tasks` });
       req.session.cachedProject = { id: sourceProjectId, data: project };
+    }
+
+    // Convert top-level parent tasks to sections when requested (Workfront / Smartsheet).
+    if (convertParentTasksToSections === true && (platform === 'workfront' || platform === 'smartsheet')) {
+      project = applyParentTasksToSections(project);
+      send('info', { message: `Converted parent tasks to sections — ${project.sections.length} sections, ${project.tasks.length} top-level tasks` });
     }
 
     // For Monday boards, build a subitem column ID → parent column ID remap by matching on name.
