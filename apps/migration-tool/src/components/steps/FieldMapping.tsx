@@ -825,12 +825,20 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
   }
 
   function buildEnumMapping(src: NormalisedField, dest: AsanaField | null): EnumMappingEntry[] | undefined {
-    if (!src.options?.length) return undefined;
     const destOptions = dest?.enum_options ?? [];
-    return src.options.map((opt) => {
-      const nameMatch = destOptions.find((d) => d.name.toLowerCase() === opt.name.toLowerCase());
-      return { sourceOption: opt.name, destOptionGid: nameMatch?.gid ?? null };
-    });
+    if (src.options?.length) {
+      // Source has known options — auto-match by name against dest options.
+      return src.options.map((opt) => {
+        const nameMatch = destOptions.find((d) => d.name.toLowerCase() === opt.name.toLowerCase());
+        return { sourceOption: opt.name, destOptionGid: nameMatch?.gid ?? null };
+      });
+    }
+    if (destOptions.length) {
+      // Source is a text field (e.g. Workfront) mapped to an existing Asana enum.
+      // Seed the mapping using dest option names as the expected source text values.
+      return destOptions.map((opt) => ({ sourceOption: opt.name, destOptionGid: opt.gid }));
+    }
+    return undefined;
   }
 
   function updateMapping(sourceFieldId: string, destGid: string) {
@@ -1001,8 +1009,9 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
 
   function renderRow(entry: FieldMappingEntry) {
     const isSynthetic = entry.sourceFieldId === '__assignee__';
-    const showEnumToggle = !entry.omit && entry.sourceOptions?.length && entry.destFieldId &&
-      (entry.destFieldType === 'enum' || entry.destFieldType === 'multi_enum');
+    const showEnumToggle = !entry.omit && entry.destFieldId &&
+      (entry.destFieldType === 'enum' || entry.destFieldType === 'multi_enum') &&
+      (entry.sourceOptions?.length || entry.enumMapping?.length);
     const destEnumOptions = destFields.find((d) => d.gid === entry.destFieldId)?.enum_options ?? [];
     const isExpanded = expandedEnums.has(entry.sourceFieldId);
 
@@ -1094,7 +1103,7 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
                 <p className="enum-mapping-title">Option mapping — {entry.sourceFieldName} → {entry.destFieldName}</p>
                 <table className="enum-mapping-table">
                   <thead>
-                    <tr><th>Source option</th><th>Asana enum option</th></tr>
+                    <tr><th>{entry.sourceFieldType === 'text' ? 'Expected source value' : 'Source option'}</th><th>Asana enum option</th></tr>
                   </thead>
                   <tbody>
                     {(entry.enumMapping ?? []).map((em) => (
