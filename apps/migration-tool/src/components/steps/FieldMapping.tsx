@@ -1178,7 +1178,10 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack, onConver
                 />
                 Convert parent tasks to sections
               </label>
-              <span className="field-hint">Top-level tasks that contain subtasks will become Asana sections; their children are promoted to top-level tasks.</span>
+              <span className="field-hint">
+                Top-level tasks that contain subtasks will become Asana sections; their children are promoted to top-level tasks.
+                {' '}<strong>Note:</strong> these sections are created new in the destination project — they will not be matched to any existing sections, even if the names overlap.
+              </span>
             </div>
           )}
           <h3 className="mapping-section-heading">Sections</h3>
