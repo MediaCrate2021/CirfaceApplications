@@ -315,14 +315,14 @@ export class WorkfrontConnector implements SourceConnector {
       };
     }
 
-    // ── Full mode: fetch notes and documents for all tasks ──────────────────
-    const [allNotes, allDocs] = await Promise.all([
+    // ── Full mode: fetch notes and documents (task-level and project-level) ──
+    const [allNotes, allDocs, projNotes, projDocs] = await Promise.all([
       this.getAll<WFNote>('/note/search', {
         projectID:    projectId,
         noteObjCode: 'TASK',
         fields:       'ID,noteText,entryDate,objID,owner',
       }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch notes');
+        logger.warn({ err }, 'workfront: could not fetch task notes');
         return [] as WFNote[];
       }),
       this.getAll<WFDocument>('/document/search', {
@@ -330,12 +330,28 @@ export class WorkfrontConnector implements SourceConnector {
         docObjCode: 'TASK',
         fields:      'ID,name,downloadURL,contentType,objID,entryDate,owner',
       }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch documents');
+        logger.warn({ err }, 'workfront: could not fetch task documents');
+        return [] as WFDocument[];
+      }),
+      this.getAll<WFNote>('/note/search', {
+        projectID:    projectId,
+        noteObjCode: 'PROJ',
+        fields:       'ID,noteText,entryDate,objID,owner',
+      }).catch((err) => {
+        logger.warn({ err }, 'workfront: could not fetch project-level notes');
+        return [] as WFNote[];
+      }),
+      this.getAll<WFDocument>('/document/search', {
+        projectID:   projectId,
+        docObjCode: 'PROJ',
+        fields:      'ID,name,downloadURL,contentType,objID,entryDate,owner',
+      }).catch((err) => {
+        logger.warn({ err }, 'workfront: could not fetch project-level documents');
         return [] as WFDocument[];
       }),
     ]);
 
-    // Group by task ID
+    // Group task-level notes and documents by task ID
     const notesByTask = new Map<string, WFNote[]>();
     for (const n of allNotes) {
       if (!n.objID) continue;
@@ -348,6 +364,43 @@ export class WorkfrontConnector implements SourceConnector {
       if (!docsByTask.has(d.objID)) docsByTask.set(d.objID, []);
       docsByTask.get(d.objID)!.push(d);
     }
+
+    // Build a synthetic task for project-level notes and documents, if any exist.
+    // Asana has no project-level comments/attachments concept, so we surface them
+    // as a dedicated task placed first in the task list.
+    const projComments: NormalisedComment[] = projNotes
+      .filter((n) => n.noteText?.trim())
+      .map((n) => ({
+        id:         n.ID,
+        authorId:   '',
+        authorName: n.owner?.name ?? 'Unknown',
+        text:       n.noteText!,
+        createdAt:  n.entryDate ?? new Date().toISOString(),
+      }));
+
+    const projAttachments: NormalisedAttachment[] = projDocs
+      .filter((d) => d.downloadURL)
+      .map((d) => ({
+        id:         d.ID,
+        name:       d.name ?? d.ID,
+        url:        d.downloadURL!,
+        mimeType:   d.contentType,
+        uploadedBy: d.owner?.name ?? undefined,
+        uploadedAt: d.entryDate ?? undefined,
+      }));
+
+    const projectContentTask: NormalisedTask | null = (projComments.length || projAttachments.length)
+      ? {
+          id:           `${projectId}--project-content`,
+          name:         '[Project] Notes & Documents',
+          completed:    false,
+          customFields: {},
+          subtasks:     [],
+          comments:     projComments,
+          attachments:  projAttachments,
+          dependencyIds: [],
+        }
+      : null;
 
     function buildTask(raw: WFTask): NormalisedTask {
       const comments: NormalisedComment[] = (notesByTask.get(raw.ID) ?? [])
@@ -414,7 +467,7 @@ export class WorkfrontConnector implements SourceConnector {
       description: proj.description,
       startDate:   proj.plannedStartDate?.slice(0, 10),
       endDate:     proj.plannedCompletionDate?.slice(0, 10),
-      tasks:       topLevel.map(buildTask),
+      tasks:       [...(projectContentTask ? [projectContentTask] : []), ...topLevel.map(buildTask)],
       fields:      [],
       users:       [...userMap.values()],
       sections:    [],
