@@ -402,6 +402,7 @@ export class WrikeConnector implements SourceConnector {
         // Sentinel URL — resolved to a real pre-signed URL via refreshAttachmentUrl() at migration time
         url: `wrike-attachment:${a.id}`,
         mimeType: a.mimeType,
+        uploadedAt: a.createdDate,
       }));
 
       taskMap.set(wt.id, {

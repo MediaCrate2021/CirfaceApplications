@@ -77,6 +77,8 @@ export interface WriteOptions {
   sourceCount?: MigrationReport['sourceCount'];
   /** When true, attachment download/upload is skipped entirely. URLs are not posted as fallback comments either. */
   skipAttachments?: boolean;
+  /** When true, a comment is posted on each task documenting the original creator and creation date from the source system. */
+  itemCreateMetadata?: boolean;
 }
 
 export interface ProgressEvent {

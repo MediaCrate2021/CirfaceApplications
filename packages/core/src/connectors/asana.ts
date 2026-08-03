@@ -551,7 +551,13 @@ export class AsanaConnector implements SourceConnector {
     for (const a of attachments) {
       if (a.resource_subtype === 'asana' && (a.download_url ?? a.permanent_url)) {
         // Asana-hosted file — download and re-upload to destination.
-        downloadable.push({ id: a.gid, name: a.name, url: (a.download_url ?? a.permanent_url)! });
+        downloadable.push({
+          id: a.gid,
+          name: a.name,
+          url: (a.download_url ?? a.permanent_url)!,
+          uploadedBy: a.created_by?.name ?? undefined,
+          uploadedAt: a.created_at ?? undefined,
+        });
       } else if (a.permanent_url) {
         // External link (Google Drive, Dropbox, etc.) — can't download, so preserve
         // the link as a comment on the migrated task so it isn't silently lost.

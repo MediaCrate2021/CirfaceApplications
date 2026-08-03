@@ -91,6 +91,7 @@ export default function RunMigration({ state, onComplete, onBackToFieldMapping }
         skipAttachments: state.skipAttachments,
         shellOnly: state.shellOnly,
         convertParentTasksToSections: state.convertParentTasksToSections,
+        itemCreateMetadata: state.itemCreateMetadata,
       }),
     }).then(async (res) => {
       if (res.status === 409) {

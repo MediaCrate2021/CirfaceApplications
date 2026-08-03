@@ -138,6 +138,7 @@ export interface AppState {
   skipAttachments: boolean;
   shellOnly: boolean;
   convertParentTasksToSections: boolean;
+  itemCreateMetadata: boolean;
 
   // Analyze mode — multi-project selection
   analyzeProjectIds: Array<{ id: string; name: string }>;
@@ -161,6 +162,7 @@ type Action =
   | { type: 'SET_SKIP_ATTACHMENTS'; skip: boolean }
   | { type: 'SET_SHELL_ONLY'; shell: boolean }
   | { type: 'SET_CONVERT_PARENT_TASKS'; convert: boolean }
+  | { type: 'SET_ITEM_CREATE_METADATA'; value: boolean }
   | { type: 'MIGRATION_COMPLETE'; report: MigrationReport }
   | { type: 'RUN_ANOTHER' }
   | { type: 'RELOAD_MAPPING' }
@@ -217,6 +219,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, shellOnly: action.shell };
     case 'SET_CONVERT_PARENT_TASKS':
       return { ...state, convertParentTasksToSections: action.convert };
+    case 'SET_ITEM_CREATE_METADATA':
+      return { ...state, itemCreateMetadata: action.value };
     case 'MIGRATION_COMPLETE':
       return { ...state, lastReport: action.report, step: 'report' };
     case 'RELOAD_MAPPING':
@@ -287,6 +291,7 @@ const initialState: AppState = {
   skipAttachments: false,
   shellOnly: false,
   convertParentTasksToSections: false,
+  itemCreateMetadata: false,
   analyzeProjectIds: [],
   lastReport: null,
   analysisReport: null,
@@ -446,6 +451,7 @@ export default function App() {
               }}
               onSkipAttachmentsChange={(skip) => dispatch({ type: 'SET_SKIP_ATTACHMENTS', skip })}
               onConvertParentTasksChange={(convert) => dispatch({ type: 'SET_CONVERT_PARENT_TASKS', convert })}
+              onItemCreateMetadataChange={(value) => dispatch({ type: 'SET_ITEM_CREATE_METADATA', value })}
             />
           )}
           {state.step === 'running' && (

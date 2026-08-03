@@ -62,6 +62,8 @@ interface WFTask {
   actualCompletionDate?: string | null;
   commitDate?: string | null;
   predecessors?: Array<{ predecessorID?: string }>;
+  entryDate?: string | null;
+  enteredBy?: { name?: string; emailAddr?: string } | null;
   // Custom form field values — keyed as "DE:Field Name"
   parameterValues?: Record<string, string | null>;
 }
@@ -86,6 +88,8 @@ interface WFDocument {
   downloadURL?: string;
   contentType?: string;
   objID?: string;
+  entryDate?: string;
+  owner?: { name?: string };
 }
 
 interface WFSearchResponse<T> {
@@ -277,7 +281,9 @@ export class WorkfrontConnector implements SourceConnector {
         'assignedToID', 'assignedTo', 'parentID', 'indent',
         'priority', 'percentComplete', 'duration', 'durationType',
         'actualStartDate', 'actualCompletionDate', 'commitDate',
-        'predecessors:predecessorID', 'parameterValues',
+        'predecessors:predecessorID',
+        'entryDate', 'enteredBy:name,enteredBy:emailAddr',
+        'parameterValues',
       ].join(','),
     });
 
@@ -322,7 +328,7 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFDocument>('/document/search', {
         projectID:   projectId,
         docObjCode: 'TASK',
-        fields:      'ID,name,downloadURL,contentType,objID',
+        fields:      'ID,name,downloadURL,contentType,objID,entryDate,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch documents');
         return [] as WFDocument[];
@@ -357,10 +363,12 @@ export class WorkfrontConnector implements SourceConnector {
       const attachments: NormalisedAttachment[] = (docsByTask.get(raw.ID) ?? [])
         .filter((d) => d.downloadURL)
         .map((d) => ({
-          id:       d.ID,
-          name:     d.name ?? d.ID,
-          url:      d.downloadURL!,
-          mimeType: d.contentType,
+          id:         d.ID,
+          name:       d.name ?? d.ID,
+          url:        d.downloadURL!,
+          mimeType:   d.contentType,
+          uploadedBy: d.owner?.name ?? undefined,
+          uploadedAt: d.entryDate ?? undefined,
         }));
 
       const children = rawTasks.filter((t) => t.parentID === raw.ID);
@@ -393,6 +401,8 @@ export class WorkfrontConnector implements SourceConnector {
         comments,
         attachments,
         dependencyIds: extractDependencyIds(raw),
+        createdAt:    raw.entryDate ?? undefined,
+        createdBy:    formatCreatedBy(raw),
       };
     }
 
@@ -453,7 +463,16 @@ function shallowTask(raw: WFTask, allTasks: WFTask[]): NormalisedTask {
     comments:     [],
     attachments:  [],
     dependencyIds: extractDependencyIds(raw),
+    createdAt:    raw.entryDate ?? undefined,
+    createdBy:    formatCreatedBy(raw),
   };
+}
+
+function formatCreatedBy(task: WFTask): string | undefined {
+  const name = task.enteredBy?.name;
+  const email = task.enteredBy?.emailAddr;
+  if (!name && !email) return undefined;
+  return email ? `${name ?? email} (${email})` : name!;
 }
 
 function extractDependencyIds(task: WFTask): string[] {

@@ -79,6 +79,8 @@ export interface WriteOptions {
   skipAttachments?: boolean;
   /** When true, only the project structure (custom fields, sections) is created — no tasks are migrated. */
   shellOnly?: boolean;
+  /** When true, a comment is posted on each task documenting the original creator and creation date from the source system. */
+  itemCreateMetadata?: boolean;
 }
 
 export interface ProgressEvent {
@@ -485,6 +487,25 @@ export class AsanaDestination {
       const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap, options.skipAttachments);
       report.items.push(item);
 
+      if (options.itemCreateMetadata && (task.createdAt || task.createdBy)) {
+        const taskGid = taskGidMap.get(task.id);
+        if (taskGid) {
+          const datePart = task.createdAt
+            ? new Date(task.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+            : null;
+          const parts = [
+            task.createdBy ? `Created by: ${task.createdBy}` : null,
+            datePart ? `Created on: ${datePart}` : null,
+            options.sourcePlatform ? `Source: ${options.sourcePlatform}` : null,
+          ].filter(Boolean);
+          try {
+            await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
+              text: `[Migration note] ${parts.join(' · ')}`,
+            });
+          } catch { /* non-fatal — comment failure should not abort the migration */ }
+        }
+      }
+
       const processed = i + 1;
       if (processed % PROGRESS_INTERVAL === 0 && processed < total) {
         log(`===> ${processed} tasks processed out of ${total}`);
@@ -659,6 +680,8 @@ export class AsanaDestination {
     authenticateAttachmentUrl?: (url: string) => string,
     fieldDisplayMap?: Map<string, string>,
     skipAttachments?: boolean,
+    itemCreateMetadata?: boolean,
+    sourcePlatform?: string,
   ): Promise<MigrationReportItem> {
     // For Smartsheet tasks, include the row number in error/warning report entries so the
     // source row is easy to locate. The actual task.name (Asana task name) is unchanged.
@@ -800,9 +823,14 @@ export class AsanaDestination {
       taskGidMap.set(task.id, created.gid);
       report.migratedTasks++;
 
+      // Post creation metadata comment if the option is enabled and the source provides the data.
+      if (itemCreateMetadata && (task.createdAt || task.createdBy)) {
+        await this.postCreationMetadataComment(created.gid, task, sourcePlatform ?? '');
+      }
+
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap, skipAttachments);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform);
       }
 
       // Comments
@@ -826,6 +854,9 @@ export class AsanaDestination {
           try {
             await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
             report.migratedAttachments++;
+            if (itemCreateMetadata) {
+              await this.postAttachmentMetadataComment(created.gid, attachment, sourcePlatform ?? '');
+            }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.warn({ err, attachmentId: attachment.id, reason }, 'attachment transfer failed, falling back to URL comment');
@@ -852,6 +883,41 @@ export class AsanaDestination {
     }
   }
 
+  /** Posts a [Migration note] comment recording who uploaded a file and when. Non-fatal. */
+  private async postAttachmentMetadataComment(taskGid: string, attachment: NormalisedAttachment, sourcePlatform: string): Promise<void> {
+    if (!attachment.uploadedBy && !attachment.uploadedAt) return;
+    const datePart = attachment.uploadedAt
+      ? new Date(attachment.uploadedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : null;
+    const parts = [
+      attachment.uploadedBy ? `Uploaded by: ${attachment.uploadedBy}` : null,
+      datePart ? `On: ${datePart}` : null,
+      sourcePlatform ? `Source: ${sourcePlatform}` : null,
+    ].filter(Boolean);
+    try {
+      await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
+        text: `[Migration note] "${attachment.name}" ${parts.join(' · ')}`,
+      });
+    } catch { /* non-fatal */ }
+  }
+
+  /** Posts a [Migration note] comment on a task recording its original creator and creation date. Non-fatal. */
+  private async postCreationMetadataComment(taskGid: string, task: NormalisedTask, sourcePlatform: string): Promise<void> {
+    const datePart = task.createdAt
+      ? new Date(task.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : null;
+    const parts = [
+      task.createdBy ? `Created by: ${task.createdBy}` : null,
+      datePart ? `Created on: ${datePart}` : null,
+      sourcePlatform ? `Source: ${sourcePlatform}` : null,
+    ].filter(Boolean);
+    try {
+      await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
+        text: `[Migration note] ${parts.join(' · ')}`,
+      });
+    } catch { /* non-fatal — comment failure should not abort the migration */ }
+  }
+
   private async migrateSubtask(
     subtask: NormalisedTask,
     parentGid: string,
@@ -875,6 +941,8 @@ export class AsanaDestination {
     authenticateAttachmentUrl?: (url: string) => string,
     fieldDisplayMap?: Map<string, string>,
     skipAttachments?: boolean,
+    itemCreateMetadata?: boolean,
+    sourcePlatform?: string,
   ): Promise<void> {
     // For Smartsheet subtasks, include the row number in error/warning report entries.
     const ssRow = subtask.customFields['__smartsheet_row__'];
@@ -1010,6 +1078,10 @@ export class AsanaDestination {
       taskGidMap.set(subtask.id, created.gid);
       report.migratedSubtasks++;
 
+      if (itemCreateMetadata && (subtask.createdAt || subtask.createdBy)) {
+        await this.postCreationMetadataComment(created.gid, subtask, sourcePlatform ?? '');
+      }
+
       for (const comment of subtask.comments) {
         const body = this.htmlToText(comment.text) || '(image — see task attachments)';
         try {
@@ -1028,6 +1100,9 @@ export class AsanaDestination {
           try {
             await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
             report.migratedAttachments++;
+            if (itemCreateMetadata) {
+              await this.postAttachmentMetadataComment(created.gid, attachment, sourcePlatform ?? '');
+            }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.warn({ err, attachmentId: attachment.id, reason }, 'subtask attachment transfer failed, falling back to URL comment');
@@ -1044,7 +1119,7 @@ export class AsanaDestination {
 
       // Recurse into children — Asana supports nested subtasks at arbitrary depth.
       for (const child of subtask.subtasks) {
-        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments);
+        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform);
       }
     } catch (err) {
       const msg = (err as Error).message;

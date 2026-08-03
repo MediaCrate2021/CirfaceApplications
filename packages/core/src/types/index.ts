@@ -79,6 +79,8 @@ export interface NormalisedAttachment {
   name: string;
   url: string;
   mimeType?: string;
+  uploadedBy?: string;  // display name of the person who uploaded the file in the source system
+  uploadedAt?: string;  // ISO 8601 timestamp
 }
 
 export interface NormalisedTask {
@@ -95,6 +97,8 @@ export interface NormalisedTask {
   dependencyIds: string[]; // IDs of tasks this task depends on
   parentId?: string;
   sectionId?: string;     // source section/group ID
+  createdAt?: string;     // ISO 8601 — original creation timestamp in the source system
+  createdBy?: string;     // display string — "Name (email)" or just "Name"
 }
 
 // ---------------------------------------------------------------------------

@@ -23,9 +23,10 @@ interface Props {
   onReloadMapping: () => void;
   onSkipAttachmentsChange: (skip: boolean) => void;
   onConvertParentTasksChange: (convert: boolean) => void;
+  onItemCreateMetadataChange: (value: boolean) => void;
 }
 
-export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange, onConvertParentTasksChange }: Props) {
+export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange, onConvertParentTasksChange, onItemCreateMetadataChange }: Props) {
   const unmappedUsers = state.userMapping.filter((m) => !m.destId).length;
   const activeFields = state.fieldMapping.filter((f) => !f.omit);
   const mappedFields = activeFields.filter((f) => f.destFieldId || f.destNativeField).length;
@@ -146,6 +147,20 @@ export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack
                   }
                 />
               )}
+              <ReviewRow
+                label="Creation metadata"
+                value={state.itemCreateMetadata ? 'Add comment to each task' : 'Do not include'}
+                action={
+                  <label className="skip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={state.itemCreateMetadata}
+                      onChange={(e) => onItemCreateMetadataChange(e.target.checked)}
+                    />
+                    Document original creator &amp; date
+                  </label>
+                }
+              />
             </>
           ) : (
             <ReviewRow label="Tasks" value="Could not load counts" />
