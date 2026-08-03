@@ -1,6 +1,18 @@
 import { useState } from 'react';
 import type { AnalysisReport as AnalysisReportType, NormalisedField, ProjectAnalysis } from '@cirface/core/types';
 
+const PLATFORM_DISPLAY_NAMES: Record<string, string> = {
+  workfront:  'WorkFront',
+  monday:     'Monday.com',
+  trello:     'Trello',
+  smartsheet: 'Smartsheet',
+  asana:      'Asana',
+  wrike:      'Wrike',
+};
+function platformDisplayName(platform: string): string {
+  return PLATFORM_DISPLAY_NAMES[platform] ?? platform;
+}
+
 interface Props {
   report: AnalysisReportType;
   onRunAnother: () => void;
@@ -23,7 +35,7 @@ export default function AnalysisReport({ report, onRunAnother, onProceedToMigrat
     <div className="step-panel">
       <h2 className="step-title">Analysis Report</h2>
       <p className="step-desc">
-        Analyzed {report.projects.length} project{report.projects.length === 1 ? '' : 's'} from {report.sourcePlatform}.
+        Analyzed {report.projects.length} project{report.projects.length === 1 ? '' : 's'} from {platformDisplayName(report.sourcePlatform)}.
         {report.trackingTaskGid && (
           <> Report saved to Asana — <a href={`https://app.asana.com/0/0/${report.trackingTaskGid}/f`} target="_blank" rel="noopener noreferrer">view task</a>.</>
         )}
@@ -40,7 +52,7 @@ export default function AnalysisReport({ report, onRunAnother, onProceedToMigrat
                 <a href={`#project-${p.projectId}`}>{i + 1}. {p.projectName}</a>
                 {sourceUrl && (
                   <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="analysis-source-link">
-                    Open in {report.sourcePlatform}
+                    Open in {platformDisplayName(report.sourcePlatform)}
                   </a>
                 )}
               </li>
@@ -87,7 +99,7 @@ function ProjectSection({ project, platform }: { project: ProjectAnalysis; platf
   const [fieldsOpen, setFieldsOpen] = useState(false);
 
   function copyFields() {
-    const text = buildCopyText(project, platform);
+    const text = buildCopyText(project, platformDisplayName(platform));
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);

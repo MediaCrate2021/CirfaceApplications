@@ -30,6 +30,19 @@ import logger from '../logger.js';
 
 const ASANA_BASE = 'https://app.asana.com/api/1.0';
 
+/** Returns the user-facing display name for a source platform identifier. */
+function platformDisplayName(platform: string): string {
+  const names: Record<string, string> = {
+    workfront:  'WorkFront',
+    monday:     'Monday.com',
+    trello:     'Trello',
+    smartsheet: 'Smartsheet',
+    asana:      'Asana',
+    wrike:      'Wrike',
+  };
+  return names[platform] ?? platform;
+}
+
 export interface WriteOptions {
   destProjectGid: string;        // existing project GID, or '' if we create it
   destProjectName?: string;      // required when destProjectGid is ''
@@ -292,7 +305,7 @@ export class AsanaDestination {
     }
 
     log('Migration job started.');
-    log(`Starting Migration for '${project.name}' from ${sourcePlatform} to Asana.`);
+    log(`Starting Migration for '${project.name}' from ${platformDisplayName(sourcePlatform)} to Asana.`);
 
     // Step 1: resolve or create destination project
     log('Provisioning Asana Project.');
@@ -498,7 +511,7 @@ export class AsanaDestination {
           const parts = [
             task.createdBy ? `Created by: ${task.createdBy}` : null,
             datePart ? `Created on: ${datePart}` : null,
-            options.sourcePlatform ? `Source: ${options.sourcePlatform}` : null,
+            options.sourcePlatform ? `Source: ${platformDisplayName(options.sourcePlatform)}` : null,
           ].filter(Boolean);
           try {
             await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
@@ -894,7 +907,7 @@ export class AsanaDestination {
     const parts = [
       attachment.uploadedBy ? `Uploaded by: ${attachment.uploadedBy}` : null,
       datePart ? `On: ${datePart}` : null,
-      sourcePlatform ? `Source: ${sourcePlatform}` : null,
+      sourcePlatform ? `Source: ${platformDisplayName(sourcePlatform)}` : null,
     ].filter(Boolean);
     try {
       await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
@@ -911,7 +924,7 @@ export class AsanaDestination {
     const parts = [
       task.createdBy ? `Created by: ${task.createdBy}` : null,
       datePart ? `Created on: ${datePart}` : null,
-      sourcePlatform ? `Source: ${sourcePlatform}` : null,
+      sourcePlatform ? `Source: ${platformDisplayName(sourcePlatform)}` : null,
     ].filter(Boolean);
     try {
       await this.request('POST', `/tasks/${encodeURIComponent(taskGid)}/stories`, {
@@ -1398,7 +1411,7 @@ export class AsanaDestination {
   /** Short summary for the Asana task notes field. */
   public formatAnalysisReportSummary(report: AnalysisReport, writerName?: string): string {
     const lines: string[] = [
-      `Analysis Report — ${report.sourcePlatform}`,
+      `Analysis Report — ${platformDisplayName(report.sourcePlatform)}`,
     ];
 
     if (report.clientName || report.clientEmail) {
@@ -1465,7 +1478,7 @@ export class AsanaDestination {
     const sep = (label: string) => `\n${'='.repeat(60)}\n${label}\n${'='.repeat(60)}`;
     const lines: string[] = [];
 
-    lines.push(report.partial ? `ANALYSIS REPORT (PARTIAL) — ${report.sourcePlatform.toUpperCase()}` : `ANALYSIS REPORT — ${report.sourcePlatform.toUpperCase()}`);
+    lines.push(report.partial ? `ANALYSIS REPORT (PARTIAL) — ${platformDisplayName(report.sourcePlatform).toUpperCase()}` : `ANALYSIS REPORT — ${platformDisplayName(report.sourcePlatform).toUpperCase()}`);
     if (report.clientName || report.clientEmail) {
       const identity = [report.clientName, report.clientEmail].filter(Boolean).join(' — ');
       lines.push(`Client:       ${identity}`);

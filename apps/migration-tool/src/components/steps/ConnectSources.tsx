@@ -13,7 +13,7 @@ interface Props {
 export default function ConnectSources({ state, onModeChange, onSourceConnected, onDestConnected, onNext }: Props) {
   const [sourcePlatform, setSourcePlatform] = useState<SourcePlatform>(state.sourcePlatform ?? 'monday');
   const [sourceToken, setSourceToken] = useState('');
-  // Workfront uses two separate fields combined as "apiKey:domain"
+  // WorkFront uses two separate fields combined as "apiKey:domain"
   const [wfApiKey, setWfApiKey] = useState('');
   const [wfDomain, setWfDomain] = useState('');
   const [destToken, setDestToken] = useState('');
@@ -124,20 +124,20 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                   <option value="smartsheet">Smartsheet</option>
                   <option value="trello">Trello</option>
                   <option value="wrike">Wrike</option>
-                  <option value="workfront">Workfront</option>
+                  <option value="workfront">WorkFront</option>
                 </select>
               </div>
               {sourcePlatform === 'workfront' ? (
                 <>
                   <div className="field-group">
                     <label htmlFor="wf-domain">
-                      Workfront domain
+                      WorkFront domain
                       <a
                         className="info-icon"
                         href="https://experienceleague.adobe.com/docs/workfront/using/adobe-workfront-api/api-general-information/api-basics.html"
                         target="_blank"
                         rel="noopener noreferrer"
-                        data-tooltip="How to get your Workfront API key"
+                        data-tooltip="How to get your WorkFront API key"
                       >i</a>
                     </label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -152,19 +152,19 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                       />
                       <span className="field-hint" style={{ whiteSpace: 'nowrap', margin: 0 }}>.my.workfront.com</span>
                     </div>
-                    <p className="field-hint">The subdomain of your Workfront instance.</p>
+                    <p className="field-hint">The subdomain of your WorkFront instance.</p>
                   </div>
                   <div className="field-group">
                     <label htmlFor="wf-apikey">API key</label>
                     <input
                       id="wf-apikey"
                       type="password"
-                      placeholder="Workfront API key"
+                      placeholder="WorkFront API key"
                       value={wfApiKey}
                       onChange={(e) => { setWfApiKey(e.target.value); setSourceError(''); }}
                       autoComplete="off"
                     />
-                    <p className="field-hint">Find your API key in Workfront: Setup → System → Customer Info.</p>
+                    <p className="field-hint">Find your API key in WorkFront: Setup → System → Customer Info.</p>
                   </div>
                 </>
               ) : (
