@@ -431,6 +431,7 @@ export default function App() {
                 next('review');
               }}
               onBack={() => next('select-projects')}
+              onConvertParentTasksChange={(convert) => dispatch({ type: 'SET_CONVERT_PARENT_TASKS', convert })}
             />
           )}
           {state.step === 'review' && (
@@ -450,7 +451,6 @@ export default function App() {
                 dispatch({ type: 'RELOAD_MAPPING' });
               }}
               onSkipAttachmentsChange={(skip) => dispatch({ type: 'SET_SKIP_ATTACHMENTS', skip })}
-              onConvertParentTasksChange={(convert) => dispatch({ type: 'SET_CONVERT_PARENT_TASKS', convert })}
               onItemCreateMetadataChange={(value) => dispatch({ type: 'SET_ITEM_CREATE_METADATA', value })}
             />
           )}

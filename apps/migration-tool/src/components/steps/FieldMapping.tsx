@@ -24,6 +24,7 @@ interface Props {
   onSave: (fieldMapping: FieldMappingEntry[], sectionMapping: SectionMappingEntry[], externalIdDestFieldGid: string | null) => void;
   onDraftChange: (fieldMapping: FieldMappingEntry[], sectionMapping: SectionMappingEntry[], externalIdDestFieldGid: string | null) => void;
   onBack: () => void;
+  onConvertParentTasksChange: (convert: boolean) => void;
 }
 
 // Sentinel values for native Asana task field destinations
@@ -301,7 +302,7 @@ function TitleRow({ colSpan }: { colSpan: number }) {
 // New-project mode — type selector, no dest field picker
 // ---------------------------------------------------------------------------
 
-function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
+function NewProjectMapping({ state, onSave, onDraftChange, onBack, onConvertParentTasksChange }: Props) {
   const [mapping, setMapping] = useState<FieldMappingEntry[]>(state.fieldMapping);
   const [sectionMapping, setSectionMapping] = useState<SectionMappingEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -561,6 +562,19 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
 
       {!loading && !error && (
         <>
+          {(state.sourcePlatform === 'workfront' || state.sourcePlatform === 'smartsheet') && (
+            <div className="mapping-option-row">
+              <label className="skip-toggle">
+                <input
+                  type="checkbox"
+                  checked={state.convertParentTasksToSections}
+                  onChange={(e) => onConvertParentTasksChange(e.target.checked)}
+                />
+                Convert parent tasks to sections
+              </label>
+              <span className="field-hint">Top-level tasks that contain subtasks will become Asana sections; their children are promoted to top-level tasks.</span>
+            </div>
+          )}
           <h3 className="mapping-section-heading">Sections</h3>
           <div className="mapping-table-wrapper">
             <table className="mapping-table">
@@ -678,7 +692,7 @@ function NewProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
 // Existing-project mode — map to dest fields, enum value mapping, reload
 // ---------------------------------------------------------------------------
 
-function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props) {
+function ExistingProjectMapping({ state, onSave, onDraftChange, onBack, onConvertParentTasksChange }: Props) {
   const [destFields, setDestFields] = useState<AsanaField[]>([]);
   const [destSections, setDestSections] = useState<Array<{ gid: string; name: string }>>([]);
   const [mapping, setMapping] = useState<FieldMappingEntry[]>(state.fieldMapping);
@@ -1154,6 +1168,19 @@ function ExistingProjectMapping({ state, onSave, onDraftChange, onBack }: Props)
 
       {!loading && !error && (
         <>
+          {(state.sourcePlatform === 'workfront' || state.sourcePlatform === 'smartsheet') && (
+            <div className="mapping-option-row">
+              <label className="skip-toggle">
+                <input
+                  type="checkbox"
+                  checked={state.convertParentTasksToSections}
+                  onChange={(e) => onConvertParentTasksChange(e.target.checked)}
+                />
+                Convert parent tasks to sections
+              </label>
+              <span className="field-hint">Top-level tasks that contain subtasks will become Asana sections; their children are promoted to top-level tasks.</span>
+            </div>
+          )}
           <h3 className="mapping-section-heading">Sections</h3>
           <div className="mapping-table-wrapper">
             <table className="mapping-table">
