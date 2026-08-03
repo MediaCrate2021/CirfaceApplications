@@ -79,6 +79,7 @@ interface WFNote {
   noteText?: string;
   entryDate?: string;
   objID?: string;
+  parentNoteID?: string | null;
   owner?: { name?: string };
 }
 
@@ -86,7 +87,7 @@ interface WFDocument {
   ID: string;
   name?: string;
   downloadURL?: string;
-  contentType?: string;
+  fileExtension?: string;
   objID?: string;
   entryDate?: string;
   owner?: { name?: string };
@@ -320,7 +321,7 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFNote>('/note/search', {
         projectID:    projectId,
         noteObjCode: 'TASK',
-        fields:       'ID,noteText,entryDate,objID,owner',
+        fields:       'ID,noteText,entryDate,objID,parentNoteID,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch task notes');
         return [] as WFNote[];
@@ -328,23 +329,23 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFDocument>('/document/search', {
         projectID:   projectId,
         docObjCode: 'TASK',
-        fields:      'ID,name,downloadURL,contentType,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,fileExtension,objID,entryDate,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch task documents');
         return [] as WFDocument[];
       }),
       this.getAll<WFNote>('/note/search', {
-        projectID:    projectId,
+        objID:       projectId,
         noteObjCode: 'PROJ',
-        fields:       'ID,noteText,entryDate,objID,owner',
+        fields:       'ID,noteText,entryDate,objID,parentNoteID,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch project-level notes');
         return [] as WFNote[];
       }),
       this.getAll<WFDocument>('/document/search', {
-        projectID:   projectId,
+        objID:      projectId,
         docObjCode: 'PROJ',
-        fields:      'ID,name,downloadURL,contentType,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,fileExtension,objID,entryDate,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch project-level documents');
         return [] as WFDocument[];
@@ -368,15 +369,66 @@ export class WorkfrontConnector implements SourceConnector {
     // Build a synthetic task for project-level notes and documents, if any exist.
     // Asana has no project-level comments/attachments concept, so we surface them
     // as a dedicated task placed first in the task list.
-    const projComments: NormalisedComment[] = projNotes
-      .filter((n) => n.noteText?.trim())
-      .map((n) => ({
-        id:         n.ID,
-        authorId:   '',
-        authorName: n.owner?.name ?? 'Unknown',
-        text:       n.noteText!,
-        createdAt:  n.entryDate ?? new Date().toISOString(),
-      }));
+
+    /**
+     * Convert a flat list of WFNote records into ordered NormalisedComments
+     * that preserve thread structure. Top-level notes appear first, each
+     * immediately followed by their direct replies (depth-first). Replies are
+     * prefixed with "↳ In reply to [Author]:" — nested replies use "↳↳", etc.
+     * Notes with no text are skipped. Notes whose parentNoteID points to a
+     * note outside this set are promoted to top-level.
+     */
+    function buildThreadedComments(notes: WFNote[]): NormalisedComment[] {
+      const noteIds = new Set(notes.map((n) => n.ID));
+      const childrenMap = new Map<string, WFNote[]>();
+      const topLevel: WFNote[] = [];
+
+      for (const note of notes) {
+        const parentId = note.parentNoteID && noteIds.has(note.parentNoteID)
+          ? note.parentNoteID
+          : null;
+        if (parentId) {
+          if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
+          childrenMap.get(parentId)!.push(note);
+        } else {
+          topLevel.push(note);
+        }
+      }
+
+      const result: NormalisedComment[] = [];
+
+      function walk(note: WFNote, depth: number, parentAuthor: string): void {
+        const text = note.noteText?.trim();
+        if (!text) return;
+
+        const prefix = depth > 0
+          ? `${'↳'.repeat(depth)} In reply to ${parentAuthor}:\n`
+          : '';
+
+        result.push({
+          id:         note.ID,
+          authorId:   '',
+          authorName: note.owner?.name ?? 'Unknown',
+          text:       prefix + text,
+          createdAt:  note.entryDate ?? new Date().toISOString(),
+        });
+
+        const children = childrenMap.get(note.ID) ?? [];
+        for (const child of children) {
+          walk(child, depth + 1, note.owner?.name ?? 'Unknown');
+        }
+      }
+
+      for (const note of topLevel) {
+        walk(note, 0, '');
+      }
+
+      return result;
+    }
+
+    const projComments: NormalisedComment[] = buildThreadedComments(
+      projNotes.filter((n) => n.noteText?.trim()),
+    );
 
     const projAttachments: NormalisedAttachment[] = projDocs
       .filter((d) => d.downloadURL)
@@ -384,7 +436,7 @@ export class WorkfrontConnector implements SourceConnector {
         id:         d.ID,
         name:       d.name ?? d.ID,
         url:        d.downloadURL!,
-        mimeType:   d.contentType,
+        mimeType:   d.fileExtension,
         uploadedBy: d.owner?.name ?? undefined,
         uploadedAt: d.entryDate ?? undefined,
       }));
@@ -403,15 +455,9 @@ export class WorkfrontConnector implements SourceConnector {
       : null;
 
     function buildTask(raw: WFTask): NormalisedTask {
-      const comments: NormalisedComment[] = (notesByTask.get(raw.ID) ?? [])
-        .filter((n) => n.noteText?.trim())
-        .map((n) => ({
-          id:         n.ID,
-          authorId:   '',
-          authorName: n.owner?.name ?? 'Unknown',
-          text:       n.noteText!,
-          createdAt:  n.entryDate ?? new Date().toISOString(),
-        }));
+      const comments: NormalisedComment[] = buildThreadedComments(
+        notesByTask.get(raw.ID) ?? [],
+      );
 
       const attachments: NormalisedAttachment[] = (docsByTask.get(raw.ID) ?? [])
         .filter((d) => d.downloadURL)
@@ -419,7 +465,7 @@ export class WorkfrontConnector implements SourceConnector {
           id:         d.ID,
           name:       d.name ?? d.ID,
           url:        d.downloadURL!,
-          mimeType:   d.contentType,
+          mimeType:   d.fileExtension,
           uploadedBy: d.owner?.name ?? undefined,
           uploadedAt: d.entryDate ?? undefined,
         }));
