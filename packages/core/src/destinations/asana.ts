@@ -289,6 +289,7 @@ export class AsanaDestination {
       report.warnings++;
       report.items.push({ taskId, taskName, status: 'warning', message });
       logger.warn({ taskId, taskName }, message);
+      emit({ type: 'warning', message: taskName ? `${taskName}: ${message}` : message });
     };
 
     const sourcePlatform = options.sourcePlatform ?? 'source';
