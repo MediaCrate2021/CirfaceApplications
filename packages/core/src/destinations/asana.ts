@@ -500,7 +500,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, undefined, fieldDisplayMap, options.skipAttachments);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, options.authenticateAttachmentUrl, fieldDisplayMap, options.skipAttachments);
       report.items.push(item);
 
       if (options.itemCreateMetadata && (task.createdAt || task.createdBy)) {
@@ -846,7 +846,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, undefined, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform);
       }
 
       // Comments

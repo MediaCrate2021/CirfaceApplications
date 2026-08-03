@@ -88,8 +88,7 @@ interface WFDocument {
   name?: string;
   downloadURL?: string;
   objID?: string;
-  entryDate?: string;
-  owner?: { name?: string };
+  // entryDate, fileExtension, contentType, owner not supported by API v18.0
 }
 
 interface WFSearchResponse<T> {
@@ -130,6 +129,7 @@ export class WorkfrontConnector implements SourceConnector {
   private readonly apiKey: string;
   private readonly domain: string;
   private readonly baseUrl: string;
+  private readonly origin: string;
 
   constructor(credential: string) {
     const colon = credential.indexOf(':');
@@ -138,7 +138,13 @@ export class WorkfrontConnector implements SourceConnector {
     }
     this.apiKey  = credential.slice(0, colon);
     this.domain  = credential.slice(colon + 1);
-    this.baseUrl = `https://${this.domain}.my.workfront.com/attask/api/v18.0`;
+    this.origin  = `https://${this.domain}.my.workfront.com`;
+    this.baseUrl = `${this.origin}/attask/api/v18.0`;
+  }
+
+  /** Resolve a Workfront document URL — relative paths get the instance origin prepended. */
+  private resolveDocUrl(url: string): string {
+    return url.startsWith('/') ? `${this.origin}${url}` : url;
   }
 
   private buildUrl(path: string, params: Record<string, string> = {}): string {
@@ -315,8 +321,8 @@ export class WorkfrontConnector implements SourceConnector {
       };
     }
 
-    // ── Full mode: fetch notes and documents (task-level, note-level, and project-level) ──
-    const [allNotes, allDocs, projNotes, projDocs, allNoteDocs] = await Promise.all([
+    // ── Full mode: fetch notes and documents (task-level and project-level) ──
+    const [allNotes, allDocs, projNotesResp, projDocs] = await Promise.all([
       this.getAll<WFNote>('/note/search', {
         projectID:    projectId,
         noteObjCode: 'TASK',
@@ -328,36 +334,58 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFDocument>('/document/search', {
         projectID:   projectId,
         docObjCode: 'TASK',
-        fields:      'ID,name,downloadURL,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,objID',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch task documents');
         return [] as WFDocument[];
       }),
-      this.getAll<WFNote>('/note/search', {
-        objID:       projectId,
-        noteObjCode: 'PROJ',
-        fields:       'ID,noteText,entryDate,objID,parentNoteID,owner',
+      this.get<WFSearchResponse<WFNote>>(`/proj/${projectId}/notes`, {
+        fields: 'ID,noteText,entryDate,objID,parentNoteID,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch project-level notes');
-        return [] as WFNote[];
+        return { data: [] } as WFSearchResponse<WFNote>;
       }),
       this.getAll<WFDocument>('/document/search', {
-        objID:      projectId,
+        objID:       projectId,
         docObjCode: 'PROJ',
-        fields:      'ID,name,downloadURL,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,objID',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch project-level documents');
         return [] as WFDocument[];
       }),
-      this.getAll<WFDocument>('/document/search', {
-        projectID:   projectId,
-        docObjCode: 'NOTE',
-        fields:      'ID,name,downloadURL,objID,entryDate,owner',
-      }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch note-level documents');
-        return [] as WFDocument[];
-      }),
     ]);
+
+    // Sub-resource fetch returns the project's own notes directly — no client-side filter needed.
+    const projNotes: WFNote[] = projNotesResp.data ?? [];
+    const projectLevelNotes = projNotes;
+
+    // ── Fetch docs attached to notes — must run after note fetch so we have note IDs ──
+    // Note-level docs have objID = noteId. Using objID_Mod=in scopes directly to known note IDs,
+    // avoiding the broken projectID filter (note docs have no projectID field).
+    const allNoteIds = [...allNotes, ...projectLevelNotes].map((n) => n.ID).filter(Boolean);
+    const allNoteDocs = allNoteIds.length > 0
+      ? await this.getAll<WFDocument>('/document/search', {
+          objID:         allNoteIds.join(','),
+          'objID_Mod':  'in',
+          fields:        'ID,name,downloadURL,objID',
+        }).catch((err) => {
+          logger.warn({ err }, 'workfront: could not fetch note-level documents');
+          return [] as WFDocument[];
+        })
+      : [];
+
+    logger.info({
+      projectId,
+      taskNotes:         allNotes.length,
+      taskDocs:          allDocs.length,
+      projNotesRaw:      projNotes.length,
+      projNotesFiltered: projectLevelNotes.length,
+      projDocs:          projDocs.length,
+      noteDocs:          allNoteDocs.length,
+      projNotesSample:   projectLevelNotes.slice(0, 2).map((n) => ({ id: n.ID, hasText: !!n.noteText?.trim(), objID: n.objID })),
+      projDocsSample:    projDocs.slice(0, 2).map((d) => ({ id: d.ID, name: d.name, hasUrl: !!d.downloadURL, objID: d.objID })),
+      noteDocsSample:    allNoteDocs.slice(0, 2).map((d) => ({ id: d.ID, name: d.name, hasUrl: !!d.downloadURL, objID: d.objID })),
+    }, 'workfront: fetch counts after parallel load');
 
     // Group task-level notes and documents by task ID
     const notesByTask = new Map<string, WFNote[]>();
@@ -381,7 +409,7 @@ export class WorkfrontConnector implements SourceConnector {
     for (const [taskId, notes] of notesByTask) {
       for (const note of notes) taskByNoteId.set(note.ID, taskId);
     }
-    const projNoteIdSet = new Set(projNotes.map((n) => n.ID));
+    const projNoteIdSet = new Set(projectLevelNotes.map((n) => n.ID));
     for (const doc of allNoteDocs) {
       if (!doc.objID || !doc.downloadURL) continue;
       if (projNoteIdSet.has(doc.objID)) {
@@ -395,6 +423,8 @@ export class WorkfrontConnector implements SourceConnector {
         }
       }
     }
+
+    const resolveDocUrl = this.resolveDocUrl.bind(this);
 
     // Build a synthetic task for project-level notes and documents, if any exist.
     // Asana has no project-level comments/attachments concept, so we surface them
@@ -457,7 +487,7 @@ export class WorkfrontConnector implements SourceConnector {
     }
 
     const projComments: NormalisedComment[] = buildThreadedComments(
-      projNotes.filter((n) => n.noteText?.trim()),
+      projectLevelNotes.filter((n) => n.noteText?.trim()),
     );
 
     const projAttachments: NormalisedAttachment[] = projDocs
@@ -465,10 +495,8 @@ export class WorkfrontConnector implements SourceConnector {
       .map((d) => ({
         id:         d.ID,
         name:       d.name ?? d.ID,
-        url:        d.downloadURL!,
+        url:        resolveDocUrl(d.downloadURL!),
         mimeType:   undefined,
-        uploadedBy: d.owner?.name ?? undefined,
-        uploadedAt: d.entryDate ?? undefined,
       }));
 
     const projectContentTask: NormalisedTask | null = (projComments.length || projAttachments.length)
@@ -494,10 +522,8 @@ export class WorkfrontConnector implements SourceConnector {
         .map((d) => ({
           id:         d.ID,
           name:       d.name ?? d.ID,
-          url:        d.downloadURL!,
+          url:        resolveDocUrl(d.downloadURL!),
           mimeType:   undefined,
-          uploadedBy: d.owner?.name ?? undefined,
-          uploadedAt: d.entryDate ?? undefined,
         }));
 
       const children = rawTasks.filter((t) => t.parentID === raw.ID);
@@ -551,13 +577,12 @@ export class WorkfrontConnector implements SourceConnector {
   }
 
   /**
-   * If Workfront download URLs require authentication, uncomment and implement this.
-   * The URL would need `?apiKey={key}` appended — confirm with client.
+   * Workfront download URLs require apiKey authentication.
    */
-  // authenticateAttachmentUrl(url: string): string {
-  //   const sep = url.includes('?') ? '&' : '?';
-  //   return `${url}${sep}apiKey=${encodeURIComponent(this.apiKey)}`;
-  // }
+  authenticateAttachmentUrl(url: string): string {
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}apiKey=${encodeURIComponent(this.apiKey)}`;
+  }
 }
 
 // ---------------------------------------------------------------------------
