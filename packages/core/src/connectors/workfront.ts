@@ -87,7 +87,6 @@ interface WFDocument {
   ID: string;
   name?: string;
   downloadURL?: string;
-  fileExtension?: string;
   objID?: string;
   entryDate?: string;
   owner?: { name?: string };
@@ -329,7 +328,7 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFDocument>('/document/search', {
         projectID:   projectId,
         docObjCode: 'TASK',
-        fields:      'ID,name,downloadURL,fileExtension,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,objID,entryDate,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch task documents');
         return [] as WFDocument[];
@@ -345,7 +344,7 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFDocument>('/document/search', {
         objID:      projectId,
         docObjCode: 'PROJ',
-        fields:      'ID,name,downloadURL,fileExtension,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,objID,entryDate,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch project-level documents');
         return [] as WFDocument[];
@@ -353,7 +352,7 @@ export class WorkfrontConnector implements SourceConnector {
       this.getAll<WFDocument>('/document/search', {
         projectID:   projectId,
         docObjCode: 'NOTE',
-        fields:      'ID,name,downloadURL,fileExtension,objID,entryDate,owner',
+        fields:      'ID,name,downloadURL,objID,entryDate,owner',
       }).catch((err) => {
         logger.warn({ err }, 'workfront: could not fetch note-level documents');
         return [] as WFDocument[];
@@ -467,7 +466,7 @@ export class WorkfrontConnector implements SourceConnector {
         id:         d.ID,
         name:       d.name ?? d.ID,
         url:        d.downloadURL!,
-        mimeType:   d.fileExtension,
+        mimeType:   undefined,
         uploadedBy: d.owner?.name ?? undefined,
         uploadedAt: d.entryDate ?? undefined,
       }));
@@ -496,7 +495,7 @@ export class WorkfrontConnector implements SourceConnector {
           id:         d.ID,
           name:       d.name ?? d.ID,
           url:        d.downloadURL!,
-          mimeType:   d.fileExtension,
+          mimeType:   undefined,
           uploadedBy: d.owner?.name ?? undefined,
           uploadedAt: d.entryDate ?? undefined,
         }));
