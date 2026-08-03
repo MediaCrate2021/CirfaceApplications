@@ -375,6 +375,12 @@ export class AsanaDestination {
     report.warnings += fieldFailures.length;
     report.items.push(...fieldFailures);
 
+    // Set of every source field ID that appears in the field mapping (mapped, native, or omitted).
+    // Used in migrateSubtask to distinguish truly unknown fields (not in mapping) from fields
+    // that are handled via native Asana fields or are intentionally omitted — only the former
+    // should appear in the skippedSubitemFields table.
+    const mappedSourceFieldIds = new Set(options.fieldMapping.map((f) => f.sourceFieldId));
+
     // Step 4: resolve the External ID field — used to store each task's source platform item ID
     // so tasks can be traced back to their origin. If the user mapped this to an existing Asana
     // field, attach that field to the project and use it. Otherwise create 'm_External ID'.
@@ -500,7 +506,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, options.authenticateAttachmentUrl, fieldDisplayMap, options.skipAttachments);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, options.authenticateAttachmentUrl, fieldDisplayMap, options.skipAttachments, options.itemCreateMetadata, options.sourcePlatform, mappedSourceFieldIds);
       report.items.push(item);
 
       if (options.itemCreateMetadata && (task.createdAt || task.createdBy)) {
@@ -698,6 +704,7 @@ export class AsanaDestination {
     skipAttachments?: boolean,
     itemCreateMetadata?: boolean,
     sourcePlatform?: string,
+    mappedSourceFieldIds?: Set<string>,
   ): Promise<MigrationReportItem> {
     // For Smartsheet tasks, include the row number in error/warning report entries so the
     // source row is easy to locate. The actual task.name (Asana task name) is unchanged.
@@ -846,7 +853,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform, mappedSourceFieldIds);
       }
 
       // Comments
@@ -959,6 +966,7 @@ export class AsanaDestination {
     skipAttachments?: boolean,
     itemCreateMetadata?: boolean,
     sourcePlatform?: string,
+    mappedSourceFieldIds?: Set<string>,
   ): Promise<void> {
     // For Smartsheet subtasks, include the row number in error/warning report entries.
     const ssRow = subtask.customFields['__smartsheet_row__'];
@@ -972,9 +980,16 @@ export class AsanaDestination {
         const resolvedFieldId = subitemFieldIdRemap[sourceFieldId] ?? sourceFieldId;
         const destGid = fieldGidMap.get(resolvedFieldId);
         if (!destGid) {
-          // Field exists on the subitem board but has no entry in the field mapping — track it.
-          // Skip internal sentinel keys (e.g. __smartsheet_row__) — they are never in the mapping by design.
-          if (value !== null && value !== '' && !sourceFieldId.startsWith('__')) {
+          // Field has no GID — either it's in the mapping (native/omitted) or truly absent.
+          // Only track as skipped if it's not in the field mapping at all (i.e. not handled
+          // by native Asana field routing or intentional omit). This prevents WF/Smartsheet
+          // standard fields that map to native Asana fields from showing as "Unknown field".
+          // Also skip internal sentinel keys (e.g. __smartsheet_row__) — never in the mapping by design.
+          if (
+            value !== null && value !== '' &&
+            !sourceFieldId.startsWith('__') &&
+            !mappedSourceFieldIds?.has(resolvedFieldId)
+          ) {
             const existing = report.skippedSubitemFields.find((s) => s.fieldId === sourceFieldId);
             if (existing) {
               existing.count++;
@@ -1135,7 +1150,7 @@ export class AsanaDestination {
 
       // Recurse into children — Asana supports nested subtasks at arbitrary depth.
       for (const child of subtask.subtasks) {
-        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform);
+        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform, mappedSourceFieldIds);
       }
     } catch (err) {
       const msg = (err as Error).message;

@@ -61,6 +61,37 @@ endpoint returns an error. The connector catches this and returns `[]` — no er
 
 ---
 
+## Workfront Connector
+
+### Note and document fetching
+
+Notes (comments/updates) are fetched in a single `/note/search?projectID=` call with no `noteObjCode` filter, which returns all notes across tasks, subtasks, and the project itself. They are then classified by `objID`:
+
+- `objID` in `taskIdSet` → task/subtask note, grouped into `notesByTask`
+- `objID === projectId` → project-level note, collected in `projNotes`
+- Any other `objID` (milestones, etc.) → ignored
+
+Documents are fetched in two passes and merged with deduplication:
+
+1. `/document/search?projectID=` — returns docs directly attached to tasks, subtasks, or the project. These have a `projectID` reference.
+2. One `/document/search?objID=` call per note ID — note-level documents (attachments on comments) often have no `projectID` reference, so they cannot be found by the broad project filter. WF API v18.0 does not support multi-value `objID_Mod=in` queries reliably, so individual fetches are used instead. **Note:** this issues one API request per note in the project — on large projects with many notes this can add latency.
+
+Documents are then routed by `objID`:
+- `objID === projectId` → project-level attachment
+- `objID` in `projNoteIdSet` → attachment on a project note → surfaced on the `[Project] Notes & Documents` synthetic task
+- `objID` in `taskByNoteId` → attachment on a task/subtask note → surfaced on that task
+- `objID` in `taskIdSet` → directly attached to a task/subtask
+
+### Project-level content synthetic task
+
+When project-level notes or documents exist, a `[Project] Notes & Documents` task is prepended to the task list. Asana has no project-level comments or attachments concept, so this is how that content is surfaced.
+
+### WF API v18.0 field limitations
+
+The `Document` object only supports `ID`, `name`, `downloadURL`, and `objID`. Fields like `contentType`, `fileExtension`, `entryDate`, and `owner` all return 422 and must not be requested. Similarly, the `/proj/{id}/notes` sub-resource only exposes `ID` — requesting `noteText` or other note fields via that endpoint returns 422.
+
+---
+
 ## Asana Destination
 
 ### Destination uses a PAT, not the OAuth user's token
@@ -78,4 +109,4 @@ Binary attachment files are downloaded from the source URL and re-uploaded to As
 
 ---
 
-_Last updated: 2026-04-01_
+_Last updated: 2026-08-03_

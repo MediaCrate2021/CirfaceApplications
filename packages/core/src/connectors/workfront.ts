@@ -321,108 +321,119 @@ export class WorkfrontConnector implements SourceConnector {
       };
     }
 
-    // ── Full mode: fetch notes and documents (task-level and project-level) ──
-    const [allNotes, allDocs, projNotesResp, projDocs] = await Promise.all([
-      this.getAll<WFNote>('/note/search', {
-        projectID:    projectId,
-        noteObjCode: 'TASK',
-        fields:       'ID,noteText,entryDate,objID,parentNoteID,owner',
-      }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch task notes');
-        return [] as WFNote[];
-      }),
-      this.getAll<WFDocument>('/document/search', {
-        projectID:   projectId,
-        docObjCode: 'TASK',
-        fields:      'ID,name,downloadURL,objID',
-      }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch task documents');
-        return [] as WFDocument[];
-      }),
-      this.get<WFSearchResponse<WFNote>>(`/proj/${projectId}/notes`, {
-        fields: 'ID,noteText,entryDate,objID,parentNoteID,owner',
-      }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch project-level notes');
-        return { data: [] } as WFSearchResponse<WFNote>;
-      }),
-      this.getAll<WFDocument>('/document/search', {
-        objID:       projectId,
-        docObjCode: 'PROJ',
-        fields:      'ID,name,downloadURL,objID',
-      }).catch((err) => {
-        logger.warn({ err }, 'workfront: could not fetch project-level documents');
-        return [] as WFDocument[];
-      }),
-    ]);
+    // ── Full mode: fetch notes, then all documents in one pass ──────────────
+    // Notes are fetched first so we have note IDs before routing documents.
+    // Fetch ALL notes for the project in one pass (no noteObjCode filter).
+    // WF returns notes for tasks, subtasks, and the project itself.
+    // We classify them afterwards by objID.
+    const allNotes = await this.getAll<WFNote>('/note/search', {
+      projectID: projectId,
+      fields:    'ID,noteText,entryDate,objID,parentNoteID,owner',
+    }).catch((err) => {
+      logger.warn({ err }, 'workfront: could not fetch notes');
+      return [] as WFNote[];
+    });
 
-    // Sub-resource fetch returns the project's own notes directly — no client-side filter needed.
-    const projNotes: WFNote[] = projNotesResp.data ?? [];
-    const projectLevelNotes = projNotes;
+    const taskIdSet = new Set(rawTasks.map((t) => t.ID));
 
-    // ── Fetch docs attached to notes — must run after note fetch so we have note IDs ──
-    // Note-level docs have objID = noteId. Using objID_Mod=in scopes directly to known note IDs,
-    // avoiding the broken projectID filter (note docs have no projectID field).
-    const allNoteIds = [...allNotes, ...projectLevelNotes].map((n) => n.ID).filter(Boolean);
-    const allNoteDocs = allNoteIds.length > 0
-      ? await this.getAll<WFDocument>('/document/search', {
-          objID:         allNoteIds.join(','),
-          'objID_Mod':  'in',
-          fields:        'ID,name,downloadURL,objID',
-        }).catch((err) => {
-          logger.warn({ err }, 'workfront: could not fetch note-level documents');
-          return [] as WFDocument[];
-        })
-      : [];
-
-    logger.info({
-      projectId,
-      taskNotes:         allNotes.length,
-      taskDocs:          allDocs.length,
-      projNotesRaw:      projNotes.length,
-      projNotesFiltered: projectLevelNotes.length,
-      projDocs:          projDocs.length,
-      noteDocs:          allNoteDocs.length,
-      projNotesSample:   projectLevelNotes.slice(0, 2).map((n) => ({ id: n.ID, hasText: !!n.noteText?.trim(), objID: n.objID })),
-      projDocsSample:    projDocs.slice(0, 2).map((d) => ({ id: d.ID, name: d.name, hasUrl: !!d.downloadURL, objID: d.objID })),
-      noteDocsSample:    allNoteDocs.slice(0, 2).map((d) => ({ id: d.ID, name: d.name, hasUrl: !!d.downloadURL, objID: d.objID })),
-    }, 'workfront: fetch counts after parallel load');
-
-    // Group task-level notes and documents by task ID
+    // Classify notes: task/subtask notes vs project-level notes.
+    const projNotes: WFNote[] = [];
     const notesByTask = new Map<string, WFNote[]>();
     for (const n of allNotes) {
-      if (!n.objID) continue;
-      if (!notesByTask.has(n.objID)) notesByTask.set(n.objID, []);
-      notesByTask.get(n.objID)!.push(n);
-    }
-    const docsByTask = new Map<string, WFDocument[]>();
-    for (const d of allDocs) {
-      if (!d.objID) continue;
-      if (!docsByTask.has(d.objID)) docsByTask.set(d.objID, []);
-      docsByTask.get(d.objID)!.push(d);
+      if (!n.objID || n.objID === projectId) {
+        // No objID means the note is attached directly to the project (WF omits objID
+        // for project-level notes when fetched via the projectID filter).
+        // Explicit objID === projectId is also a project-level note.
+        projNotes.push(n);
+      } else if (taskIdSet.has(n.objID)) {
+        if (!notesByTask.has(n.objID)) notesByTask.set(n.objID, []);
+        notesByTask.get(n.objID)!.push(n);
+      } else {
+        // Notes with other objIDs (milestones, etc.) are ignored.
+        logger.debug({ noteId: n.ID, objID: n.objID, projectId }, 'workfront: note with unclassified objID — skipped');
+      }
     }
 
-    // Route note-level documents to their parent task or project.
-    // Workfront documents attached to a note/update have docObjCode='NOTE' and
-    // objID = the note's ID. We resolve the note back to its parent task or project
-    // and add the document to that task's attachment list so it migrates normally.
+    // Map note ID → parent task/subtask ID (for routing note-level docs).
     const taskByNoteId = new Map<string, string>();
     for (const [taskId, notes] of notesByTask) {
       for (const note of notes) taskByNoteId.set(note.ID, taskId);
     }
-    const projNoteIdSet = new Set(projectLevelNotes.map((n) => n.ID));
-    for (const doc of allNoteDocs) {
-      if (!doc.objID || !doc.downloadURL) continue;
-      if (projNoteIdSet.has(doc.objID)) {
-        // Attached to a project-level note → goes into the project content task
-        projDocs.push(doc);
-      } else {
-        const taskId = taskByNoteId.get(doc.objID);
-        if (taskId) {
-          if (!docsByTask.has(taskId)) docsByTask.set(taskId, []);
-          docsByTask.get(taskId)!.push(doc);
-        }
+    const projNoteIdSet = new Set(projNotes.map((n) => n.ID));
+
+    // Fetch task/project docs (those with a projectID reference).
+    const projectDocs = await this.getAll<WFDocument>('/document/search', {
+      projectID: projectId,
+      fields:    'ID,name,downloadURL,objID',
+    }).catch((err) => {
+      logger.warn({ err }, 'workfront: could not fetch project-scoped documents');
+      return [] as WFDocument[];
+    });
+
+    // Note-level documents often lack a projectID, so fetch them separately
+    // by note ID. projNotes is already a subset of allNotes so no dedup needed.
+    const allNoteIds = allNotes.map((n) => n.ID).filter(Boolean);
+
+    // Fetch note-level docs individually — WF doesn't reliably support multi-value
+    // objID filters, so we issue one request per note ID.
+    const noteDocs: WFDocument[] = (
+      await Promise.all(
+        allNoteIds.map((noteId) =>
+          this.getAll<WFDocument>('/document/search', {
+            objID:  noteId,
+            fields: 'ID,name,downloadURL,objID',
+          }).catch((err) => {
+            logger.warn({ err, noteId }, 'workfront: could not fetch docs for note');
+            return [] as WFDocument[];
+          }),
+        ),
+      )
+    ).flat();
+
+    // Merge, deduplicating by ID (a note doc might also appear in projectDocs).
+    const seenDocIds = new Set<string>();
+    const allDocs: WFDocument[] = [];
+    for (const doc of [...projectDocs, ...noteDocs]) {
+      if (!seenDocIds.has(doc.ID)) {
+        seenDocIds.add(doc.ID);
+        allDocs.push(doc);
       }
     }
+
+    const docsByTask  = new Map<string, WFDocument[]>();
+    const projDocList: WFDocument[] = [];
+
+    for (const doc of allDocs) {
+      if (!doc.objID || !doc.downloadURL) continue;
+      if (doc.objID === projectId) {
+        // Directly attached to the project
+        projDocList.push(doc);
+      } else if (projNoteIdSet.has(doc.objID)) {
+        // Attached to a project-level note → surface in project content task
+        projDocList.push(doc);
+      } else if (taskByNoteId.has(doc.objID)) {
+        // Attached to a note on a task/subtask → surface on that task
+        const taskId = taskByNoteId.get(doc.objID)!;
+        if (!docsByTask.has(taskId)) docsByTask.set(taskId, []);
+        docsByTask.get(taskId)!.push(doc);
+      } else if (taskIdSet.has(doc.objID)) {
+        // Directly attached to a task/subtask
+        if (!docsByTask.has(doc.objID)) docsByTask.set(doc.objID, []);
+        docsByTask.get(doc.objID)!.push(doc);
+      } else {
+        logger.debug({ docId: doc.ID, objID: doc.objID }, 'workfront: doc with unrecognised objID — skipped');
+      }
+    }
+
+    logger.info({
+      projectId,
+      allNotes:   allNotes.length,
+      taskNotes:  [...notesByTask.values()].reduce((s, arr) => s + arr.length, 0),
+      projNotes:  projNotes.length,
+      totalDocs:  allDocs.length,
+      projDocs:   projDocList.length,
+      taskDocs:   [...docsByTask.values()].reduce((s, arr) => s + arr.length, 0),
+    }, 'workfront: fetch counts after parallel load');
 
     const resolveDocUrl = this.resolveDocUrl.bind(this);
 
@@ -487,17 +498,15 @@ export class WorkfrontConnector implements SourceConnector {
     }
 
     const projComments: NormalisedComment[] = buildThreadedComments(
-      projectLevelNotes.filter((n) => n.noteText?.trim()),
+      projNotes.filter((n) => n.noteText?.trim()),
     );
 
-    const projAttachments: NormalisedAttachment[] = projDocs
-      .filter((d) => d.downloadURL)
-      .map((d) => ({
-        id:         d.ID,
-        name:       d.name ?? d.ID,
-        url:        resolveDocUrl(d.downloadURL!),
-        mimeType:   undefined,
-      }));
+    const projAttachments: NormalisedAttachment[] = projDocList.map((d) => ({
+      id:       d.ID,
+      name:     d.name ?? d.ID,
+      url:      resolveDocUrl(d.downloadURL!),
+      mimeType: undefined,
+    }));
 
     const projectContentTask: NormalisedTask | null = (projComments.length || projAttachments.length)
       ? {
