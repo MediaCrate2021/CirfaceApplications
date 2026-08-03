@@ -861,7 +861,7 @@ export class AsanaDestination {
         const body = this.htmlToText(comment.text) || '(image — see task attachments)';
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${body}`,
+            text: `[${comment.authorName} – ${this.formatCommentDate(comment.createdAt)}]: ${body}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -1117,7 +1117,7 @@ export class AsanaDestination {
         const body = this.htmlToText(comment.text) || '(image — see task attachments)';
         try {
           await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/stories`, {
-            text: `[${comment.authorName} – ${new Date(comment.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}]: ${body}`,
+            text: `[${comment.authorName} – ${this.formatCommentDate(comment.createdAt)}]: ${body}`,
           });
           report.migratedComments++;
         } catch (err) {
@@ -1346,6 +1346,14 @@ export class AsanaDestination {
       unknown: 'text',
     };
     return map[type] ?? 'text';
+  }
+
+  /** Format a comment timestamp for display. Falls back to the raw string if the date can't be parsed. */
+  private formatCommentDate(createdAt: string): string {
+    const d = new Date(createdAt);
+    return isNaN(d.getTime())
+      ? createdAt
+      : d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
   }
 
   /** Convert HTML from Monday/Trello update bodies to plain text suitable for Asana stories. */
