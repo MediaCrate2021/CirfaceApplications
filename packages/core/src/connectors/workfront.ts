@@ -316,8 +316,8 @@ export class WorkfrontConnector implements SourceConnector {
       };
     }
 
-    // ── Full mode: fetch notes and documents (task-level and project-level) ──
-    const [allNotes, allDocs, projNotes, projDocs] = await Promise.all([
+    // ── Full mode: fetch notes and documents (task-level, note-level, and project-level) ──
+    const [allNotes, allDocs, projNotes, projDocs, allNoteDocs] = await Promise.all([
       this.getAll<WFNote>('/note/search', {
         projectID:    projectId,
         noteObjCode: 'TASK',
@@ -350,6 +350,14 @@ export class WorkfrontConnector implements SourceConnector {
         logger.warn({ err }, 'workfront: could not fetch project-level documents');
         return [] as WFDocument[];
       }),
+      this.getAll<WFDocument>('/document/search', {
+        projectID:   projectId,
+        docObjCode: 'NOTE',
+        fields:      'ID,name,downloadURL,fileExtension,objID,entryDate,owner',
+      }).catch((err) => {
+        logger.warn({ err }, 'workfront: could not fetch note-level documents');
+        return [] as WFDocument[];
+      }),
     ]);
 
     // Group task-level notes and documents by task ID
@@ -364,6 +372,29 @@ export class WorkfrontConnector implements SourceConnector {
       if (!d.objID) continue;
       if (!docsByTask.has(d.objID)) docsByTask.set(d.objID, []);
       docsByTask.get(d.objID)!.push(d);
+    }
+
+    // Route note-level documents to their parent task or project.
+    // Workfront documents attached to a note/update have docObjCode='NOTE' and
+    // objID = the note's ID. We resolve the note back to its parent task or project
+    // and add the document to that task's attachment list so it migrates normally.
+    const taskByNoteId = new Map<string, string>();
+    for (const [taskId, notes] of notesByTask) {
+      for (const note of notes) taskByNoteId.set(note.ID, taskId);
+    }
+    const projNoteIdSet = new Set(projNotes.map((n) => n.ID));
+    for (const doc of allNoteDocs) {
+      if (!doc.objID || !doc.downloadURL) continue;
+      if (projNoteIdSet.has(doc.objID)) {
+        // Attached to a project-level note → goes into the project content task
+        projDocs.push(doc);
+      } else {
+        const taskId = taskByNoteId.get(doc.objID);
+        if (taskId) {
+          if (!docsByTask.has(taskId)) docsByTask.set(taskId, []);
+          docsByTask.get(taskId)!.push(doc);
+        }
+      }
     }
 
     // Build a synthetic task for project-level notes and documents, if any exist.
