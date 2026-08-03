@@ -452,6 +452,7 @@ export default function App() {
               }}
               onSkipAttachmentsChange={(skip) => dispatch({ type: 'SET_SKIP_ATTACHMENTS', skip })}
               onItemCreateMetadataChange={(value) => dispatch({ type: 'SET_ITEM_CREATE_METADATA', value })}
+              onUserMappingChange={(mapping) => dispatch({ type: 'SET_USER_MAPPING', mapping })}
             />
           )}
           {state.step === 'running' && (

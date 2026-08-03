@@ -339,12 +339,14 @@ export class AsanaDestination {
 
 
     // Step 2: user mapping stats
-    const mappedUsers = options.userMapping.filter((u) => u.destId).length;
-    const unmappedUsers = options.userMapping.length - mappedUsers;
-    log(`${options.userMapping.length} source users found. ${mappedUsers} mapped to Asana users, ${unmappedUsers} unmapped (tasks will have no assignee).`);
+    const omittedUsers  = options.userMapping.filter((u) => u.omit).length;
+    const activeUsers   = options.userMapping.filter((u) => !u.omit);
+    const mappedUsers   = activeUsers.filter((u) => u.destId).length;
+    const unmappedUsers = activeUsers.length - mappedUsers;
+    log(`${options.userMapping.length} source users found. ${mappedUsers} mapped, ${unmappedUsers} unmapped (no assignee)${omittedUsers ? `, ${omittedUsers} omitted` : ''}.`);
     const userGidMap = new Map<string, string>();
     for (const entry of options.userMapping) {
-      if (entry.destId) userGidMap.set(entry.sourceId, entry.destId);
+      if (!entry.omit && entry.destId) userGidMap.set(entry.sourceId, entry.destId);
     }
 
     // Step 3: ensure custom fields exist in destination

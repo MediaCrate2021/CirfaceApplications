@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { AppState } from '../../App.tsx';
+import type { UserMappingEntry } from '@cirface/core/types';
 
 interface ProjectSummary {
   tasks: number;
@@ -23,10 +24,26 @@ interface Props {
   onReloadMapping: () => void;
   onSkipAttachmentsChange: (skip: boolean) => void;
   onItemCreateMetadataChange: (value: boolean) => void;
+  onUserMappingChange: (mapping: UserMappingEntry[]) => void;
 }
 
-export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange, onItemCreateMetadataChange }: Props) {
-  const unmappedUsers = state.userMapping.filter((m) => !m.destId).length;
+export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack, onReloadMapping, onSkipAttachmentsChange, onItemCreateMetadataChange, onUserMappingChange }: Props) {
+  const unmappedUsers = state.userMapping.filter((m) => !m.destId && !m.omit).length;
+  const omittedUsers  = state.userMapping.filter((m) => m.omit).length;
+
+  // A user is exempt from the omit-all toggle if they are the project owner or the logged-in user.
+  function isExempt(entry: UserMappingEntry): boolean {
+    if (state.projectOwnerGid && entry.destId === state.projectOwnerGid) return true;
+    if (state.user && entry.destName === state.user.name) return true;
+    return false;
+  }
+
+  const omitEligible = state.userMapping.filter((u) => !isExempt(u));
+  const allOmitted   = omitEligible.length > 0 && omitEligible.every((u) => u.omit);
+
+  function handleOmitAll(checked: boolean) {
+    onUserMappingChange(state.userMapping.map((u) => isExempt(u) ? u : { ...u, omit: checked }));
+  }
   const activeFields = state.fieldMapping.filter((f) => !f.omit);
   const mappedFields = activeFields.filter((f) => f.destFieldId || f.destNativeField).length;
   const newFields    = activeFields.filter((f) => !f.destFieldId && !f.destNativeField).length;
@@ -94,10 +111,23 @@ export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack
         </ReviewSection>
 
         <ReviewSection title="Mappings">
-          <ReviewRow label="Users mapped" value={`${state.userMapping.length - unmappedUsers} / ${state.userMapping.length}`} warning={unmappedUsers > 0} />
-          {unmappedUsers > 0 && (
-            <ReviewRow label="Unmapped users" value={`${unmappedUsers} will have no assignee`} warning />
-          )}
+          <ReviewRow
+            label="Users mapped"
+            value={`${state.userMapping.filter((m) => m.destId && !m.omit).length} / ${state.userMapping.length}${omittedUsers > 0 ? ` (${omittedUsers} omitted)` : ''}${unmappedUsers > 0 ? `, ${unmappedUsers} unmatched` : ''}`}
+            warning={unmappedUsers > 0}
+            action={
+              state.userMapping.length > 0 ? (
+                <label className="skip-toggle">
+                  <input
+                    type="checkbox"
+                    checked={allOmitted}
+                    onChange={(e) => handleOmitAll(e.target.checked)}
+                  />
+                  Omit all users
+                </label>
+              ) : undefined
+            }
+          />
           <ReviewRow label="Fields mapped" value={String(mappedFields)} />
           <ReviewRow label="Fields to create" value={String(newFields)} warning={newFields > 0} />
           {omittedFields > 0 && (

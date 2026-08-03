@@ -153,6 +153,7 @@ export interface UserMappingEntry {
   sourceEmail: string;
   destId: string | null;   // null = unmapped (task will have no assignee)
   destName: string | null;
+  omit?: boolean;          // true = excluded from migration; tasks assigned to this user get no assignee
 }
 
 export type AsanaFieldType =
