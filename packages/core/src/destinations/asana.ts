@@ -1075,6 +1075,8 @@ export class AsanaDestination {
       // Create subtask — if Asana rejects the request (e.g. a custom field value fails
       // validation, or the subtask is too deeply nested for custom fields), strip
       // custom_fields and retry so the subtask itself is not lost.
+      // After creation, remove the subtask from the project so it only lives under
+      // its parent task and does not appear in the project's flat task list.
       let created: { gid: string };
       try {
         created = await this.request<{ gid: string }>('POST', '/tasks', payload);
@@ -1108,6 +1110,12 @@ export class AsanaDestination {
       }
       taskGidMap.set(subtask.id, created.gid);
       report.migratedSubtasks++;
+
+      // Remove project membership so the subtask does not appear in the project's
+      // flat task list — it should only be accessible through its parent task.
+      await this.request('POST', `/tasks/${encodeURIComponent(created.gid)}/removeProject`, { project: destProjectGid }).catch((err) => {
+        logger.warn({ err, subtaskId: subtask.id }, 'subtask removeProject failed — subtask may appear in project list');
+      });
 
       if (itemCreateMetadata && (subtask.createdAt || subtask.createdBy)) {
         await this.postCreationMetadataComment(created.gid, subtask, sourcePlatform ?? '');

@@ -188,8 +188,10 @@ function applyParentTasksToSections(project: NormalisedProject): NormalisedProje
         newTopLevelTasks.push({ ...child, sectionId: task.id });
       }
     } else {
-      // Regular task — assign to the current section (if any)
-      newTopLevelTasks.push(currentSectionId ? { ...task, sectionId: currentSectionId } : task);
+      // Standalone top-level task — not a child of any parent, so clear the
+      // current section and place it outside any section.
+      currentSectionId = undefined;
+      newTopLevelTasks.push(task);
     }
   }
 
