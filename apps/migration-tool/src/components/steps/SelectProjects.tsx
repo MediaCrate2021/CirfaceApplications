@@ -48,6 +48,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [reloadCount, setReloadCount] = useState(0);
 
   const [sourceSearch, setSourceSearch]     = useState('');
+  const [includeArchived, setIncludeArchived] = useState(false);
 
   // Smartsheet manual ID / link entry
   const [sheetIdInput, setSheetIdInput]     = useState('');
@@ -165,12 +166,13 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     const params = new URLSearchParams();
     if (selectedSourceWorkspace) params.set('workspaceId', selectedSourceWorkspace);
     if (selectedSourceTeam) params.set('teamId', selectedSourceTeam);
+    if (includeArchived) params.set('includeArchived', 'true');
     const url = params.size > 0 ? `/api/source/projects?${params}` : '/api/source/projects';
     fetch(url)
       .then((r) => r.json() as Promise<SourceProject[]>)
       .then((src) => { setSourceProjects([...src].sort((a, b) => a.name.localeCompare(b.name))); setLoadingSource(false); })
       .catch(() => { setError('Failed to load source projects'); setLoadingSource(false); });
-  }, [sourceWorkspaces.length, sourceTeams.length, selectedSourceWorkspace, selectedSourceTeam, reloadCount]);
+  }, [sourceWorkspaces.length, sourceTeams.length, selectedSourceWorkspace, selectedSourceTeam, includeArchived, reloadCount]);
 
   // When source project changes or mode switches to 'new', default the new project name to the source name
   useEffect(() => {
@@ -384,6 +386,16 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
               </select>
+              {state.sourcePlatform === 'workfront' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '0.875rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={includeArchived}
+                    onChange={(e) => { setIncludeArchived(e.target.checked); setSelectedSource(''); }}
+                  />
+                  Include completed and dead projects
+                </label>
+              )}
             </div>
 
             {state.sourcePlatform === 'smartsheet' && (

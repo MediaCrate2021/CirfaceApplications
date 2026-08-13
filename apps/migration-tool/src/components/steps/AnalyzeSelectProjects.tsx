@@ -12,7 +12,7 @@ interface Props {
   onBack: () => void;
 }
 
-export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
+export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props) {
   const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState('');
   const [teams, setTeams] = useState<Array<{ id: string; name: string }>>([]);
@@ -23,6 +23,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [includeArchived, setIncludeArchived] = useState(false);
 
   // Load workspaces on mount — auto-select first
   useEffect(() => {
@@ -58,6 +59,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
     const params = new URLSearchParams();
     if (selectedWorkspace) params.set('workspaceId', selectedWorkspace);
     if (selectedTeam) params.set('teamId', selectedTeam);
+    if (includeArchived) params.set('includeArchived', 'true');
     fetch(`/api/source/projects?${params}`)
       .then((r) => r.json() as Promise<SourceProject[]>)
       .then((list) => { setProjects(list); setLoading(false); })
@@ -65,7 +67,7 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
         setError('Failed to load projects. Check your source connection.');
         setLoading(false);
       });
-  }, [workspaces.length, teamsLoaded, teams.length, selectedWorkspace, selectedTeam]);
+  }, [workspaces.length, teamsLoaded, teams.length, selectedWorkspace, selectedTeam, includeArchived]);
 
   function toggleProject(id: string) {
     setChecked((prev) => {
@@ -131,6 +133,17 @@ export default function AnalyzeSelectProjects({ onSelect, onBack }: Props) {
             ))}
           </select>
         </div>
+      )}
+
+      {state.sourcePlatform === 'workfront' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', fontSize: '0.875rem', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={includeArchived}
+            onChange={(e) => { setIncludeArchived(e.target.checked); setChecked(new Set()); }}
+          />
+          Include completed and dead projects
+        </label>
       )}
 
       {loading && <p className="loading-text">Loading projects…</p>}

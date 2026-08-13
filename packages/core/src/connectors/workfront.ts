@@ -221,15 +221,22 @@ export class WorkfrontConnector implements SourceConnector {
     _workspaceId?: string,
     _teamId?: string,
     _portfolioId?: string,
-    _includeArchived?: boolean,
+    includeArchived = false,
   ): Promise<ProjectListItem[]> {
-    // Status filter omitted until client's status codes are confirmed.
-    // TODO: once known, filter to active statuses to exclude dead/cancelled projects.
+    // Statuses considered inactive — hidden by default, shown when includeArchived is true.
+    // NOTE: These codes need client sign-off. Confirmed from docs: CUR, PLN, CPL, DED, REJ, CLS.
+    const EXCLUDED_STATUSES = new Set(['CPL', 'DED']);
+
     const raw = await this.getAll<WFProject>('/proj/search', {
       fields: 'ID,name,plannedStartDate,plannedCompletionDate,status',
     });
     logger.info({ count: raw.length, statuses: [...new Set(raw.map((p) => p.status).filter(Boolean))] }, 'workfront projects fetched');
-    return raw.map((p) => ({
+
+    const filtered = includeArchived
+      ? raw
+      : raw.filter((p) => !p.status || !EXCLUDED_STATUSES.has(p.status));
+
+    return filtered.map((p) => ({
       id:        p.ID,
       name:      p.name,
       startDate: p.plannedStartDate?.slice(0, 10),

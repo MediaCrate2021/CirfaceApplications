@@ -480,9 +480,9 @@ app.get('/api/source/projects', requireAuth, async (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   try {
     const { platform, token } = req.session.sourceConfig;
-    const { workspaceId, teamId } = req.query as { workspaceId?: string; teamId?: string };
+    const { workspaceId, teamId, includeArchived } = req.query as { workspaceId?: string; teamId?: string; includeArchived?: string };
     const connector = makeConnector(platform, token);
-    const projects = await connector.getProjects(workspaceId, teamId);
+    const projects = await connector.getProjects(workspaceId, teamId, undefined, includeArchived === 'true');
     res.json(projects);
   } catch (err) {
     apiError(res, err, { user: req.session.user?.name, route: 'source/projects' });
