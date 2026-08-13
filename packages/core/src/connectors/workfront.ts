@@ -21,6 +21,7 @@
 import type { SourceConnector } from './base.js';
 import type {
   NormalisedField,
+  NormalisedFieldType,
   NormalisedProject,
   NormalisedTask,
   NormalisedComment,
@@ -90,6 +91,13 @@ interface WFDocument {
   downloadURL?: string;
   objID?: string;
   // entryDate, fileExtension, contentType, owner not supported by API v18.0
+}
+
+interface WFParameter {
+  ID: string;
+  name?: string;
+  dataType?: string;
+  parameterOptions?: Array<{ ID?: string; label?: string; value?: string }>;
 }
 
 interface WFSearchResponse<T> {
@@ -246,8 +254,21 @@ export class WorkfrontConnector implements SourceConnector {
       }
     }
 
+    // Fetch real parameter types and options from the /parameter endpoint.
+    const parameters = await this.getAll<WFParameter>('/parameter/search', {
+      fields: 'name,dataType,parameterOptions',
+    }).catch((err) => {
+      logger.warn({ err }, 'workfront: could not fetch parameter types — defaulting to text');
+      return [] as WFParameter[];
+    });
+
+    const parameterMap = new Map<string, WFParameter>();
+    for (const p of parameters) {
+      if (p.name) parameterMap.set(p.name, p);
+    }
+
     const standardFields: NormalisedField[] = [
-      { id: 'taskNumber',           name: 'Task Number',            type: 'text' },
+      { id: 'taskNumber',           name: 'Task Number',            type: 'number' },
       { id: 'description',          name: 'Description',            type: 'text' },
       { id: 'status',               name: 'Status',                 type: 'text' },
       { id: 'priority',             name: 'Priority',               type: 'text' },
@@ -259,11 +280,18 @@ export class WorkfrontConnector implements SourceConnector {
       { id: 'commitDate',           name: 'Commit Date',            type: 'date' },
     ];
 
-    const customFields: NormalisedField[] = [...customFieldNames].sort().map((name) => ({
-      id:   `de:${name}`,
-      name,
-      type: 'text' as const,
-    }));
+    const customFields: NormalisedField[] = [...customFieldNames].sort().map((name) => {
+      const param = parameterMap.get(name);
+      const type = wfDataTypeToNormalisedType(param?.dataType);
+      const field: NormalisedField = { id: `de:${name}`, name, type };
+      if (type === 'dropdown' && param?.parameterOptions?.length) {
+        field.options = param.parameterOptions.map((opt) => ({
+          id:   opt.ID ?? opt.label ?? '',
+          name: opt.label ?? opt.value ?? opt.ID ?? '',
+        }));
+      }
+      return field;
+    });
 
     logger.info({ projectId, customFieldCount: customFields.length }, 'workfront custom fields discovered');
 
@@ -484,7 +512,7 @@ export class WorkfrontConnector implements SourceConnector {
           authorId:   '',
           authorName: note.owner?.name ?? 'Unknown',
           text:       prefix + text,
-          createdAt:  note.entryDate ?? new Date().toISOString(),
+          createdAt:  normaliseWfDate(note.entryDate) ?? new Date().toISOString(),
         });
 
         const children = childrenMap.get(note.ID) ?? [];
@@ -569,7 +597,7 @@ export class WorkfrontConnector implements SourceConnector {
         comments,
         attachments,
         dependencyIds: extractDependencyIds(raw),
-        createdAt:    raw.entryDate ?? undefined,
+        createdAt:    normaliseWfDate(raw.entryDate),
         createdBy:    formatCreatedBy(raw),
       };
     }
@@ -634,6 +662,37 @@ function shallowTask(raw: WFTask, allTasks: WFTask[]): NormalisedTask {
     createdAt:    raw.entryDate ?? undefined,
     createdBy:    formatCreatedBy(raw),
   };
+}
+
+/**
+ * Workfront returns dates in a non-standard format: "2024-03-15T10:30:00:000-0500"
+ * where milliseconds are separated by a colon instead of a period.
+ * This normalises it to a valid ISO 8601 string that new Date() can parse.
+ */
+function normaliseWfDate(date: string | null | undefined): string | undefined {
+  if (!date) return undefined;
+  // Replace the colon before milliseconds: T00:00:00:000 → T00:00:00.000
+  return date.replace(/T(\d{2}:\d{2}:\d{2}):(\d{3})/, 'T$1.$2');
+}
+
+function wfDataTypeToNormalisedType(dataType: string | undefined): NormalisedFieldType {
+  switch ((dataType ?? '').toUpperCase()) {
+    case 'NUMBER':
+    case 'CURRENCY':
+      return 'number';
+    case 'DATE':
+    case 'DTTM':
+    case 'DATETIME':
+      return 'date';
+    case 'BOOLEAN':
+      return 'checkbox';
+    case 'INTRNL':
+    case 'ENUM':
+      return 'dropdown';
+    // TEXT, PARA, RICH, CALCULATED, and anything unrecognised → text
+    default:
+      return 'text';
+  }
 }
 
 function formatCreatedBy(task: WFTask): string | undefined {
