@@ -53,6 +53,7 @@ interface WFTask {
   assignedTo?: { name?: string; emailAddr?: string } | null;
   parentID?: string | null;
   plannedStartDate?: string;
+  taskNumber?: number | string | null;
   indent?: number;
   priority?: string | null;
   percentComplete?: number | null;
@@ -246,6 +247,7 @@ export class WorkfrontConnector implements SourceConnector {
     }
 
     const standardFields: NormalisedField[] = [
+      { id: 'taskNumber',           name: 'Task Number',            type: 'text' },
       { id: 'description',          name: 'Description',            type: 'text' },
       { id: 'status',               name: 'Status',                 type: 'text' },
       { id: 'priority',             name: 'Priority',               type: 'text' },
@@ -285,6 +287,7 @@ export class WorkfrontConnector implements SourceConnector {
         'ID', 'name', 'description', 'status',
         'plannedCompletionDate', 'plannedStartDate',
         'assignedToID', 'assignedTo', 'parentID', 'indent',
+        'taskNumber',
         'priority', 'percentComplete', 'duration', 'durationType',
         'actualStartDate', 'actualCompletionDate', 'commitDate',
         'predecessors:predecessorID',
@@ -545,6 +548,7 @@ export class WorkfrontConnector implements SourceConnector {
         dueDate:      raw.plannedCompletionDate?.slice(0, 10),
         completed:    raw.status === TASK_COMPLETE_STATUS,
         customFields: {
+          taskNumber:           raw.taskNumber != null ? String(raw.taskNumber) : null,
           description:          raw.description ?? null,
           status:               raw.status ?? null,
           priority:             raw.priority ?? null,
@@ -607,6 +611,7 @@ function shallowTask(raw: WFTask, allTasks: WFTask[]): NormalisedTask {
     dueDate:      raw.plannedCompletionDate?.slice(0, 10),
     completed:    raw.status === TASK_COMPLETE_STATUS,
     customFields: {
+      taskNumber:           raw.taskNumber != null ? String(raw.taskNumber) : null,
       description:          raw.description ?? null,
       status:               raw.status ?? null,
       priority:             raw.priority ?? null,
