@@ -224,7 +224,7 @@ export class WrikeConnector implements SourceConnector {
     let nextPageToken: string | undefined;
 
     do {
-      const p: Record<string, string> = { pageSize: '1000', ...params };
+      const p: Record<string, string> = { ...params };
       if (nextPageToken) p.nextPageToken = nextPageToken;
       const resp = await this.request<T>(path, p);
       results.push(...resp.data);
@@ -288,9 +288,11 @@ export class WrikeConnector implements SourceConnector {
         this.getAll<WrikeAttachment>(`/folders/${projectId}/attachments`, {
           descendants: 'true',
           versions: 'false',
+          pageSize: '1000',
         }),
         this.getAll<WrikeComment>(`/folders/${projectId}/comments`, {
           descendants: 'true',
+          pageSize: '1000',
         }),
       ]);
 
@@ -301,6 +303,7 @@ export class WrikeConnector implements SourceConnector {
       descendants: 'true',
       subTasks:    'true',
       fields:      TASK_FIELDS,
+      pageSize:    '1000',
     });
 
     logger.debug(
