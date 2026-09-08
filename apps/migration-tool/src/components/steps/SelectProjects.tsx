@@ -55,10 +55,14 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [sheetIdLookup, setSheetIdLookup]   = useState(false);
   const [sheetIdError, setSheetIdError]     = useState('');
 
-  /** Extract a Smartsheet sheet ID from a pasted URL or raw numeric ID. */
+  /** Extract a project ID from a pasted URL or raw ID. Handles Smartsheet and Wrike URL patterns. */
   function extractSheetId(value: string): string {
-    const fromUrl = value.match(/\/sheets\/([^/?&#]+)/);
-    if (fromUrl) return fromUrl[1];
+    // Smartsheet: /sheets/{id}
+    const ssUrl = value.match(/\/sheets\/([^/?&#]+)/);
+    if (ssUrl) return ssUrl[1];
+    // Wrike: /open.htm?id={id} or path-based IDs
+    const wrikeUrl = value.match(/[?&]id=([^&]+)/);
+    if (wrikeUrl) return wrikeUrl[1];
     return value.trim();
   }
 
@@ -398,32 +402,40 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
               )}
             </div>
 
-            {state.sourcePlatform === 'smartsheet' && (
-              <div className="field-group">
-                <label htmlFor="sheet-id-input">Or paste a Sheet ID / link</label>
-                <p className="field-hint">For sheets not in a workspace. Paste a sheet URL or numeric Sheet ID.</p>
-                <div className="input-with-button">
-                  <input
-                    id="sheet-id-input"
-                    type="text"
-                    value={sheetIdInput}
-                    onChange={(e) => { setSheetIdInput(e.target.value); setSheetIdError(''); }}
-                    onKeyDown={(e) => e.key === 'Enter' && !sheetIdLookup && sheetIdInput.trim() && handleSheetIdLookup()}
-                    placeholder="https://app.smartsheet.com/sheets/…  or  1234567890"
-                    disabled={sheetIdLookup}
-                    autoComplete="off"
-                  />
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleSheetIdLookup}
-                    disabled={!sheetIdInput.trim() || sheetIdLookup}
-                  >
-                    {sheetIdLookup ? 'Looking up…' : 'Use this sheet'}
-                  </button>
-                </div>
-                {sheetIdError && <p className="error-text">{sheetIdError}</p>}
+            <div className="field-group">
+              <label htmlFor="sheet-id-input">Or paste an ID / link</label>
+              <p className="field-hint">
+                {state.sourcePlatform === 'smartsheet' ? 'Paste a sheet URL or numeric Sheet ID to select it directly.'
+                  : state.sourcePlatform === 'wrike' ? 'Paste a Wrike folder/project ID to select it directly.'
+                  : state.sourcePlatform === 'monday' ? 'Paste a Monday.com board ID to select it directly.'
+                  : state.sourcePlatform === 'trello' ? 'Paste a Trello board ID to select it directly.'
+                  : state.sourcePlatform === 'workfront' ? 'Paste a Workfront project ID to select it directly.'
+                  : 'Paste the project ID to select it directly.'}
+              </p>
+              <div className="input-with-button">
+                <input
+                  id="sheet-id-input"
+                  type="text"
+                  value={sheetIdInput}
+                  onChange={(e) => { setSheetIdInput(e.target.value); setSheetIdError(''); }}
+                  onKeyDown={(e) => e.key === 'Enter' && !sheetIdLookup && sheetIdInput.trim() && handleSheetIdLookup()}
+                  placeholder={
+                    state.sourcePlatform === 'smartsheet' ? 'https://app.smartsheet.com/sheets/…  or  1234567890'
+                    : 'Paste ID or URL…'
+                  }
+                  disabled={sheetIdLookup}
+                  autoComplete="off"
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSheetIdLookup}
+                  disabled={!sheetIdInput.trim() || sheetIdLookup}
+                >
+                  {sheetIdLookup ? 'Looking up…' : 'Use this'}
+                </button>
               </div>
-            )}
+              {sheetIdError && <p className="error-text">{sheetIdError}</p>}
+            </div>
           </div>
 
           {/* Destination card */}

@@ -260,12 +260,23 @@ export class WrikeConnector implements SourceConnector {
   }
 
   async getProjects(spaceId?: string): Promise<ProjectListItem[]> {
+    // Wrike projects are folders with the project property set, but the project
+    // optional field is only available on premium-tier accounts. On lower-tier
+    // accounts all fields=["project"] calls return 400 invalid_parameter.
+    // We return all folders in the space so any account tier works — the user
+    // selects the folder they want to migrate.
     const path = spaceId ? `/spaces/${spaceId}/folders` : '/folders';
-    const folders = await this.getAll<WrikeFolder>(path, { fields: '["project"]' });
+    const folders = await this.getAll<WrikeFolder>(path);
     return folders
-      .filter((f) => !!f.project)
       .sort((a, b) => a.title.localeCompare(b.title))
       .map((f) => ({ id: f.id, name: f.title }));
+  }
+
+  async getProjectInfo(folderId: string): Promise<{ id: string; name: string }> {
+    const resp = await this.request<WrikeFolder>(`/folders/${folderId}`);
+    const folder = resp.data[0];
+    if (!folder) throw new Error(`Wrike folder not found: ${folderId}`);
+    return { id: folder.id, name: folder.title };
   }
 
   async getProjectFields(projectId: string): Promise<NormalisedField[]> {

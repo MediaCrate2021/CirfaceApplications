@@ -489,8 +489,7 @@ app.get('/api/source/projects', requireAuth, async (req, res) => {
   }
 });
 
-// Look up a single source project by ID — used when the user pastes a sheet ID or link
-// directly rather than selecting from the workspace list (Smartsheet only for now).
+// Look up a single source project by ID — used when the user pastes an ID or URL directly.
 app.get('/api/source/project-info', requireAuth, async (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   const { projectId } = req.query as { projectId?: string };
@@ -498,13 +497,10 @@ app.get('/api/source/project-info', requireAuth, async (req, res) => {
   try {
     const { platform, token } = req.session.sourceConfig;
     const connector = makeConnector(platform, token);
-    if (platform === 'smartsheet') {
-      const { SmartsheetConnector } = await import('./connectors/smartsheet.js');
-      const ss = new SmartsheetConnector(token);
-      const info = await ss.getProjectInfo(projectId);
-      res.json(info);
+    if (connector.getProjectInfo) {
+      res.json(await connector.getProjectInfo(projectId));
     } else {
-      // Fallback for other platforms — scan the project list
+      // Fallback — scan the full project list
       const projects = await connector.getProjects();
       const found = projects.find((p) => p.id === projectId);
       if (!found) return res.status(404).json({ error: 'Project not found' });

@@ -59,6 +59,13 @@ export interface SourceConnector {
   getProjectData(projectId: string, options?: { shallow?: boolean }): Promise<NormalisedProject>;
 
   /**
+   * Fetch the name and ID of a single project by its platform ID — lightweight,
+   * no tasks or field data. Used when the user pastes an ID or URL directly.
+   * Implementations should use a direct single-resource API call, not a full list scan.
+   */
+  getProjectInfo?(projectId: string): Promise<{ id: string; name: string }>;
+
+  /**
    * Return a fresh download URL for a given asset ID.
    * Used when a cached pre-signed URL has expired (e.g. Monday S3 URLs expire after 1 hour).
    * Returns null if the platform does not support URL refresh or the asset cannot be found.

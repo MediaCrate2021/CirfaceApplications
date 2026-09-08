@@ -244,6 +244,15 @@ export class WorkfrontConnector implements SourceConnector {
     }));
   }
 
+  async getProjectInfo(projectId: string): Promise<{ id: string; name: string }> {
+    const res = await this.get<{ data: WFProject }>(`/proj/${encodeURIComponent(projectId)}`, {
+      fields: 'ID,name',
+    });
+    const project = res.data;
+    if (!project?.ID) throw new Error(`Workfront project not found: ${projectId}`);
+    return { id: project.ID, name: project.name };
+  }
+
   async getProjectFields(projectId: string): Promise<NormalisedField[]> {
     // Fetch parameterValues from all tasks to discover which custom form fields exist.
     // Workfront stores custom field values as "DE:Field Name" keys on each task.

@@ -157,6 +157,11 @@ export class TrelloConnector implements SourceConnector {
     return boards.map((b) => ({ id: b.id, name: b.name }));
   }
 
+  async getProjectInfo(boardId: string): Promise<{ id: string; name: string }> {
+    const board = await this.get<{ id: string; name: string }>(`/boards/${boardId}`, { fields: 'id,name' });
+    return { id: board.id, name: board.name };
+  }
+
   async getProjectFields(boardId: string): Promise<NormalisedField[]> {
     const [labels, customFieldDefs] = await Promise.all([
       this.get<TrelloLabel[]>(`/boards/${boardId}/labels`, { fields: 'id,name,color' }),

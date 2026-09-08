@@ -132,6 +132,15 @@ export class MondayConnector implements SourceConnector {
     return data.boards.map((b) => ({ id: b.id, name: b.name }));
   }
 
+  async getProjectInfo(boardId: string): Promise<{ id: string; name: string }> {
+    const data = await this.gql<{ boards: Array<{ id: string; name: string }> }>(`
+      query($id: [ID!]) { boards(ids: $id) { id name } }
+    `, { id: [boardId] });
+    const board = data.boards[0];
+    if (!board) throw new Error(`Monday board not found: ${boardId}`);
+    return { id: board.id, name: board.name };
+  }
+
   async getProjectFields(boardId: string): Promise<NormalisedField[]> {
     const data = await this.gql<{ boards: Array<{ columns: MondayColumn[] }> }>(`
       query($boardId: [ID!]) {

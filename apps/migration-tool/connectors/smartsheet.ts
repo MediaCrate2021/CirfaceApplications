@@ -143,6 +143,13 @@ interface SmWorkspace {
   name: string;
 }
 
+interface SmFolderStub {
+  id: number;
+  name: string;
+  sheets?: Array<{ id: number; name: string }>;
+  folders?: SmFolderStub[];
+}
+
 interface SmPaginated<T> {
   data: T[];
   totalPages?: number;
@@ -293,11 +300,30 @@ export class SmartsheetConnector implements SourceConnector {
 
   async getProjects(workspaceId?: string): Promise<ProjectListItem[]> {
     if (workspaceId) {
-      const res = await this.get<{ sheets?: Array<{ id: number; name: string }> }>(
+      const res = await this.get<{
+        sheets?: Array<{ id: number; name: string }>;
+        folders?: SmFolderStub[];
+      }>(
         `/workspaces/${workspaceId}`,
         { include: 'sheets' },
       );
-      return (res.sheets ?? []).map((s) => ({ id: String(s.id), name: s.name }));
+
+      // Collect sheets from the workspace root and recursively from all nested folders.
+      function collectSheets(
+        sheets: Array<{ id: number; name: string }> | undefined,
+        folders: SmFolderStub[] | undefined,
+      ): Array<{ id: number; name: string }> {
+        const acc: Array<{ id: number; name: string }> = [...(sheets ?? [])];
+        for (const folder of folders ?? []) {
+          acc.push(...collectSheets(folder.sheets, folder.folders));
+        }
+        return acc;
+      }
+
+      const allSheets = collectSheets(res.sheets, res.folders);
+      return allSheets
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((s) => ({ id: String(s.id), name: s.name }));
     }
 
     const sheets = await this.getAllPages<{ id: number; name: string }>('/sheets');
