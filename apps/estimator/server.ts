@@ -787,7 +787,9 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
       try {
         // Shallow mode: subtasks are counted from their GID list without recursing
         // into each one, avoiding thousands of per-subtask API calls on large projects.
-        const project = await connector.getProjectData(projectId, { shallow: true });
+        // Workfront fetches notes and documents in bulk (not per-subtask), so it always
+        // does a full fetch to include comments and attachments in the count.
+        const project = await connector.getProjectData(projectId, { shallow: platform !== 'workfront' });
         const counts = countProjectItems(project);
 
         // Merge Monday subitem fields (Monday exposes them via a separate method)
