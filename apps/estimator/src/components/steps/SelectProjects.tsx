@@ -173,7 +173,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
       <div className="notice-box">
         <span>&#9432;</span>
         Your report will automatically be shared with Cirface as soon as it is complete, and will also be available for download.
-        Archived {noun}s are hidden by default.
+        {platform === 'workfront' ? 'Completed and dead projects are hidden by default.' : `Archived ${noun}s are hidden by default.`}
       </div>
 
       {workspaces.length > 0 && (
@@ -223,7 +223,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
         </div>
       )}
 
-      {platform === 'asana' && (
+      {(platform === 'asana' || platform === 'workfront') && (
         <div style={{ marginBottom: '16px' }}>
           <label className="checkbox-label">
             <input
@@ -231,7 +231,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
               checked={includeArchived}
               onChange={(e) => { setIncludeArchived(e.target.checked); setChecked(new Set()); }}
             />
-            <span>Include archived {noun}s</span>
+            <span>{platform === 'workfront' ? 'Include completed and dead projects' : `Include archived ${noun}s`}</span>
           </label>
         </div>
       )}

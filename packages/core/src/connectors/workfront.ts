@@ -246,9 +246,12 @@ export class WorkfrontConnector implements SourceConnector {
     // NOTE: These codes need client sign-off. Confirmed from docs: CUR, PLN, CPL, DED, REJ, CLS.
     const EXCLUDED_STATUSES = new Set(['CPL', 'DED']);
 
-    const raw = await this.getAll<WFProject>('/proj/search', {
-      fields: 'ID,name,plannedStartDate,plannedCompletionDate,status',
+    const resp = await this.get<WFSearchResponse<WFProject>>('/proj/search', {
+      fields:    'ID,name,plannedStartDate,plannedCompletionDate,status',
+      '$$LIMIT': '2000',
+      '$$FIRST': '0',
     });
+    const raw = resp.data ?? [];
     logger.info({ count: raw.length, statuses: [...new Set(raw.map((p) => p.status).filter(Boolean))] }, 'workfront projects fetched');
 
     const filtered = includeArchived
