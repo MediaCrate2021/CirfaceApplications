@@ -11,6 +11,8 @@ export default function Login() {
           <p className="error-text">
             {error === 'access_denied'
               ? 'Access was denied. Please try again.'
+              : error === 'state_mismatch'
+              ? 'Your session expired during sign-in. Please try again.'
               : 'Authentication failed. Please try again.'}
           </p>
         )}

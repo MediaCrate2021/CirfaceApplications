@@ -145,10 +145,25 @@ export class WorkfrontConnector implements SourceConnector {
     if (colon === -1) {
       throw new Error('Workfront credential must be formatted as "apiKey:domain"');
     }
-    this.apiKey  = credential.slice(0, colon);
-    this.domain  = credential.slice(colon + 1);
+    this.apiKey = credential.slice(0, colon);
+    // Normalize the domain — strip protocol, path, and the .my.workfront.com suffix
+    // so users can paste their full Workfront URL and it still works.
+    const rawDomain = credential.slice(colon + 1).trim();
+    this.domain = WorkfrontConnector.normalizeDomain(rawDomain);
     this.origin  = `https://${this.domain}.my.workfront.com`;
     this.baseUrl = `${this.origin}/attask/api/v18.0`;
+    logger.debug({ domain: this.domain, origin: this.origin }, 'workfront: connector initialized');
+  }
+
+  /** Extract just the subdomain from whatever the user pasted. */
+  private static normalizeDomain(input: string): string {
+    // Strip protocol
+    let domain = input.replace(/^https?:\/\//i, '');
+    // Strip everything after the first slash (path/query)
+    domain = domain.split('/')[0];
+    // Strip .my.workfront.com or .workfront.com suffix if present
+    domain = domain.replace(/\.my\.workfront\.com$/i, '').replace(/\.workfront\.com$/i, '');
+    return domain.trim();
   }
 
   /** Resolve a Workfront document URL — relative paths get the instance origin prepended. */
@@ -167,13 +182,17 @@ export class WorkfrontConnector implements SourceConnector {
   private async get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
     const url = this.buildUrl(path, params);
     const res  = await fetch(url);
+    const text = await res.text().catch(() => '');
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      const err  = new Error(`Workfront ${path} → ${res.status}: ${text.slice(0, 200)}`);
+      const err = new Error(`Workfront ${path} → ${res.status}: ${text.slice(0, 200)}`);
       (err as NodeJS.ErrnoException).code = String(res.status);
       throw err;
     }
-    return res.json() as Promise<T>;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`Workfront ${path} → non-JSON response (${res.status}): ${text.slice(0, 120)}`);
+    }
   }
 
   private async getAll<T>(path: string, params: Record<string, string> = {}): Promise<T[]> {

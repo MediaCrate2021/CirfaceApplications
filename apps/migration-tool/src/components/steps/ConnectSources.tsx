@@ -119,6 +119,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                   value={sourcePlatform}
                   onChange={(e) => { setSourcePlatform(e.target.value as SourcePlatform); setSourceToken(''); setWfApiKey(''); setWfDomain(''); setSourceError(''); }}
                 >
+                  <option value="airtable">Airtable</option>
                   <option value="asana">Asana</option>
                   <option value="monday">Monday.com</option>
                   <option value="smartsheet">Smartsheet</option>
@@ -152,7 +153,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                       />
                       <span className="field-hint" style={{ whiteSpace: 'nowrap', margin: 0 }}>.my.workfront.com</span>
                     </div>
-                    <p className="field-hint">The subdomain of your WorkFront instance.</p>
+                    <p className="field-hint">Your WorkFront subdomain or full URL — e.g. <code>acmecorp</code> or <code>https://acmecorp.my.workfront.com</code></p>
                   </div>
                   <div className="field-group">
                     <label htmlFor="wf-apikey">API key</label>
@@ -164,7 +165,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                       onChange={(e) => { setWfApiKey(e.target.value); setSourceError(''); }}
                       autoComplete="off"
                     />
-                    <p className="field-hint">Find your API key in WorkFront: Setup → System → Customer Info.</p>
+                    <p className="field-hint">Personal API key: your profile menu → Profile → More (⋯) → Edit → API tab → Generate. System key (admin only): Setup → System → Customer Info.</p>
                   </div>
                 </>
               ) : (
@@ -207,12 +208,22 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                         data-tooltip="How to create a Wrike permanent access token"
                       >i</a>
                     )}
+                    {sourcePlatform === 'airtable' && (
+                      <a
+                        className="info-icon"
+                        href="https://airtable.com/create/tokens"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-tooltip="Create an Airtable Personal Access Token"
+                      >i</a>
+                    )}
                   </label>
                   <input
                     id="source-token"
                     type="password"
                     placeholder={
-                      sourcePlatform === 'monday'      ? 'Monday.com API token'
+                      sourcePlatform === 'airtable'    ? 'Airtable Personal Access Token'
+                      : sourcePlatform === 'monday'    ? 'Monday.com API token'
                       : sourcePlatform === 'smartsheet' ? 'Smartsheet Personal Access Token'
                       : sourcePlatform === 'wrike'      ? 'Wrike permanent access token'
                       : 'apiKey:token'
@@ -221,6 +232,9 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                     onChange={(e) => setSourceToken(e.target.value)}
                     autoComplete="off"
                   />
+                  {sourcePlatform === 'airtable' && (
+                    <p className="field-hint">Generate at airtable.com/create/tokens. Required scopes: <code>data.records:read</code>, <code>data.recordComments:read</code>, <code>schema.bases:read</code>.</p>
+                  )}
                   {sourcePlatform === 'trello' && (
                     <p className="field-hint">Paste your API key and token separated by a colon: <code>apiKey:token</code></p>
                   )}

@@ -34,6 +34,7 @@ import { SmartsheetConnector } from '@cirface/core/connectors/smartsheet';
 import { AsanaConnector } from '@cirface/core/connectors/asana';
 import { WrikeConnector } from '@cirface/core/connectors/wrike';
 import { WorkfrontConnector } from '@cirface/core/connectors/workfront';
+import { AirtableConnector } from '@cirface/core/connectors/airtable';
 import { AsanaDestination } from '@cirface/core/destinations/asana';
 import type { SourceConnector } from '@cirface/core/connectors/base';
 import type {
@@ -290,6 +291,7 @@ function makeConnector(platform: SourcePlatform, token: string): SourceConnector
   if (platform === 'asana') return new AsanaConnector(token);
   if (platform === 'wrike')     return new WrikeConnector(token);
   if (platform === 'workfront') return new WorkfrontConnector(token);
+  if (platform === 'airtable')  return new AirtableConnector(token);
   throw new Error(`Unknown platform: ${platform}`);
 }
 
@@ -331,14 +333,25 @@ app.get('/auth/callback', async (req, res) => {
 
   const returnTo = req.session.returnTo ?? '/';
 
+  logger.info({
+    hasCode: !!code,
+    hasState: !!state,
+    hasSessionState: !!req.session.oauthState,
+    hasSessionId: !!req.sessionID,
+    error: error ?? null,
+  }, 'OAuth callback received');
+
   if (error) {
     logger.warn({ error }, 'OAuth access denied');
     return res.redirect(`${returnTo}?error=access_denied`);
   }
 
   if (state !== req.session.oauthState) {
-    logger.warn('OAuth state mismatch — possible CSRF attempt');
-    return res.status(403).send('State mismatch');
+    logger.warn({
+      receivedState: state ? `${state.slice(0, 8)}…` : 'none',
+      sessionState: req.session.oauthState ? `${req.session.oauthState.slice(0, 8)}…` : 'none (session may have been lost)',
+    }, 'OAuth state mismatch');
+    return res.redirect(`${returnTo}?error=state_mismatch`);
   }
   delete req.session.oauthState;
   delete req.session.returnTo;

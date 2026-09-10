@@ -55,12 +55,15 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const [sheetIdLookup, setSheetIdLookup]   = useState(false);
   const [sheetIdError, setSheetIdError]     = useState('');
 
-  /** Extract a project ID from a pasted URL or raw ID. Handles Smartsheet and Wrike URL patterns. */
+  /** Extract a project ID from a pasted URL or raw ID. */
   function extractSheetId(value: string): string {
     // Smartsheet: /sheets/{id}
     const ssUrl = value.match(/\/sheets\/([^/?&#]+)/);
     if (ssUrl) return ssUrl[1];
-    // Wrike: /open.htm?id={id} or path-based IDs
+    // Workfront: ?ID={id} (capital — must check before lowercase Wrike pattern)
+    const wfUrl = value.match(/[?&]ID=([^&]+)/);
+    if (wfUrl) return wfUrl[1];
+    // Wrike: ?id={id}
     const wrikeUrl = value.match(/[?&]id=([^&]+)/);
     if (wrikeUrl) return wrikeUrl[1];
     return value.trim();
