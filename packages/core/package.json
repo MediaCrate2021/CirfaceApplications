@@ -10,6 +10,7 @@
     "./connectors/asana":       "./src/connectors/asana.ts",
     "./connectors/wrike":       "./src/connectors/wrike.ts",
     "./connectors/workfront":   "./src/connectors/workfront.ts",
+    "./connectors/airtable":    "./src/connectors/airtable.ts",
     "./destinations/asana":     "./src/destinations/asana.ts",
     "./types":                  "./src/types/index.ts",
     "./logger":                 "./src/logger.ts",
