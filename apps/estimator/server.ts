@@ -694,6 +694,9 @@ app.post('/api/analyze/prepare', requireAuth, requireSourceConnected, (req, res)
     return res.status(400).json({ error: 'projectIds must be a non-empty array' });
   }
   req.session.pendingAnalysis = { projectIds, projectMeta: projectMeta ?? [] };
+  // Reset any stale analysis state so the new run always starts fresh.
+  req.session.analysisInProgress = false;
+  req.session.lastAnalysisReport = undefined;
   req.session.save((err) => {
     if (err) logger.error({ err }, 'session save failed on analyze prepare');
     res.json({ ok: true, count: projectIds.length });

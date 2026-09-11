@@ -26,35 +26,48 @@ interface Props {
   onBack: () => void;
 }
 
+// Only render the last N lines — keeps the DOM small even for large batches.
+const MAX_VISIBLE_LINES = 150;
+
 export default function RunAnalysis({ projects, projectCount, onComplete, onBack }: Props) {
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
-  const [reconnecting, setReconnecting] = useState(false);
+  // Set when the SSE connection drops mid-run (proxy timeout, etc.).
+  // The analysis keeps running on the server; user can refresh to reconnect.
+  const [backgroundRunning, setBackgroundRunning] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
-  // Track consecutive connection errors to distinguish a transient drop from a real failure.
-  const errorCount = useRef(0);
+  const openStreamRef = useRef<(() => void) | null>(null);
+  // True once we've received at least one progress event — distinguishes a
+  // mid-run connection drop (show Refresh) from a failed initial connection (show error).
+  const analysisStarted = useRef(false);
 
   useEffect(() => {
     let es: EventSource | undefined;
 
     function addLine(type: ProgressLine['type'], message: string) {
-      setLines((prev) => [...prev, { type, message }]);
+      setLines((prev) => {
+        const next = [...prev, { type, message }];
+        // Keep only the tail so the DOM stays small.
+        return next.length > MAX_VISIBLE_LINES ? next.slice(next.length - MAX_VISIBLE_LINES) : next;
+      });
     }
 
     function openStream() {
+      setBackgroundRunning(false);
+      setError('');
       const stream = new EventSource('/api/analyze');
       es = stream;
 
       stream.addEventListener('info', (e) => {
-        errorCount.current = 0;
-        setReconnecting(false);
+        analysisStarted.current = true;
         const data = JSON.parse(e.data) as { message: string; done?: number };
         addLine('info', data.message);
         if (data.done !== undefined) setDone(data.done);
       });
 
       stream.addEventListener('warning', (e) => {
+        analysisStarted.current = true;
         const data = JSON.parse(e.data) as { message: string };
         addLine('warning', data.message);
       });
@@ -72,21 +85,21 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
         onComplete(JSON.parse(e.data) as AnalysisReport);
       });
 
-      // SSE connection dropped (network blip, Railway proxy reset, etc.).
-      // Don't close — EventSource will reconnect automatically. The server handles
-      // reconnects gracefully: it either polls for the in-progress analysis or
-      // immediately delivers the cached report if the analysis already finished.
+      // Connection dropped. If analysis had already started, the server is still
+      // running it — show Refresh so the user can reconnect. If nothing had
+      // started yet, it's a connection failure — show an error instead.
       stream.addEventListener('error', () => {
-        errorCount.current += 1;
-        if (errorCount.current >= 5) {
-          // Five consecutive drops with no successful event in between — give up.
-          stream.close();
-          setError('Connection lost. Please go back and try again.');
+        stream.close();
+        if (analysisStarted.current) {
+          setBackgroundRunning(true);
         } else {
-          setReconnecting(true);
+          setError('Could not connect to the server. Please go back and try again.');
         }
       });
     }
+
+    // Expose openStream so the Refresh button can call it.
+    openStreamRef.current = openStream;
 
     // POST project list to session first — EventSource is GET-only so large
     // selections can't go in the URL without hitting the 431 header size limit.
@@ -97,12 +110,13 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
     })
       .then((r) => { if (!r.ok) throw new Error(`Prepare failed: ${r.status}`); })
       .then(() => openStream())
-      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to start analysis'); });
+      .catch((fetchErr) => { setError(fetchErr instanceof Error ? fetchErr.message : 'Failed to start analysis'); });
 
     return () => es?.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-scroll log
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -126,6 +140,20 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
         <span className="progress-label">{done} / {projectCount} projects</span>
       </div>
 
+      {backgroundRunning && (
+        <div className="step-notice" style={{ marginTop: '12px' }}>
+          <p>The analysis is still running in the background.</p>
+          <div className="step-actions" style={{ marginTop: '8px' }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => openStreamRef.current?.()}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div style={{ marginTop: '12px' }}>
           <p className="error-text">{error}</p>
@@ -135,13 +163,12 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
         </div>
       )}
 
-      {reconnecting && !error && (
-        <p className="step-notice" style={{ color: 'var(--color-muted)', marginTop: '8px' }}>
-          Reconnecting…
-        </p>
-      )}
-
       <div className="run-log" ref={logRef}>
+        {lines.length === MAX_VISIBLE_LINES && (
+          <div className="run-log-line run-log-info" style={{ color: 'var(--color-muted)', fontStyle: 'italic' }}>
+            Earlier entries not shown
+          </div>
+        )}
         {lines.map((line, i) => (
           <div key={i} className={`run-log-line run-log-${line.type}`}>{line.message}</div>
         ))}
