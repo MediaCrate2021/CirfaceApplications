@@ -84,9 +84,6 @@ interface WFNote {
   objID?: string;
   parentNoteID?: string | null;
   owner?: { name?: string };
-  // Inline sub-collection — populated when 'documents:ID,name,downloadURL' is requested.
-  // WF API may or may not support this on Note objects; treated as optional.
-  documents?: WFDocument[];
 }
 
 interface WFDocument {
@@ -399,15 +396,11 @@ export class WorkfrontConnector implements SourceConnector {
     // We classify them afterwards by objID.
     const allNotes = await this.getAll<WFNote>('/note/search', {
       projectID: projectId,
-      fields:    'ID,noteText,entryDate,objID,parentNoteID,owner,documents:ID,documents:name,documents:downloadURL',
+      fields:    'ID,noteText,entryDate,objID,parentNoteID,owner',
     }).catch((err) => {
       logger.warn({ err }, 'workfront: could not fetch notes');
       return [] as WFNote[];
     });
-
-    // Detect whether WF returned inline documents on notes.
-    // Some API versions / plan tiers don't support sub-collections on Note objects.
-    const inlineDocsSupported = allNotes.some((n) => Array.isArray(n.documents));
 
     const taskIdSet = new Set(rawTasks.map((t) => t.ID));
 
@@ -445,35 +438,11 @@ export class WorkfrontConnector implements SourceConnector {
       return [] as WFDocument[];
     });
 
-    // Note-level documents: prefer inline sub-collection (zero extra requests).
-    // Fall back to per-note fetches only when inline docs aren't supported by this WF instance.
-    let noteDocs: WFDocument[];
-    if (inlineDocsSupported) {
-      logger.debug({ projectId }, 'workfront: using inline note documents');
-      noteDocs = allNotes.flatMap((n) => n.documents ?? []);
-    } else {
-      // Per-note fetch fallback — one request per note that actually exists.
-      // WF doesn't reliably support multi-value objID filters so we fetch individually.
-      logger.debug({ projectId, noteCount: allNotes.length }, 'workfront: falling back to per-note document fetches');
-      noteDocs = (
-        await Promise.all(
-          allNotes.map((n) =>
-            this.getAll<WFDocument>('/document/search', {
-              objID:  n.ID,
-              fields: 'ID,name,downloadURL,objID',
-            }).catch((err) => {
-              logger.warn({ err, noteId: n.ID }, 'workfront: could not fetch docs for note');
-              return [] as WFDocument[];
-            }),
-          ),
-        )
-      ).flat();
-    }
-
-    // Merge, deduplicating by ID (a note doc might also appear in projectDocs).
+    // All documents are captured by the project-scoped fetch and routed by objID.
+    // Per-note doc fetches are not needed (confirmed via unrouted-doc analysis: 0 unrouted).
     const seenDocIds = new Set<string>();
     const allDocs: WFDocument[] = [];
-    for (const doc of [...projectDocs, ...noteDocs]) {
+    for (const doc of projectDocs) {
       if (!seenDocIds.has(doc.ID)) {
         seenDocIds.add(doc.ID);
         allDocs.push(doc);
@@ -504,26 +473,6 @@ export class WorkfrontConnector implements SourceConnector {
         logger.debug({ docId: doc.ID, objID: doc.objID }, 'workfront: doc with unrecognised objID — skipped');
       }
     }
-
-    // TEMP: count how many unrouted docs have an objID that matches a note ID we fetched.
-    // This tells us whether note-level docs are already captured by the project-scoped fetch
-    // and just need routing — or whether they're truly missing without per-note fetches.
-    const allNoteIdSet = new Set(allNotes.map((n) => n.ID));
-    const unroutedDocs = allDocs.filter((d) => {
-      if (!d.objID || !d.downloadURL) return false;
-      if (d.objID === projectId) return false;
-      if (projNoteIdSet.has(d.objID)) return false;
-      if (taskByNoteId.has(d.objID)) return false;
-      if (taskIdSet.has(d.objID)) return false;
-      return true;
-    });
-    const unroutedMatchingNotes = unroutedDocs.filter((d) => allNoteIdSet.has(d.objID!));
-    logger.info({
-      projectId,
-      unroutedTotal: unroutedDocs.length,
-      unroutedMatchingNoteIds: unroutedMatchingNotes.length,
-      unroutedOther: unroutedDocs.length - unroutedMatchingNotes.length,
-    }, 'workfront: TEMP unrouted doc analysis');
 
     logger.info({
       projectId,

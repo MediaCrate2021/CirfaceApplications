@@ -290,6 +290,13 @@ export class AirtableConnector implements SourceConnector {
   // Airtable has no public workspace-listing endpoint at the standard tier.
   // getWorkspaces() is intentionally omitted — getProjects() returns all accessible bases.
 
+  // Airtable has no standalone users endpoint — collaborators are discovered from
+  // cell values during getProjectData(). Return empty here; the migration engine
+  // builds its user list from NormalisedProject.users after getProjectData().
+  async getUsers(): Promise<NormalisedUser[]> {
+    return [];
+  }
+
   async getProjects(_workspaceId?: string): Promise<ProjectListItem[]> {
     const bases = await this.getAll<AirtableBase>('/meta/bases', {}, 'bases');
     return bases

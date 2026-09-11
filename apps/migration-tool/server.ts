@@ -93,6 +93,7 @@ declare module 'express-session' {
     lastMigrationError?: string;
     analysisInProgress?: boolean;
     lastAnalysisReport?: AnalysisReport;
+    pendingAnalysis?: { projectIds: string[]; trackingProjectGid?: string; trackingPortfolioGid?: string };
   }
 }
 
@@ -224,7 +225,7 @@ app.use(session({
     sameSite: 'lax',
   },
 }));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // Serve Vite build output in production; in dev Vite runs separately on 5173
 const distDir = path.join(__dirname, 'dist');
@@ -1053,22 +1054,52 @@ app.post('/api/migrate/cancel', requireAuth, (req, res) => {
 // Analysis — streaming via SSE (analyze-only mode)
 // ---------------------------------------------------------------------------
 
+app.post('/api/analyze/prepare', requireAuth, (req, res) => {
+  if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
+  const { projectIds, trackingProjectGid, trackingPortfolioGid } = req.body as {
+    projectIds?: string[];
+    trackingProjectGid?: string;
+    trackingPortfolioGid?: string;
+  };
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return res.status(400).json({ error: 'projectIds must be a non-empty array' });
+  }
+  req.session.pendingAnalysis = { projectIds, trackingProjectGid, trackingPortfolioGid };
+  req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save failed on analyze prepare');
+    res.json({ ok: true, count: projectIds.length });
+  });
+});
+
 app.get('/api/analyze', requireAuth, async (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   if (req.session.analysisInProgress) return res.status(409).json({ error: 'An analysis is already running' });
 
-  const { projectIds: projectIdsRaw, trackingProjectGid, trackingPortfolioGid } = req.query as {
+  const pending = req.session.pendingAnalysis;
+  const { projectIds: projectIdsRaw, trackingProjectGid: tpgRaw, trackingPortfolioGid: tpfRaw } = req.query as {
     projectIds?: string;
     trackingProjectGid?: string;
     trackingPortfolioGid?: string;
   };
 
   let projectIds: string[];
-  try {
-    projectIds = JSON.parse(projectIdsRaw ?? '[]') as string[];
-    if (!Array.isArray(projectIds) || projectIds.length === 0) throw new Error('empty');
-  } catch {
-    return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
+  let trackingProjectGid: string | undefined;
+  let trackingPortfolioGid: string | undefined;
+
+  if (pending?.projectIds?.length) {
+    projectIds = pending.projectIds;
+    trackingProjectGid = pending.trackingProjectGid;
+    trackingPortfolioGid = pending.trackingPortfolioGid;
+    req.session.pendingAnalysis = undefined;
+  } else {
+    try {
+      projectIds = JSON.parse(projectIdsRaw ?? '[]') as string[];
+      if (!Array.isArray(projectIds) || projectIds.length === 0) throw new Error('empty');
+    } catch {
+      return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
+    }
+    trackingProjectGid = tpgRaw;
+    trackingPortfolioGid = tpfRaw;
   }
 
   // Switch to SSE

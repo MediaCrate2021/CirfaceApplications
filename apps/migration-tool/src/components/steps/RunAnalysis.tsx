@@ -20,45 +20,59 @@ export default function RunAnalysis({ state, onComplete }: Props) {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const projectIds = state.analyzeProjectIds.map((p) => p.id);
-
-    const es = new EventSource(
-      `/api/analyze?projectIds=${encodeURIComponent(JSON.stringify(projectIds))}&trackingProjectGid=${encodeURIComponent(state.trackingProjectGid ?? '')}&trackingPortfolioGid=${encodeURIComponent(state.trackingPortfolioGid ?? '')}`,
-    );
+    let es: EventSource | undefined;
 
     function addLine(type: ProgressLine['type'], message: string) {
       setLines((prev) => [...prev, { type, message }]);
     }
 
-    es.addEventListener('info', (e) => {
-      const data = JSON.parse(e.data) as { message: string; done?: number };
-      addLine('info', data.message);
-      if (data.done !== undefined) setDone(data.done);
-    });
+    function openStream() {
+      const stream = new EventSource('/api/analyze');
+      es = stream;
 
-    es.addEventListener('warning', (e) => {
-      const data = JSON.parse(e.data) as { message: string };
-      addLine('warning', data.message);
-    });
+      stream.addEventListener('info', (e) => {
+        const data = JSON.parse(e.data) as { message: string; done?: number };
+        addLine('info', data.message);
+        if (data.done !== undefined) setDone(data.done);
+      });
 
-    es.addEventListener('error-msg', (e) => {
-      const data = JSON.parse(e.data) as { message: string };
-      addLine('error', data.message);
-    });
+      stream.addEventListener('warning', (e) => {
+        const data = JSON.parse(e.data) as { message: string };
+        addLine('warning', data.message);
+      });
 
-    es.addEventListener('complete', (e) => {
-      es.close();
-      const report = JSON.parse(e.data) as AnalysisReport;
-      setDone(total);
-      onComplete(report);
-    });
+      stream.addEventListener('error-msg', (e) => {
+        const data = JSON.parse(e.data) as { message: string };
+        addLine('error', data.message);
+      });
 
-    es.addEventListener('error', () => {
-      es.close();
-      setError('Connection to server lost. Please try again.');
-    });
+      stream.addEventListener('complete', (e) => {
+        stream.close();
+        const report = JSON.parse(e.data) as AnalysisReport;
+        setDone(total);
+        onComplete(report);
+      });
 
-    return () => es.close();
+      stream.addEventListener('error', () => {
+        stream.close();
+        setError('Connection to server lost. Please try again.');
+      });
+    }
+
+    fetch('/api/analyze/prepare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectIds: state.analyzeProjectIds.map((p) => p.id),
+        trackingProjectGid: state.trackingProjectGid,
+        trackingPortfolioGid: state.trackingPortfolioGid,
+      }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(`Prepare failed: ${r.status}`); })
+      .then(() => openStream())
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to start analysis'); });
+
+    return () => es?.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
