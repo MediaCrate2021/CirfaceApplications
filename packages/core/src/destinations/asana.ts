@@ -1460,21 +1460,37 @@ export class AsanaDestination {
       '',
     );
 
-    for (const p of report.projects) {
+    // Asana notes field limit is 65,400 bytes. Stop adding projects before we hit it.
+    // The full per-project listing is always available in the attached report file.
+    const NOTES_BYTE_LIMIT = 64_000;
+    let bytesSoFar = Buffer.byteLength(lines.join('\n'), 'utf8');
+
+    for (let i = 0; i < report.projects.length; i++) {
+      const p = report.projects[i]!;
       const total = p.tasks + p.subtasks + p.dependencies + p.comments + p.attachments;
-      lines.push(`  ${p.projectName}`);
-      if (p.ownerName) lines.push(`    Owner: ${p.ownerName}`);
-      if (p.startDate || p.endDate) {
-        const dates = p.startDate && p.endDate
-          ? `${p.startDate} – ${p.endDate}`
-          : p.startDate ? `Start: ${p.startDate}` : `Due: ${p.endDate}`;
-        lines.push(`    Dates: ${dates}`);
+      const block: string[] = [
+        `  ${p.projectName}`,
+        ...(p.ownerName ? [`    Owner: ${p.ownerName}`] : []),
+        ...(p.startDate || p.endDate ? [(() => {
+          const dates = p.startDate && p.endDate
+            ? `${p.startDate} – ${p.endDate}`
+            : p.startDate ? `Start: ${p.startDate}` : `Due: ${p.endDate}`;
+          return `    Dates: ${dates}`;
+        })()] : []),
+        ...(this.sourceProjectUrl(report.sourcePlatform, p.projectId) ? [`    Link:  ${this.sourceProjectUrl(report.sourcePlatform, p.projectId)}`] : []),
+        `    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}  Total: ${total}`,
+        `    Users: ${p.users}  Fields: ${p.fields.length}${p.statusUpdates > 0 ? `  Status updates: ${p.statusUpdates}` : ''}`,
+        '',
+      ];
+
+      const blockBytes = Buffer.byteLength(block.join('\n'), 'utf8');
+      if (bytesSoFar + blockBytes > NOTES_BYTE_LIMIT) {
+        lines.push(`(${report.projects.length - i} more project(s) not shown — see attached report for full listing.)`);
+        lines.push('');
+        break;
       }
-      const url = this.sourceProjectUrl(report.sourcePlatform, p.projectId);
-      if (url) lines.push(`    Link:  ${url}`);
-      lines.push(`    Tasks: ${p.tasks}  Subtasks: ${p.subtasks}  Comments: ${p.comments}  Attachments: ${p.attachments}  Dependencies: ${p.dependencies}  Total: ${total}`);
-      lines.push(`    Users: ${p.users}  Fields: ${p.fields.length}${p.statusUpdates > 0 ? `  Status updates: ${p.statusUpdates}` : ''}`);
-      lines.push('');
+      lines.push(...block);
+      bytesSoFar += blockBytes;
     }
 
     if (report.projects.length > 1) {

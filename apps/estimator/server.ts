@@ -723,9 +723,10 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 15_000);
+  const flushRes = () => { if (typeof (res as unknown as { flush?: () => void }).flush === 'function') (res as unknown as { flush: () => void }).flush(); };
+  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); flushRes(); }, 15_000);
   const send = (event: string, data: unknown) => {
-    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* connection closed */ }
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); flushRes(); } catch { /* connection closed */ }
   };
   const finish = () => { clearInterval(keepalive); res.end(); };
 
