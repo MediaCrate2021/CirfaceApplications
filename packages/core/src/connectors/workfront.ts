@@ -39,6 +39,7 @@ interface WFProject {
   ID: string;
   name: string;
   description?: string;
+  portfolio?: { ID: string; name: string };
   status?: string;
   plannedStartDate?: string;
   plannedCompletionDate?: string;
@@ -83,6 +84,9 @@ interface WFNote {
   objID?: string;
   parentNoteID?: string | null;
   owner?: { name?: string };
+  // Inline sub-collection — populated when 'documents:ID,name,downloadURL' is requested.
+  // WF API may or may not support this on Note objects; treated as optional.
+  documents?: WFDocument[];
 }
 
 interface WFDocument {
@@ -247,7 +251,7 @@ export class WorkfrontConnector implements SourceConnector {
     const EXCLUDED_STATUSES = new Set(['CPL', 'DED']);
 
     const resp = await this.get<WFSearchResponse<WFProject>>('/proj/search', {
-      fields:    'ID,name,plannedStartDate,plannedCompletionDate,status',
+      fields:    'ID,name,plannedStartDate,plannedCompletionDate,status,portfolio:name',
       '$$LIMIT': '2000',
       '$$FIRST': '0',
     });
@@ -259,10 +263,11 @@ export class WorkfrontConnector implements SourceConnector {
       : raw.filter((p) => !p.status || !EXCLUDED_STATUSES.has(p.status));
 
     return filtered.map((p) => ({
-      id:        p.ID,
-      name:      p.name,
-      startDate: p.plannedStartDate?.slice(0, 10),
-      endDate:   p.plannedCompletionDate?.slice(0, 10),
+      id:            p.ID,
+      name:          p.name,
+      startDate:     p.plannedStartDate?.slice(0, 10),
+      endDate:       p.plannedCompletionDate?.slice(0, 10),
+      portfolioName: p.portfolio?.name,
     }));
   }
 
@@ -397,11 +402,15 @@ export class WorkfrontConnector implements SourceConnector {
     // We classify them afterwards by objID.
     const allNotes = await this.getAll<WFNote>('/note/search', {
       projectID: projectId,
-      fields:    'ID,noteText,entryDate,objID,parentNoteID,owner',
+      fields:    'ID,noteText,entryDate,objID,parentNoteID,owner,documents:ID,documents:name,documents:downloadURL',
     }).catch((err) => {
       logger.warn({ err }, 'workfront: could not fetch notes');
       return [] as WFNote[];
     });
+
+    // Detect whether WF returned inline documents on notes.
+    // Some API versions / plan tiers don't support sub-collections on Note objects.
+    const inlineDocsSupported = allNotes.some((n) => Array.isArray(n.documents));
 
     const taskIdSet = new Set(rawTasks.map((t) => t.ID));
 
@@ -439,25 +448,30 @@ export class WorkfrontConnector implements SourceConnector {
       return [] as WFDocument[];
     });
 
-    // Note-level documents often lack a projectID, so fetch them separately
-    // by note ID. projNotes is already a subset of allNotes so no dedup needed.
-    const allNoteIds = allNotes.map((n) => n.ID).filter(Boolean);
-
-    // Fetch note-level docs individually — WF doesn't reliably support multi-value
-    // objID filters, so we issue one request per note ID.
-    const noteDocs: WFDocument[] = (
-      await Promise.all(
-        allNoteIds.map((noteId) =>
-          this.getAll<WFDocument>('/document/search', {
-            objID:  noteId,
-            fields: 'ID,name,downloadURL,objID',
-          }).catch((err) => {
-            logger.warn({ err, noteId }, 'workfront: could not fetch docs for note');
-            return [] as WFDocument[];
-          }),
-        ),
-      )
-    ).flat();
+    // Note-level documents: prefer inline sub-collection (zero extra requests).
+    // Fall back to per-note fetches only when inline docs aren't supported by this WF instance.
+    let noteDocs: WFDocument[];
+    if (inlineDocsSupported) {
+      logger.debug({ projectId }, 'workfront: using inline note documents');
+      noteDocs = allNotes.flatMap((n) => n.documents ?? []);
+    } else {
+      // Per-note fetch fallback — one request per note that actually exists.
+      // WF doesn't reliably support multi-value objID filters so we fetch individually.
+      logger.debug({ projectId, noteCount: allNotes.length }, 'workfront: falling back to per-note document fetches');
+      noteDocs = (
+        await Promise.all(
+          allNotes.map((n) =>
+            this.getAll<WFDocument>('/document/search', {
+              objID:  n.ID,
+              fields: 'ID,name,downloadURL,objID',
+            }).catch((err) => {
+              logger.warn({ err, noteId: n.ID }, 'workfront: could not fetch docs for note');
+              return [] as WFDocument[];
+            }),
+          ),
+        )
+      ).flat();
+    }
 
     // Merge, deduplicating by ID (a note doc might also appear in projectDocs).
     const seenDocIds = new Set<string>();
@@ -493,6 +507,26 @@ export class WorkfrontConnector implements SourceConnector {
         logger.debug({ docId: doc.ID, objID: doc.objID }, 'workfront: doc with unrecognised objID — skipped');
       }
     }
+
+    // TEMP: count how many unrouted docs have an objID that matches a note ID we fetched.
+    // This tells us whether note-level docs are already captured by the project-scoped fetch
+    // and just need routing — or whether they're truly missing without per-note fetches.
+    const allNoteIdSet = new Set(allNotes.map((n) => n.ID));
+    const unroutedDocs = allDocs.filter((d) => {
+      if (!d.objID || !d.downloadURL) return false;
+      if (d.objID === projectId) return false;
+      if (projNoteIdSet.has(d.objID)) return false;
+      if (taskByNoteId.has(d.objID)) return false;
+      if (taskIdSet.has(d.objID)) return false;
+      return true;
+    });
+    const unroutedMatchingNotes = unroutedDocs.filter((d) => allNoteIdSet.has(d.objID!));
+    logger.info({
+      projectId,
+      unroutedTotal: unroutedDocs.length,
+      unroutedMatchingNoteIds: unroutedMatchingNotes.length,
+      unroutedOther: unroutedDocs.length - unroutedMatchingNotes.length,
+    }, 'workfront: TEMP unrouted doc analysis');
 
     logger.info({
       projectId,

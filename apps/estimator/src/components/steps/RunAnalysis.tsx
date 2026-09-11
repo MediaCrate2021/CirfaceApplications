@@ -36,58 +36,70 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
   const errorCount = useRef(0);
 
   useEffect(() => {
-    const params = new URLSearchParams({
-      projectIds: JSON.stringify(projects.map((p) => p.id)),
-      projectMeta: JSON.stringify(projects),
-    });
-    const es = new EventSource(`/api/analyze?${params}`);
+    let es: EventSource | undefined;
 
     function addLine(type: ProgressLine['type'], message: string) {
       setLines((prev) => [...prev, { type, message }]);
     }
 
-    es.addEventListener('info', (e) => {
-      errorCount.current = 0;
-      setReconnecting(false);
-      const data = JSON.parse(e.data) as { message: string; done?: number };
-      addLine('info', data.message);
-      if (data.done !== undefined) setDone(data.done);
-    });
+    function openStream() {
+      const stream = new EventSource('/api/analyze');
+      es = stream;
 
-    es.addEventListener('warning', (e) => {
-      const data = JSON.parse(e.data) as { message: string };
-      addLine('warning', data.message);
-    });
+      stream.addEventListener('info', (e) => {
+        errorCount.current = 0;
+        setReconnecting(false);
+        const data = JSON.parse(e.data) as { message: string; done?: number };
+        addLine('info', data.message);
+        if (data.done !== undefined) setDone(data.done);
+      });
 
-    es.addEventListener('error-msg', (e) => {
-      const data = JSON.parse(e.data) as { message: string };
-      addLine('error', data.message);
-      setError(data.message);
-      es.close();
-    });
+      stream.addEventListener('warning', (e) => {
+        const data = JSON.parse(e.data) as { message: string };
+        addLine('warning', data.message);
+      });
 
-    es.addEventListener('complete', (e) => {
-      es.close();
-      setDone(projectCount);
-      onComplete(JSON.parse(e.data) as AnalysisReport);
-    });
+      stream.addEventListener('error-msg', (e) => {
+        const data = JSON.parse(e.data) as { message: string };
+        addLine('error', data.message);
+        setError(data.message);
+        stream.close();
+      });
 
-    // SSE connection dropped (network blip, Railway proxy reset, etc.).
-    // Don't close — EventSource will reconnect automatically. The server handles
-    // reconnects gracefully: it either polls for the in-progress analysis or
-    // immediately delivers the cached report if the analysis already finished.
-    es.addEventListener('error', () => {
-      errorCount.current += 1;
-      if (errorCount.current >= 5) {
-        // Five consecutive drops with no successful event in between — give up.
-        es.close();
-        setError('Connection lost. Please go back and try again.');
-      } else {
-        setReconnecting(true);
-      }
-    });
+      stream.addEventListener('complete', (e) => {
+        stream.close();
+        setDone(projectCount);
+        onComplete(JSON.parse(e.data) as AnalysisReport);
+      });
 
-    return () => es.close();
+      // SSE connection dropped (network blip, Railway proxy reset, etc.).
+      // Don't close — EventSource will reconnect automatically. The server handles
+      // reconnects gracefully: it either polls for the in-progress analysis or
+      // immediately delivers the cached report if the analysis already finished.
+      stream.addEventListener('error', () => {
+        errorCount.current += 1;
+        if (errorCount.current >= 5) {
+          // Five consecutive drops with no successful event in between — give up.
+          stream.close();
+          setError('Connection lost. Please go back and try again.');
+        } else {
+          setReconnecting(true);
+        }
+      });
+    }
+
+    // POST project list to session first — EventSource is GET-only so large
+    // selections can't go in the URL without hitting the 431 header size limit.
+    fetch('/api/analyze/prepare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectIds: projects.map((p) => p.id), projectMeta: projects }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(`Prepare failed: ${r.status}`); })
+      .then(() => openStream())
+      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to start analysis'); });
+
+    return () => es?.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

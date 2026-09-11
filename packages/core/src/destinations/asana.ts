@@ -1409,9 +1409,10 @@ export class AsanaDestination {
     },
   ): Promise<string | null> {
     const tt = options.trackingToken;
-    const date = new Date().toLocaleDateString();
-    const projectNames = report.projects.map((p) => p.projectName).join(', ');
-    const taskName = `Analysis Report: ${projectNames} (${date})`;
+    const platform = platformDisplayName(report.sourcePlatform);
+    const count = report.projects.length;
+    const client = report.clientName ?? report.clientEmail ?? 'Unknown';
+    const taskName = `Analysis Report: ${platform} (${count}) — ${client}`;
 
     try {
       const taskBody: Record<string, unknown> = {

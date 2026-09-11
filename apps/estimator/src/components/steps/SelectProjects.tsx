@@ -3,8 +3,14 @@
 // Multi-select project/board picker with optional workspace filter.
 //-------------------------//
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SourcePlatform } from '@cirface/core/types';
+
+function PortfolioCheckbox({ allChecked, someChecked, onChange }: { allChecked: boolean; someChecked: boolean; onChange: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = someChecked; }, [someChecked]);
+  return <input type="checkbox" ref={ref} checked={allChecked} onChange={onChange} style={{ marginRight: '6px', flexShrink: 0 }} />;
+}
 
 interface SourceProject {
   id: string;
@@ -13,6 +19,7 @@ interface SourceProject {
   startDate?: string;
   endDate?: string;
   archived?: boolean;
+  portfolioName?: string;
 }
 
 interface Props {
@@ -22,6 +29,7 @@ interface Props {
 }
 
 const PLATFORM_LABELS: Record<SourcePlatform, string> = {
+  airtable: 'Airtable',
   asana: 'Asana',
   monday: 'Monday.com',
   smartsheet: 'Smartsheet',
@@ -31,6 +39,7 @@ const PLATFORM_LABELS: Record<SourcePlatform, string> = {
 };
 
 const PROJECT_NOUN: Record<SourcePlatform, string> = {
+  airtable: 'base',
   asana: 'project',
   monday: 'board',
   smartsheet: 'sheet',
@@ -51,6 +60,7 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
   const [projects, setProjects] = useState<SourceProject[]>([]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [expandedPortfolios, setExpandedPortfolios] = useState<Set<string>>(new Set());
 
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -273,24 +283,90 @@ export default function SelectProjects({ platform, onSelect, onBack }: Props) {
             )}
           </div>
 
-          <ul className="project-checklist-list">
-            {filtered.map((p) => (
-              <li key={p.id} className={`project-checklist-item ${checked.has(p.id) ? 'selected' : ''}`}>
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={checked.has(p.id)}
-                    onChange={() => toggle(p.id)}
-                  />
-                  <span>{p.name}</span>
-                  {p.archived && <span className="badge badge-warning" style={{ marginLeft: '6px' }}>Archived</span>}
-                  {p.ownerName && <span className="project-checklist-item-meta">{p.ownerName}</span>}
-                  {p.startDate && <span className="project-checklist-item-meta">{formatDate(p.startDate)}{p.endDate ? ` – ${formatDate(p.endDate)}` : ''}</span>}
-                  {!p.startDate && p.endDate && <span className="project-checklist-item-meta">Due {formatDate(p.endDate)}</span>}
-                </label>
-              </li>
-            ))}
-          </ul>
+          {platform === 'workfront' ? (() => {
+            const groups = new Map<string, SourceProject[]>();
+            for (const p of filtered) {
+              const key = p.portfolioName ?? '(No portfolio)';
+              if (!groups.has(key)) groups.set(key, []);
+              groups.get(key)!.push(p);
+            }
+            const sortedGroups = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+
+            return sortedGroups.map(([portfolio, items]) => {
+              const expanded = expandedPortfolios.has(portfolio);
+              const allGroupChecked = items.every((p) => checked.has(p.id));
+              const someGroupChecked = items.some((p) => checked.has(p.id)) && !allGroupChecked;
+
+              function togglePortfolio() {
+                setChecked((prev) => {
+                  const next = new Set(prev);
+                  if (allGroupChecked) {
+                    items.forEach((p) => next.delete(p.id));
+                  } else {
+                    items.forEach((p) => next.add(p.id));
+                  }
+                  return next;
+                });
+              }
+
+              function toggleCollapse() {
+                setExpandedPortfolios((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(portfolio)) next.delete(portfolio); else next.add(portfolio);
+                  return next;
+                });
+              }
+
+              return (
+                <div key={portfolio} style={{ marginBottom: '4px' }}>
+                  <div className="portfolio-tree-group">
+                    <PortfolioCheckbox
+                      allChecked={allGroupChecked}
+                      someChecked={someGroupChecked}
+                      onChange={togglePortfolio}
+                    />
+                    <button className="portfolio-tree-header" onClick={toggleCollapse}>
+                      <span className={`portfolio-tree-chevron ${expanded ? 'expanded' : ''}`}>▶</span>
+                      <span className="portfolio-tree-name">{portfolio}</span>
+                      <span className="portfolio-tree-count">{items.length}</span>
+                    </button>
+                  </div>
+                  {expanded && (
+                    <ul className="project-checklist-list portfolio-tree-children">
+                      {items.map((p) => (
+                        <li key={p.id} className={`project-checklist-item ${checked.has(p.id) ? 'selected' : ''}`}>
+                          <label className="checkbox-label">
+                            <input type="checkbox" checked={checked.has(p.id)} onChange={() => toggle(p.id)} />
+                            <span>{p.name}</span>
+                            {p.archived && <span className="badge badge-warning" style={{ marginLeft: '6px' }}>Archived</span>}
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            });
+          })() : (
+            <ul className="project-checklist-list">
+              {filtered.map((p) => (
+                <li key={p.id} className={`project-checklist-item ${checked.has(p.id) ? 'selected' : ''}`}>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(p.id)}
+                      onChange={() => toggle(p.id)}
+                    />
+                    <span>{p.name}</span>
+                    {p.archived && <span className="badge badge-warning" style={{ marginLeft: '6px' }}>Archived</span>}
+                    {p.ownerName && <span className="project-checklist-item-meta">{p.ownerName}</span>}
+                    {p.startDate && <span className="project-checklist-item-meta">{formatDate(p.startDate)}{p.endDate ? ` – ${formatDate(p.endDate)}` : ''}</span>}
+                    {!p.startDate && p.endDate && <span className="project-checklist-item-meta">Due {formatDate(p.endDate)}</span>}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

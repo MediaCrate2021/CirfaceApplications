@@ -61,6 +61,7 @@ declare module 'express-session' {
     sourceConfig?: { platform: SourcePlatform; token: string };
     lastAnalysisReport?: AnalysisReport;
     analysisInProgress?: boolean;
+    pendingAnalysis?: { projectIds: string[]; projectMeta: Array<{ id: string; name: string; ownerName?: string; startDate?: string; endDate?: string }> };
   }
 }
 
@@ -93,7 +94,7 @@ app.use(session({
     sameSite: 'lax',
   },
 }));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // Serve Vite build output in production; in dev Vite runs separately on 5174
 const distDir = path.join(__dirname, 'dist');
@@ -682,15 +683,38 @@ app.get('/api/source/projects', requireAuth, requireSourceConnected, async (req,
 // Analysis — streaming via SSE
 // ---------------------------------------------------------------------------
 
+// Store project selection in session before opening the SSE stream.
+// EventSource only supports GET so large project lists can't go in the URL.
+app.post('/api/analyze/prepare', requireAuth, requireSourceConnected, (req, res) => {
+  const { projectIds, projectMeta } = req.body as {
+    projectIds?: string[];
+    projectMeta?: Array<{ id: string; name: string; ownerName?: string; startDate?: string; endDate?: string }>;
+  };
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return res.status(400).json({ error: 'projectIds must be a non-empty array' });
+  }
+  req.session.pendingAnalysis = { projectIds, projectMeta: projectMeta ?? [] };
+  req.session.save((err) => {
+    if (err) logger.error({ err }, 'session save failed on analyze prepare');
+    res.json({ ok: true, count: projectIds.length });
+  });
+});
+
 app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) => {
+  // Prefer session-stored project list (set via POST /api/analyze/prepare).
+  // Fall back to query params for backwards compatibility with reconnect requests.
   const { projectIds: projectIdsRaw, projectMeta: projectMetaRaw } = req.query as { projectIds?: string; projectMeta?: string };
 
   let projectIds: string[];
-  try {
-    projectIds = JSON.parse(projectIdsRaw ?? '[]') as string[];
-    if (!Array.isArray(projectIds) || projectIds.length === 0) throw new Error('empty');
-  } catch {
-    return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
+  if (req.session.pendingAnalysis?.projectIds?.length) {
+    projectIds = req.session.pendingAnalysis.projectIds;
+  } else {
+    try {
+      projectIds = JSON.parse(projectIdsRaw ?? '[]') as string[];
+      if (!Array.isArray(projectIds) || projectIds.length === 0) throw new Error('empty');
+    } catch {
+      return res.status(400).json({ error: 'projectIds must be a non-empty JSON array' });
+    }
   }
 
   // Switch to SSE before any early-return paths so the client always gets a stream.
@@ -757,9 +781,14 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
   type ProjectMeta = { id: string; name: string; ownerName?: string; startDate?: string; endDate?: string };
   let projectMetaMap = new Map<string, ProjectMeta>();
   try {
-    const meta = JSON.parse(projectMetaRaw ?? '[]') as ProjectMeta[];
+    const meta = req.session.pendingAnalysis?.projectMeta?.length
+      ? req.session.pendingAnalysis.projectMeta
+      : JSON.parse(projectMetaRaw ?? '[]') as ProjectMeta[];
     projectMetaMap = new Map(meta.map((m) => [m.id, m]));
   } catch { /* non-fatal — metadata is optional */ }
+
+  // Clear pending analysis from session — it's now in flight.
+  req.session.pendingAnalysis = undefined;
 
   // ── Normal path: start a new analysis ──
   req.session.lastAnalysisReport = undefined; // clear any stale report from a previous run
@@ -779,10 +808,13 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
     const projects: AnalysisReport['projects'] = [];
     const failedProjects: NonNullable<AnalysisReport['failedProjects']> = [];
 
-    for (let i = 0; i < projectIds.length; i++) {
-      const projectId = projectIds[i];
+    // Analyse projects in parallel, capped at CONCURRENCY to avoid overwhelming the source API.
+    const CONCURRENCY = 3;
+    let completedCount = 0;
+
+    const analyseOne = async (projectId: string) => {
       const metaName = projectMetaMap.get(projectId)?.name ?? projectId;
-      send('info', { message: `Fetching project ${i + 1} of ${projectIds.length}…`, done: i });
+      send('info', { message: `Fetching "${metaName}"… (${completedCount} of ${projectIds.length} done)`, done: completedCount });
 
       try {
         // Shallow mode: subtasks are counted from their GID list without recursing
@@ -819,16 +851,23 @@ app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) =>
           ...(meta?.endDate   ? { endDate:   meta.endDate   } : {}),
         });
 
+        completedCount++;
         send('info', {
-          message: `Analyzed "${project.name}" — ${counts.tasks} tasks, ${fields.length} fields`,
-          done: i + 1,
+          message: `Analyzed "${project.name}" — ${counts.tasks} tasks, ${fields.length} fields (${completedCount} of ${projectIds.length} done)`,
+          done: completedCount,
         });
       } catch (projectErr) {
         const msg = projectErr instanceof Error ? projectErr.message : String(projectErr);
         logger.error({ err: projectErr, projectId }, 'project analysis failed');
         failedProjects.push({ id: projectId, name: metaName, error: msg });
+        completedCount++;
         send('warning', { message: `Could not analyze "${metaName}": ${msg}` });
       }
+    };
+
+    // Run with bounded concurrency: process CONCURRENCY projects at a time.
+    for (let i = 0; i < projectIds.length; i += CONCURRENCY) {
+      await Promise.all(projectIds.slice(i, i + CONCURRENCY).map(analyseOne));
     }
 
     // If every project failed, there is nothing to report — surface as a hard error.

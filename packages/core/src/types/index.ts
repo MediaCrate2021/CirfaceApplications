@@ -337,6 +337,8 @@ export interface ProjectListItem {
   endDate?: string;
   /** True when the project is archived in the source platform. */
   archived?: boolean;
+  /** Portfolio or container name, if available from the source platform. */
+  portfolioName?: string;
 }
 
 export interface AsanaProjectListItem {
