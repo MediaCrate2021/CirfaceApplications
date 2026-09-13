@@ -33,41 +33,38 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
-  // Set when the SSE connection drops mid-run (proxy timeout, etc.).
-  // The analysis keeps running on the server; user can refresh to reconnect.
   const [backgroundRunning, setBackgroundRunning] = useState(false);
+  // Incrementing this triggers the effect to re-run, reconnecting the stream.
+  const [streamAttempt, setStreamAttempt] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
-  const openStreamRef = useRef<(() => void) | null>(null);
-  // True once we've received at least one progress event — distinguishes a
-  // mid-run connection drop (show Refresh) from a failed initial connection (show error).
-  const analysisStarted = useRef(false);
 
   useEffect(() => {
     let es: EventSource | undefined;
+    // Track whether we've received any progress events this attempt.
+    // Used to distinguish a mid-run drop (show Refresh) from a failed
+    // initial connection (show error).
+    let started = false;
 
     function addLine(type: ProgressLine['type'], message: string) {
       setLines((prev) => {
         const next = [...prev, { type, message }];
-        // Keep only the tail so the DOM stays small.
         return next.length > MAX_VISIBLE_LINES ? next.slice(next.length - MAX_VISIBLE_LINES) : next;
       });
     }
 
     function openStream() {
-      setBackgroundRunning(false);
-      setError('');
       const stream = new EventSource('/api/analyze');
       es = stream;
 
       stream.addEventListener('info', (e) => {
-        analysisStarted.current = true;
+        started = true;
         const data = JSON.parse(e.data) as { message: string; done?: number };
         addLine('info', data.message);
         if (data.done !== undefined) setDone(data.done);
       });
 
       stream.addEventListener('warning', (e) => {
-        analysisStarted.current = true;
+        started = true;
         const data = JSON.parse(e.data) as { message: string };
         addLine('warning', data.message);
       });
@@ -85,12 +82,11 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
         onComplete(JSON.parse(e.data) as AnalysisReport);
       });
 
-      // Connection dropped. If analysis had already started, the server is still
-      // running it — show Refresh so the user can reconnect. If nothing had
-      // started yet, it's a connection failure — show an error instead.
+      // Connection dropped. If analysis had started, it's still running on the
+      // server — show Refresh. Otherwise it's a connection failure — show error.
       stream.addEventListener('error', () => {
         stream.close();
-        if (analysisStarted.current) {
+        if (started) {
           setBackgroundRunning(true);
         } else {
           setError('Could not connect to the server. Please go back and try again.');
@@ -98,23 +94,28 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
       });
     }
 
-    // Expose openStream so the Refresh button can call it.
-    openStreamRef.current = openStream;
+    setBackgroundRunning(false);
+    setError('');
 
-    // POST project list to session first — EventSource is GET-only so large
-    // selections can't go in the URL without hitting the 431 header size limit.
-    fetch('/api/analyze/prepare', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectIds: projects.map((p) => p.id), projectMeta: projects }),
-    })
-      .then((r) => { if (!r.ok) throw new Error(`Prepare failed: ${r.status}`); })
-      .then(() => openStream())
-      .catch((fetchErr) => { setError(fetchErr instanceof Error ? fetchErr.message : 'Failed to start analysis'); });
+    if (streamAttempt === 0) {
+      // First run: POST project list to session first (EventSource is GET-only).
+      fetch('/api/analyze/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectIds: projects.map((p) => p.id), projectMeta: projects }),
+      })
+        .then((r) => { if (!r.ok) throw new Error(`Prepare failed: ${r.status}`); })
+        .then(() => openStream())
+        .catch((fetchErr) => { setError(fetchErr instanceof Error ? fetchErr.message : 'Failed to start analysis'); });
+    } else {
+      // Reconnect: project list is already in the session from prepare.
+      // The server handles reconnects via Case A (in-progress poll) or Case B (cached report).
+      openStream();
+    }
 
     return () => es?.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamAttempt]);
 
   // Auto-scroll log
   useEffect(() => {
@@ -146,7 +147,7 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
           <div className="step-actions" style={{ marginTop: '8px' }}>
             <button
               className="btn btn-primary"
-              onClick={() => openStreamRef.current?.()}
+              onClick={() => setStreamAttempt((n) => n + 1)}
             >
               Refresh
             </button>
