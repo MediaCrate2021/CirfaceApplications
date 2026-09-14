@@ -703,6 +703,13 @@ app.post('/api/analyze/prepare', requireAuth, requireSourceConnected, (req, res)
   });
 });
 
+app.get('/api/analyze/status', requireAuth, (req, res) => {
+  res.json({
+    inProgress: req.session.analysisInProgress ?? false,
+    hasReport:  !!req.session.lastAnalysisReport,
+  });
+});
+
 app.get('/api/analyze', requireAuth, requireSourceConnected, async (req, res) => {
   // Prefer session-stored project list (set via POST /api/analyze/prepare).
   // Fall back to query params for backwards compatibility with reconnect requests.

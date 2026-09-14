@@ -34,15 +34,14 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
   const [backgroundRunning, setBackgroundRunning] = useState(false);
+  // 'checking' while polling, 'running' if server confirms in-progress, 'done' if report is ready.
+  const [serverStatus, setServerStatus] = useState<'checking' | 'running' | 'done' | null>(null);
   // Incrementing this triggers the effect to re-run, reconnecting the stream.
   const [streamAttempt, setStreamAttempt] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let es: EventSource | undefined;
-    // Track whether we've received any progress events this attempt.
-    // Used to distinguish a mid-run drop (show Refresh) from a failed
-    // initial connection (show error).
     let started = false;
 
     function addLine(type: ProgressLine['type'], message: string) {
@@ -82,19 +81,39 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
         onComplete(JSON.parse(e.data) as AnalysisReport);
       });
 
-      // Connection dropped. If analysis had started, it's still running on the
-      // server — show Refresh. Otherwise it's a connection failure — show error.
       stream.addEventListener('error', () => {
         stream.close();
         if (started) {
+          // Mid-run drop — analysis is still running on the server.
           setBackgroundRunning(true);
         } else {
-          setError('Could not connect to the server. Please go back and try again.');
+          // Never received any events. Check the server to distinguish
+          // "analysis still running but SSE failed" from "real error".
+          setServerStatus('checking');
+          fetch('/api/analyze/status')
+            .then((r) => r.json())
+            .then((data: { inProgress: boolean; hasReport: boolean }) => {
+              if (data.inProgress) {
+                setServerStatus('running');
+                setBackgroundRunning(true);
+              } else if (data.hasReport) {
+                setServerStatus('done');
+                setBackgroundRunning(true);
+              } else {
+                setServerStatus(null);
+                setError('Could not connect to the server. Please go back and try again.');
+              }
+            })
+            .catch(() => {
+              setServerStatus(null);
+              setError('Could not connect to the server. Please go back and try again.');
+            });
         }
       });
     }
 
     setBackgroundRunning(false);
+    setServerStatus(null);
     setError('');
 
     if (streamAttempt === 0) {
@@ -126,6 +145,11 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
 
   const progress = projectCount > 0 ? Math.round((done / projectCount) * 100) : 0;
 
+  const backgroundMessage =
+    serverStatus === 'checking' ? 'Checking server status…' :
+    serverStatus === 'done'     ? 'Analysis complete — click Refresh to load the results.' :
+                                  'The analysis is still running in the background.';
+
   return (
     <div className="step-panel">
       <h2 className="step-title">Analyzing Projects</h2>
@@ -143,15 +167,17 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
 
       {backgroundRunning && (
         <div className="step-notice" style={{ marginTop: '12px' }}>
-          <p>The analysis is still running in the background.</p>
-          <div className="step-actions" style={{ marginTop: '8px' }}>
-            <button
-              className="btn btn-primary"
-              onClick={() => setStreamAttempt((n) => n + 1)}
-            >
-              Refresh
-            </button>
-          </div>
+          <p>{backgroundMessage}</p>
+          {serverStatus !== 'checking' && (
+            <div className="step-actions" style={{ marginTop: '8px' }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => setStreamAttempt((n) => n + 1)}
+              >
+                Refresh
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -173,7 +199,7 @@ export default function RunAnalysis({ projects, projectCount, onComplete, onBack
         {lines.map((line, i) => (
           <div key={i} className={`run-log-line run-log-${line.type}`}>{line.message}</div>
         ))}
-        {lines.length === 0 && (
+        {lines.length === 0 && !backgroundRunning && (
           <div className="run-log-line run-log-info">Starting analysis…</div>
         )}
       </div>
