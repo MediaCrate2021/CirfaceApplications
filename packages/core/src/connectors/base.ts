@@ -78,4 +78,10 @@ export interface SourceConnector {
    * Returns the URL unchanged if no authentication is needed.
    */
   authenticateAttachmentUrl?(url: string): string;
+
+  /**
+   * Extra fetch options (e.g. Cookie headers) to merge into every attachment download request.
+   * Used by connectors whose binary download endpoints require session auth beyond a URL param.
+   */
+  attachmentFetchOptions?: RequestInit;
 }

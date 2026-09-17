@@ -8,6 +8,8 @@ interface ProjectSummary {
   comments: number;
   attachments: number;
   dependencies: number;
+  projectComments?: number;
+  projectAttachments?: number;
 }
 
 interface SubitemFieldWarning {
@@ -145,6 +147,8 @@ export default function ReviewConfirm({ state, onConfirm, onShellConfirm, onBack
               <ReviewRow label="Subtasks" value={String(summary.subtasks)} />
               <ReviewRow label="Dependencies" value={String(summary.dependencies)} />
               <ReviewRow label="Comments" value={String(summary.comments)} />
+              {summary.projectComments ? <ReviewRow label="Project-level comments" value={String(summary.projectComments)} /> : null}
+              {summary.projectAttachments ? <ReviewRow label="Project-level documents" value={String(summary.projectAttachments)} /> : null}
               <ReviewRow
                 label="Attachments"
                 value={state.skipAttachments ? `${summary.attachments} (will be skipped)` : String(summary.attachments)}

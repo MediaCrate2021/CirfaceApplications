@@ -81,6 +81,11 @@ export interface WriteOptions {
    */
   authenticateAttachmentUrl?: (url: string) => string;
   /**
+   * Extra fetch options merged into every attachment download request.
+   * Used when binary downloads require session cookies beyond a URL param (e.g. Workfront + Adobe IMS).
+   */
+  attachmentFetchOptions?: RequestInit;
+  /**
    * Maps subitem-board column IDs → parent-board column IDs for fields that share the same name.
    * Used by migrateSubtask to resolve custom fields when the subitem column ID differs from the
    * parent board column ID (common in Monday — subitems live on their own sub-board).
@@ -319,7 +324,8 @@ export class AsanaDestination {
       };
       if (options.destTeamGid) newProjectPayload.team = options.destTeamGid;
       // Carry over project-level details when available (populated for Asana source projects)
-      if (project.description)    newProjectPayload.notes            = project.description;
+      // Strip HTML from description — Asana notes is plain text and some sources store HTML.
+      if (project.description)    newProjectPayload.notes            = this.htmlToText(project.description);
       if (project.color)          newProjectPayload.color            = project.color;
       if (project.layout)         newProjectPayload.default_view     = project.layout;
       if (project.privacySetting) newProjectPayload.privacy_setting  = project.privacySetting;
@@ -506,7 +512,7 @@ export class AsanaDestination {
       const task = project.tasks[i];
       emit({ type: 'task', message: `Migrating task: ${task.name}`, done: i + 1, total });
 
-      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, options.authenticateAttachmentUrl, fieldDisplayMap, options.skipAttachments, options.itemCreateMetadata, options.sourcePlatform, mappedSourceFieldIds);
+      const item = await this.migrateTask(task, projectGid, project.id, sectionGidMap, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, nativeFollowersSourceId, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, options.subitemFieldIdRemap ?? {}, taskGidMap, report, warn, options.refreshAttachmentUrl, options.authenticateAttachmentUrl, fieldDisplayMap, options.skipAttachments, options.itemCreateMetadata, options.sourcePlatform, mappedSourceFieldIds, options.attachmentFetchOptions);
       report.items.push(item);
 
       if (options.itemCreateMetadata && (task.createdAt || task.createdBy)) {
@@ -705,6 +711,7 @@ export class AsanaDestination {
     itemCreateMetadata?: boolean,
     sourcePlatform?: string,
     mappedSourceFieldIds?: Set<string>,
+    attachmentFetchOptions?: RequestInit,
   ): Promise<MigrationReportItem> {
     // For Smartsheet tasks, include the row number in error/warning report entries so the
     // source row is easy to locate. The actual task.name (Asana task name) is unchanged.
@@ -768,10 +775,10 @@ export class AsanaDestination {
           : (task.customFields[nativeDueOnSourceId] as string | null | undefined);
         if (typeof v === 'string' && v) nativeDueOn = v;
       }
-      let nativeNotes: string | undefined = task.description;
+      let nativeNotes: string | undefined = task.description ? this.htmlToText(task.description) : undefined;
       if (nativeNotesSourceId) {
         const v = task.customFields[nativeNotesSourceId];
-        if (typeof v === 'string' && v) nativeNotes = v;
+        if (typeof v === 'string' && v) nativeNotes = this.htmlToText(v);
       }
 
       const payload: Record<string, unknown> = {
@@ -853,7 +860,7 @@ export class AsanaDestination {
 
       // Subtasks
       for (const subtask of task.subtasks) {
-        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform, mappedSourceFieldIds);
+        await this.migrateSubtask(subtask, created.gid, projectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform, mappedSourceFieldIds, attachmentFetchOptions);
       }
 
       // Comments
@@ -875,7 +882,7 @@ export class AsanaDestination {
       if (!skipAttachments) {
         for (const attachment of task.attachments) {
           try {
-            await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
+            await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl, attachmentFetchOptions);
             report.migratedAttachments++;
             if (itemCreateMetadata) {
               await this.postAttachmentMetadataComment(created.gid, attachment, sourcePlatform ?? '');
@@ -967,6 +974,7 @@ export class AsanaDestination {
     itemCreateMetadata?: boolean,
     sourcePlatform?: string,
     mappedSourceFieldIds?: Set<string>,
+    attachmentFetchOptions?: RequestInit,
   ): Promise<void> {
     // For Smartsheet subtasks, include the row number in error/warning report entries.
     const ssRow = subtask.customFields['__smartsheet_row__'];
@@ -1042,10 +1050,10 @@ export class AsanaDestination {
           : (subtask.customFields[nativeDueOnSourceId] as string | null | undefined);
         if (typeof v === 'string' && v) nativeDueOn = v;
       }
-      let nativeNotes: string | undefined = subtask.description;
+      let nativeNotes: string | undefined = subtask.description ? this.htmlToText(subtask.description) : undefined;
       if (nativeNotesSourceId) {
         const v = subtask.customFields[nativeNotesSourceId];
-        if (typeof v === 'string' && v) nativeNotes = v;
+        if (typeof v === 'string' && v) nativeNotes = this.htmlToText(v);
       }
 
       const payload: Record<string, unknown> = {
@@ -1137,7 +1145,7 @@ export class AsanaDestination {
       if (!skipAttachments) {
         for (const attachment of subtask.attachments) {
           try {
-            await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl);
+            await this.downloadAndAttach(created.gid, attachment, refreshAttachmentUrl, authenticateAttachmentUrl, attachmentFetchOptions);
             report.migratedAttachments++;
             if (itemCreateMetadata) {
               await this.postAttachmentMetadataComment(created.gid, attachment, sourcePlatform ?? '');
@@ -1158,7 +1166,7 @@ export class AsanaDestination {
 
       // Recurse into children — Asana supports nested subtasks at arbitrary depth.
       for (const child of subtask.subtasks) {
-        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform, mappedSourceFieldIds);
+        await this.migrateSubtask(child, created.gid, destProjectGid, sourceBoardId, sourceIdFieldGid, nativeDueOnSourceId, anyDueMapped, nativeNotesSourceId, nativeAssigneeSourceId, assigneeOmitted, userGidMap, fieldGidMap, enumOptionMap, fieldTypeMap, subitemFieldIdRemap, taskGidMap, report, warn, refreshAttachmentUrl, authenticateAttachmentUrl, fieldDisplayMap, skipAttachments, itemCreateMetadata, sourcePlatform, mappedSourceFieldIds, attachmentFetchOptions);
       }
     } catch (err) {
       const msg = (err as Error).message;
@@ -1772,6 +1780,7 @@ export class AsanaDestination {
     attachment: NormalisedAttachment,
     refreshAttachmentUrl?: (assetId: string) => Promise<string | null>,
     authenticateAttachmentUrl?: (url: string) => string,
+    attachmentFetchOptions?: RequestInit,
   ): Promise<void> {
     const MAX_ATTEMPTS = 3;
     let lastErr: unknown;
@@ -1790,7 +1799,8 @@ export class AsanaDestination {
     let currentUrl = authenticateAttachmentUrl ? authenticateAttachmentUrl(rawUrl) : rawUrl;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const dlRes = await fetch(currentUrl, { signal: AbortSignal.timeout(30_000) });
+        logger.debug({ attachmentName: attachment.name, url: currentUrl }, 'downloading attachment');
+        const dlRes = await fetch(currentUrl, { ...attachmentFetchOptions, signal: AbortSignal.timeout(30_000) });
         if (dlRes.status === 403 && refreshAttachmentUrl && attempt === 1) {
           // URL expired between resolution and download — fetch another fresh one and retry
           const freshUrl = await refreshAttachmentUrl(attachment.id);
@@ -1801,6 +1811,13 @@ export class AsanaDestination {
           }
         }
         if (!dlRes.ok) throw new Error(`Download failed (${dlRes.status}): ${currentUrl}`);
+
+        // Guard against auth-redirect responses that return 200 with an HTML login page
+        // (e.g. Adobe IMS on Workfront). Treat any text/html response as a download failure.
+        const contentType = dlRes.headers.get('content-type') ?? '';
+        if (contentType.includes('text/html')) {
+          throw new Error(`Download returned HTML instead of file content (auth redirect?): ${attachment.name}`);
+        }
 
         // Asana's max attachment size is 100 MB. We also need to guard against large files
         // that would buffer entirely into memory via arrayBuffer() below and OOM-kill the

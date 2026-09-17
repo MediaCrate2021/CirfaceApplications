@@ -12,50 +12,24 @@ interface Props {
   onComplete: (report: AnalysisReport) => void;
 }
 
+// Only render the last N lines — keeps the DOM small even for large batches.
+const MAX_VISIBLE_LINES = 150;
+
 export default function RunAnalysis({ state, onComplete }: Props) {
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [done, setDone] = useState(0);
   const [total] = useState(state.analyzeProjectIds.length);
   const [error, setError] = useState('');
+  const [disconnected, setDisconnected] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let es: EventSource | undefined;
 
     function addLine(type: ProgressLine['type'], message: string) {
-      setLines((prev) => [...prev, { type, message }]);
-    }
-
-    function openStream() {
-      const stream = new EventSource('/api/analyze');
-      es = stream;
-
-      stream.addEventListener('info', (e) => {
-        const data = JSON.parse(e.data) as { message: string; done?: number };
-        addLine('info', data.message);
-        if (data.done !== undefined) setDone(data.done);
-      });
-
-      stream.addEventListener('warning', (e) => {
-        const data = JSON.parse(e.data) as { message: string };
-        addLine('warning', data.message);
-      });
-
-      stream.addEventListener('error-msg', (e) => {
-        const data = JSON.parse(e.data) as { message: string };
-        addLine('error', data.message);
-      });
-
-      stream.addEventListener('complete', (e) => {
-        stream.close();
-        const report = JSON.parse(e.data) as AnalysisReport;
-        setDone(total);
-        onComplete(report);
-      });
-
-      stream.addEventListener('error', () => {
-        stream.close();
-        setError('Connection to server lost. Please try again.');
+      setLines((prev) => {
+        const next = [...prev, { type, message }];
+        return next.length > MAX_VISIBLE_LINES ? next.slice(next.length - MAX_VISIBLE_LINES) : next;
       });
     }
 
@@ -69,8 +43,49 @@ export default function RunAnalysis({ state, onComplete }: Props) {
       }),
     })
       .then((r) => { if (!r.ok) throw new Error(`Prepare failed: ${r.status}`); })
-      .then(() => openStream())
-      .catch((err) => { setError(err instanceof Error ? err.message : 'Failed to start analysis'); });
+      .then(() => {
+        const stream = new EventSource('/api/analyze');
+        es = stream;
+
+        stream.addEventListener('info', (e) => {
+          const data = JSON.parse(e.data) as { message: string; done?: number };
+          addLine('info', data.message);
+          if (data.done !== undefined) setDone(data.done);
+        });
+
+        stream.addEventListener('warning', (e) => {
+          const data = JSON.parse(e.data) as { message: string };
+          addLine('warning', data.message);
+        });
+
+        stream.addEventListener('error-msg', (e) => {
+          const data = JSON.parse(e.data) as { message: string };
+          addLine('error', data.message);
+          setError(data.message);
+          stream.close();
+        });
+
+        stream.addEventListener('complete', (e) => {
+          stream.close();
+          setDone(total);
+          onComplete(JSON.parse(e.data) as AnalysisReport);
+        });
+
+        stream.addEventListener('error', () => {
+          stream.close();
+          fetch('/api/analyze/status')
+            .then((r) => r.json())
+            .then((data: { inProgress: boolean; hasReport: boolean }) => {
+              if (data.inProgress || data.hasReport) {
+                setDisconnected(true);
+              } else {
+                setError('Connection lost. Please go back and try again.');
+              }
+            })
+            .catch(() => setError('Connection lost. Please go back and try again.'));
+        });
+      })
+      .catch((fetchErr) => setError(fetchErr instanceof Error ? fetchErr.message : 'Failed to start analysis'));
 
     return () => es?.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,15 +114,31 @@ export default function RunAnalysis({ state, onComplete }: Props) {
         <span className="progress-label">{done} / {total} projects</span>
       </div>
 
+      {disconnected && (
+        <div className="step-notice" style={{ marginTop: '12px' }}>
+          <p>
+            The connection timed out, but your analysis is still running in the background.
+            Results will be emailed to you when complete.
+          </p>
+        </div>
+      )}
+
       {error && <p className="error-text" style={{ marginTop: '12px' }}>{error}</p>}
 
       <div className="run-log" ref={logRef}>
+        {lines.length === MAX_VISIBLE_LINES && (
+          <div className="run-log-line run-log-info" style={{ color: 'var(--color-muted)', fontStyle: 'italic' }}>
+            Earlier entries not shown
+          </div>
+        )}
         {lines.map((line, i) => (
           <div key={i} className={`run-log-line run-log-${line.type}`}>
             {line.message}
           </div>
         ))}
-        {lines.length === 0 && <div className="run-log-line run-log-info">Starting analysis…</div>}
+        {lines.length === 0 && !disconnected && (
+          <div className="run-log-line run-log-info">Starting analysis…</div>
+        )}
       </div>
     </div>
   );

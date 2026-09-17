@@ -16,6 +16,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
   // WorkFront uses two separate fields combined as "apiKey:domain"
   const [wfApiKey, setWfApiKey] = useState('');
   const [wfDomain, setWfDomain] = useState('');
+  const [wfAuthToken, setWfAuthToken] = useState('');
   const [destToken, setDestToken] = useState('');
   const [sourceLoading, setSourceLoading] = useState(false);
   const [destLoading, setDestLoading] = useState(false);
@@ -33,7 +34,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
       const res = await fetch('/api/source/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: sourcePlatform, token: combinedToken }),
+        body: JSON.stringify({ platform: sourcePlatform, token: combinedToken, wfAuthToken: wfAuthToken.trim() || undefined }),
       });
       const data = await res.json() as { ok?: boolean; workspaceName?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? 'Connection failed');
@@ -117,7 +118,7 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                 <select
                   id="source-platform"
                   value={sourcePlatform}
-                  onChange={(e) => { setSourcePlatform(e.target.value as SourcePlatform); setSourceToken(''); setWfApiKey(''); setWfDomain(''); setSourceError(''); }}
+                  onChange={(e) => { setSourcePlatform(e.target.value as SourcePlatform); setSourceToken(''); setWfApiKey(''); setWfDomain(''); setWfAuthToken(''); setSourceError(''); }}
                 >
                   <option value="airtable">Airtable</option>
                   <option value="asana">Asana</option>
@@ -166,6 +167,19 @@ export default function ConnectSources({ state, onModeChange, onSourceConnected,
                       autoComplete="off"
                     />
                     <p className="field-hint">Personal API key: your profile menu → Profile → More (⋯) → Edit → API tab → Generate. System key (admin only): Setup → System → Customer Info.</p>
+                  </div>
+                  <div className="field-group">
+                    <label htmlFor="wf-auth-token">Auth token <span className="field-hint" style={{ fontWeight: 'normal' }}>(required for file attachments)</span></label>
+                    <textarea
+                      id="wf-auth-token"
+                      rows={3}
+                      placeholder="Paste the value of the wf-auth cookie from your browser"
+                      value={wfAuthToken}
+                      onChange={(e) => { setWfAuthToken(e.target.value); setSourceError(''); }}
+                      autoComplete="off"
+                      style={{ fontFamily: 'monospace', fontSize: '11px', resize: 'vertical' }}
+                    />
+                    <p className="field-hint">In Edge/Chrome: DevTools → Network tab → any WF request → Request Headers → copy the <code>wf-auth</code> cookie value. Valid for ~20 hours.</p>
                   </div>
                 </>
               ) : (

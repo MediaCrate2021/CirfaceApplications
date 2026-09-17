@@ -8,11 +8,13 @@
 // Base URL: https://{domain}.my.workfront.com/attask/api/v18.0
 //
 // Open questions (fill in before production):
-//   1. Do document downloadURLs require apiKey appended for auth?
-//      If yes: authenticateAttachmentUrl() appends ?apiKey={key}
-//   2. Confirm task completion status value is 'CPL' — check with client.
-//   3. Confirm which project statuses to include vs. consider "archived".
-//   4. Custom form/parameter field API path — getProjectFields() is stubbed.
+//   1. Confirm task completion status value is 'CPL' — check with client.
+//   2. Confirm which project statuses to include vs. consider "archived".
+//   3. Custom form/parameter field API path — getProjectFields() is stubbed.
+//
+// Document downloads:
+//   Binary downloads require the {domain}.my.workfront.adobe.com domain (not .workfront.com).
+//   apiKey auth works on /internal/document/download with both versionID and ID params.
 //
 // Disclaimer: This code was created with the help of Claude.AI
 // This code is part of Cirface Migration Tool
@@ -89,9 +91,9 @@ interface WFNote {
 interface WFDocument {
   ID: string;
   name?: string;
-  downloadURL?: string;
   objID?: string;
-  // entryDate, fileExtension, contentType, owner not supported by API v18.0
+  currentVersionID?: string;
+  currentVersion?: { ext?: string };
 }
 
 interface WFParameter {
@@ -140,8 +142,9 @@ export class WorkfrontConnector implements SourceConnector {
   private readonly domain: string;
   private readonly baseUrl: string;
   private readonly origin: string;
+  readonly attachmentFetchOptions: RequestInit | undefined;
 
-  constructor(credential: string) {
+  constructor(credential: string, authToken?: string) {
     const colon = credential.indexOf(':');
     if (colon === -1) {
       throw new Error('Workfront credential must be formatted as "apiKey:domain"');
@@ -153,7 +156,14 @@ export class WorkfrontConnector implements SourceConnector {
     this.domain = WorkfrontConnector.normalizeDomain(rawDomain);
     this.origin  = `https://${this.domain}.my.workfront.com`;
     this.baseUrl = `${this.origin}/attask/api/v18.0`;
-    logger.debug({ domain: this.domain, origin: this.origin }, 'workfront: connector initialized');
+    // WF binary downloads on IMS-enabled instances require a wf-auth session cookie.
+    // Accept the token with or without the "wf-auth=" prefix — strip it if present.
+    const rawToken = authToken?.trim() ?? '';
+    const tokenValue = rawToken.startsWith('wf-auth=') ? rawToken.slice('wf-auth='.length) : rawToken;
+    this.attachmentFetchOptions = tokenValue
+      ? { headers: { Cookie: `wf-auth=${tokenValue}` } }
+      : undefined;
+    logger.debug({ domain: this.domain, origin: this.origin, hasAuthToken: !!authToken }, 'workfront: connector initialized');
   }
 
   /** Extract just the subdomain from whatever the user pasted. */
@@ -167,10 +177,6 @@ export class WorkfrontConnector implements SourceConnector {
     return domain.trim();
   }
 
-  /** Resolve a Workfront document URL — relative paths get the instance origin prepended. */
-  private resolveDocUrl(url: string): string {
-    return url.startsWith('/') ? `${this.origin}${url}` : url;
-  }
 
   private buildUrl(path: string, params: Record<string, string> = {}): string {
     const allParams = { apiKey: this.apiKey, ...params };
@@ -393,10 +399,10 @@ export class WorkfrontConnector implements SourceConnector {
     // Notes are fetched first so we have note IDs before routing documents.
     // Fetch ALL notes for the project in one pass (no noteObjCode filter).
     // WF returns notes for tasks, subtasks, and the project itself.
-    // We classify them afterwards by objID.
+    // noteObjCode tells us what type of object the note is attached to (PROJ, TASK, etc.).
     const allNotes = await this.getAll<WFNote>('/note/search', {
       projectID: projectId,
-      fields:    'ID,noteText,entryDate,objID,parentNoteID,owner',
+      fields:    'ID,noteText,entryDate,objID,noteObjCode,parentNoteID,owner',
     }).catch((err) => {
       logger.warn({ err }, 'workfront: could not fetch notes');
       return [] as WFNote[];
@@ -404,21 +410,21 @@ export class WorkfrontConnector implements SourceConnector {
 
     const taskIdSet = new Set(rawTasks.map((t) => t.ID));
 
-    // Classify notes: task/subtask notes vs project-level notes.
+    // Classify notes using noteObjCode when available, falling back to objID comparison.
     const projNotes: WFNote[] = [];
     const notesByTask = new Map<string, WFNote[]>();
     for (const n of allNotes) {
-      if (!n.objID || n.objID === projectId) {
-        // No objID means the note is attached directly to the project (WF omits objID
-        // for project-level notes when fetched via the projectID filter).
-        // Explicit objID === projectId is also a project-level note.
+      const noteObjCode = (n as unknown as Record<string, unknown>).noteObjCode as string | undefined;
+      const isProjectNote = noteObjCode === 'PROJ'
+        || (!noteObjCode && (!n.objID || n.objID === projectId));
+
+      if (isProjectNote) {
         projNotes.push(n);
-      } else if (taskIdSet.has(n.objID)) {
+      } else if (n.objID && taskIdSet.has(n.objID)) {
         if (!notesByTask.has(n.objID)) notesByTask.set(n.objID, []);
         notesByTask.get(n.objID)!.push(n);
       } else {
-        // Notes with other objIDs (milestones, etc.) are ignored.
-        logger.debug({ noteId: n.ID, objID: n.objID, projectId }, 'workfront: note with unclassified objID — skipped');
+        logger.debug({ noteId: n.ID, objID: n.objID, noteObjCode, projectId }, 'workfront: note with unclassified objID — skipped');
       }
     }
 
@@ -429,14 +435,31 @@ export class WorkfrontConnector implements SourceConnector {
     }
     const projNoteIdSet = new Set(projNotes.map((n) => n.ID));
 
-    // Fetch task/project docs (those with a projectID reference).
+    // Fetch task/project docs. currentVersion:ext gives the file extension (e.g. "docx").
+    // Fall back gracefully if that sub-field causes a 422 on this API version.
     const projectDocs = await this.getAll<WFDocument>('/document/search', {
       projectID: projectId,
-      fields:    'ID,name,downloadURL,objID',
+      fields:    'ID,name,objID,currentVersionID,currentVersion:ext',
     }).catch((err) => {
+      const status = (err as { statusCode?: number }).statusCode;
+      if (status === 422) {
+        logger.warn('workfront: currentVersion fields not supported — retrying without them');
+        return this.getAll<WFDocument>('/document/search', {
+          projectID: projectId,
+          fields:    'ID,name,objID',
+        }).catch((err2) => {
+          logger.warn({ err: err2 }, 'workfront: could not fetch project-scoped documents');
+          return [] as WFDocument[];
+        });
+      }
       logger.warn({ err }, 'workfront: could not fetch project-scoped documents');
       return [] as WFDocument[];
     });
+
+    // TEMP: log raw document fields to verify currentVersionID is returned.
+    if (projectDocs.length > 0) {
+      logger.info({ rawDoc: projectDocs[0] }, 'workfront: TEMP raw document dump');
+    }
 
     // All documents are captured by the project-scoped fetch and routed by objID.
     // Per-note doc fetches are not needed (confirmed via unrouted-doc analysis: 0 unrouted).
@@ -453,7 +476,7 @@ export class WorkfrontConnector implements SourceConnector {
     const projDocList: WFDocument[] = [];
 
     for (const doc of allDocs) {
-      if (!doc.objID || !doc.downloadURL) continue;
+      if (!doc.objID) continue;
       if (doc.objID === projectId) {
         // Directly attached to the project
         projDocList.push(doc);
@@ -484,7 +507,18 @@ export class WorkfrontConnector implements SourceConnector {
       taskDocs:   [...docsByTask.values()].reduce((s, arr) => s + arr.length, 0),
     }, 'workfront: fetch counts after parallel load');
 
-    const resolveDocUrl = this.resolveDocUrl.bind(this);
+    // Build a sentinel URL that authenticateAttachmentUrl will convert to the real
+    // download URL at transfer time. Format: wf-doc:{docId}:{versionId}
+    // Both IDs are needed: versionID for the download endpoint, ID for identification.
+    const docUrl = (d: WFDocument): string => `wf-doc:${d.ID}:${d.currentVersionID ?? ''}`;
+
+    // Append file extension from currentVersion.ext when available (e.g. "docx").
+    const docFilename = (d: WFDocument): string => {
+      const base = d.name ?? d.ID;
+      const ext  = d.currentVersion?.ext;
+      if (!ext) return base;
+      return base.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? base : `${base}.${ext}`;
+    };
 
     // Build a synthetic task for project-level notes and documents, if any exist.
     // Asana has no project-level comments/attachments concept, so we surface them
@@ -552,8 +586,8 @@ export class WorkfrontConnector implements SourceConnector {
 
     const projAttachments: NormalisedAttachment[] = projDocList.map((d) => ({
       id:       d.ID,
-      name:     d.name ?? d.ID,
-      url:      resolveDocUrl(d.downloadURL!),
+      name:     docFilename(d),
+      url:      docUrl(d),
       mimeType: undefined,
     }));
 
@@ -576,11 +610,11 @@ export class WorkfrontConnector implements SourceConnector {
       );
 
       const attachments: NormalisedAttachment[] = (docsByTask.get(raw.ID) ?? [])
-        .filter((d) => d.downloadURL)
+        .filter((d) => d.ID)
         .map((d) => ({
           id:         d.ID,
-          name:       d.name ?? d.ID,
-          url:        resolveDocUrl(d.downloadURL!),
+          name:       docFilename(d),
+          url:        docUrl(d),
           mimeType:   undefined,
         }));
 
@@ -636,9 +670,24 @@ export class WorkfrontConnector implements SourceConnector {
   }
 
   /**
-   * Workfront download URLs require apiKey authentication.
+   * Convert a wf-doc:{docId}:{versionId} sentinel into the real download URL.
+   * Binary downloads require the adobe.com domain and both ID + versionID params.
+   * apiKey auth works on this endpoint (no session cookie needed).
    */
   authenticateAttachmentUrl(url: string): string {
+    if (url.startsWith('wf-doc:')) {
+      const parts = url.slice('wf-doc:'.length).split(':');
+      const docId     = parts[0];
+      const versionId = parts[1] ?? '';
+      // Downloads must go to the .adobe.com variant of the domain — the standard
+      // .workfront.com domain serves the SPA shell instead of the binary.
+      const downloadOrigin = `https://${this.domain}.my.workfront.adobe.com`;
+      const qs = versionId
+        ? `versionID=${encodeURIComponent(versionId)}&ID=${encodeURIComponent(docId)}&apiKey=${encodeURIComponent(this.apiKey)}`
+        : `ID=${encodeURIComponent(docId)}&apiKey=${encodeURIComponent(this.apiKey)}`;
+      return `${downloadOrigin}/internal/document/download?${qs}`;
+    }
+    // Fallback for any raw URLs that slipped through.
     const sep = url.includes('?') ? '&' : '?';
     return `${url}${sep}apiKey=${encodeURIComponent(this.apiKey)}`;
   }

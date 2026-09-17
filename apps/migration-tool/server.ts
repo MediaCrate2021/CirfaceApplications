@@ -77,7 +77,7 @@ declare module 'express-session' {
     returnTo?: string;
     accessToken?: string;  // OAuth token — used only as an auth gate, never for Asana API calls
     user?: { gid: string; name: string; email: string };
-    sourceConfig?: { platform: SourcePlatform; token: string };
+    sourceConfig?: { platform: SourcePlatform; token: string; wfAuthToken?: string };
     destConfig?: { token: string; workspaceGid: string; workspaceName: string; patUserName: string };
     migrationInProgress?: boolean;
     trackingProject?: { gid: string; name: string; tokenSource: 'pat' | 'oauth' };
@@ -154,7 +154,12 @@ function countProjectItems(project: NormalisedProject) {
     return { subtasks, comments, attachments, dependencies };
   };
   let subtasks = 0, comments = 0, attachments = 0, dependencies = 0;
+  let projectComments = 0, projectAttachments = 0;
   for (const task of project.tasks) {
+    if (task.id.endsWith('--project-content')) {
+      projectComments = task.comments.length;
+      projectAttachments = task.attachments.length;
+    }
     const c = countDescendants(task, 0);
     subtasks += c.subtasks;
     comments += c.comments;
@@ -165,7 +170,7 @@ function countProjectItems(project: NormalisedProject) {
     { projectId: project.id, total: attachments, topLevel: topLevelAttachments, subtask: subtaskAttachments },
     'countProjectItems: attachment breakdown',
   );
-  return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies, statusUpdates: project.statusUpdates?.length ?? 0 };
+  return { tasks: project.tasks.length, subtasks, comments, attachments, dependencies, statusUpdates: project.statusUpdates?.length ?? 0, projectComments, projectAttachments };
 }
 
 /**
@@ -285,13 +290,13 @@ function apiError(res: express.Response, err: unknown, context: Record<string, u
   res.status(status >= 100 && status < 600 ? status : 500).json({ error: e.message });
 }
 
-function makeConnector(platform: SourcePlatform, token: string): SourceConnector {
+function makeConnector(platform: SourcePlatform, token: string, wfAuthToken?: string): SourceConnector {
   if (platform === 'monday') return new MondayConnector(token);
   if (platform === 'trello') return new TrelloConnector(token);
   if (platform === 'smartsheet') return new SmartsheetConnector(token);
   if (platform === 'asana') return new AsanaConnector(token);
   if (platform === 'wrike')     return new WrikeConnector(token);
-  if (platform === 'workfront') return new WorkfrontConnector(token);
+  if (platform === 'workfront') return new WorkfrontConnector(token, wfAuthToken);
   if (platform === 'airtable')  return new AirtableConnector(token);
   throw new Error(`Unknown platform: ${platform}`);
 }
@@ -434,16 +439,16 @@ app.get('/api/session/state', requireAuth, (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.post('/api/source/connect', requireAuth, async (req, res) => {
-  const { platform, token } = req.body as { platform: SourcePlatform; token: string };
+  const { platform, token, wfAuthToken } = req.body as { platform: SourcePlatform; token: string; wfAuthToken?: string };
 
   if (!platform || !token) {
     return res.status(400).json({ error: 'platform and token are required' });
   }
 
   try {
-    const connector = makeConnector(platform, token);
+    const connector = makeConnector(platform, token, wfAuthToken);
     const { workspaceName } = await connector.testConnection();
-    req.session.sourceConfig = { platform, token };
+    req.session.sourceConfig = { platform, token, wfAuthToken: wfAuthToken || undefined };
     logger.info({ user: req.session.user?.name, platform, workspaceName }, 'source connected');
     res.json({ ok: true, workspaceName });
   } catch (err) {
@@ -920,17 +925,18 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
 
   // Keepalive — send a comment every 20s to prevent Railway's proxy from
   // closing idle SSE connections during long fetch phases or rate-limit retries.
-  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 20_000);
+  const flushRes = () => { if (typeof (res as unknown as { flush?: () => void }).flush === 'function') (res as unknown as { flush: () => void }).flush(); };
+  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); flushRes(); }, 20_000);
 
   const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); flushRes(); } catch { /* connection closed */ }
   };
 
   try {
-    const { platform, token: sourceToken } = req.session.sourceConfig;
+    const { platform, token: sourceToken, wfAuthToken } = req.session.sourceConfig;
     const { token: destToken, workspaceGid } = req.session.destConfig;
 
-    const connector = makeConnector(platform, sourceToken);
+    const connector = makeConnector(platform, sourceToken, wfAuthToken);
     // Smartsheet pre-signed URLs expire quickly. refreshAttachmentUrl needs the
     // sheet ID to re-fetch a fresh URL, but it's only set inside getProjectData.
     // When we use a cached project we skip getProjectData, so set it explicitly.
@@ -1000,6 +1006,7 @@ app.post('/api/migrate', requireAuth, async (req, res) => {
       subitemFieldIdRemap,
       refreshAttachmentUrl: connector.refreshAttachmentUrl?.bind(connector),
       authenticateAttachmentUrl: connector.authenticateAttachmentUrl?.bind(connector),
+      attachmentFetchOptions: connector.attachmentFetchOptions,
       sourceCount,
       skipAttachments: skipAttachments === true,
       shellOnly: shellOnly === true,
@@ -1054,6 +1061,13 @@ app.post('/api/migrate/cancel', requireAuth, (req, res) => {
 // Analysis — streaming via SSE (analyze-only mode)
 // ---------------------------------------------------------------------------
 
+app.get('/api/analyze/status', requireAuth, (req, res) => {
+  res.json({
+    inProgress: req.session.analysisInProgress ?? false,
+    hasReport:  !!req.session.lastAnalysisReport,
+  });
+});
+
 app.post('/api/analyze/prepare', requireAuth, (req, res) => {
   if (!req.session.sourceConfig) return res.status(400).json({ error: 'Source not connected' });
   const { projectIds, trackingProjectGid, trackingPortfolioGid } = req.body as {
@@ -1065,6 +1079,8 @@ app.post('/api/analyze/prepare', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'projectIds must be a non-empty array' });
   }
   req.session.pendingAnalysis = { projectIds, trackingProjectGid, trackingPortfolioGid };
+  req.session.analysisInProgress = false;
+  req.session.lastAnalysisReport = undefined;
   req.session.save((err) => {
     if (err) logger.error({ err }, 'session save failed on analyze prepare');
     res.json({ ok: true, count: projectIds.length });
@@ -1108,10 +1124,11 @@ app.get('/api/analyze', requireAuth, async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); }, 20_000);
+  const flushRes2 = () => { if (typeof (res as unknown as { flush?: () => void }).flush === 'function') (res as unknown as { flush: () => void }).flush(); };
+  const keepalive = setInterval(() => { res.write(': keepalive\n\n'); flushRes2(); }, 20_000);
 
   const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); flushRes2(); } catch { /* connection closed */ }
   };
 
   req.session.analysisInProgress = true;
