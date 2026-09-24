@@ -753,8 +753,10 @@ export class AsanaDestination {
           const num = parseFloat(String(value));
           if (!isNaN(num)) customFields[destGid] = num;
         } else {
-          // text / unknown — Asana strictly requires a string for text_value
-          if (value !== null) customFields[destGid] = Array.isArray(value) ? value.join(', ') : String(value);
+          // text / unknown — Asana strictly requires a plain string for text_value.
+          // Strip HTML tags first: WF PARA/RICH fields and descriptions can contain markup
+          // that Asana's API rejects with a generic 500 error.
+          if (value !== null) customFields[destGid] = this.htmlToText(Array.isArray(value) ? value.join(', ') : String(value));
         }
       }
 
@@ -825,7 +827,7 @@ export class AsanaDestination {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (Object.keys(customFields).length > 0) {
-          logger.warn({ err, taskId: task.id }, 'task creation failed — retrying without custom fields');
+          logger.warn({ err, taskId: task.id, customFieldKeys: Object.keys(customFields), customFieldSample: Object.fromEntries(Object.entries(customFields).slice(0, 5).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 120) : v])) }, 'task creation failed — retrying without custom fields');
           const { custom_fields: _dropped, ...payloadWithoutFields } = payload as Record<string, unknown>;
           created = await this.request<{ gid: string }>('POST', '/tasks', payloadWithoutFields as Record<string, unknown>);
           // Post dropped field values as a comment so data is not silently lost
@@ -1034,8 +1036,10 @@ export class AsanaDestination {
           const num = parseFloat(String(value));
           if (!isNaN(num)) customFields[destGid] = num;
         } else {
-          // text / unknown — Asana strictly requires a string for text_value
-          if (value !== null) customFields[destGid] = Array.isArray(value) ? value.join(', ') : String(value);
+          // text / unknown — Asana strictly requires a plain string for text_value.
+          // Strip HTML tags first: WF PARA/RICH fields and descriptions can contain markup
+          // that Asana's API rejects with a generic 500 error.
+          if (value !== null) customFields[destGid] = this.htmlToText(Array.isArray(value) ? value.join(', ') : String(value));
         }
       }
 
@@ -1091,7 +1095,7 @@ export class AsanaDestination {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (Object.keys(customFields).length > 0) {
-          logger.warn({ err, subtaskId: subtask.id }, 'subtask creation failed — retrying without custom fields');
+          logger.warn({ err, subtaskId: subtask.id, customFieldKeys: Object.keys(customFields), customFieldSample: Object.fromEntries(Object.entries(customFields).slice(0, 5).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 120) : v])) }, 'subtask creation failed — retrying without custom fields');
           const { custom_fields: _dropped, ...payloadWithoutFields } = payload as Record<string, unknown>;
           created = await this.request<{ gid: string }>('POST', '/tasks', payloadWithoutFields);
           // Write dropped field values as a comment so data is not silently lost

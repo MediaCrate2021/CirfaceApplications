@@ -11,20 +11,100 @@ interface Props {
   onBack: () => void;
 }
 
+// ---------------------------------------------------------------------------
+// Page cache — avoids re-fetching project/team lists when navigating back
+// ---------------------------------------------------------------------------
+
+interface SpCache {
+  sourcePlatform: string;
+  sourceWorkspaceName: string;
+  sourceWorkspaces: Array<{ id: string; name: string }>;
+  selectedSourceWorkspace: string;
+  sourceTeams: Array<{ id: string; name: string }>;
+  selectedSourceTeam: string;
+  sourceProjects: Array<{ id: string; name: string }>;
+  includeArchived: boolean;
+  destWorkspaces: Array<{ id: string; name: string }>;
+  selectedDestWorkspaceGid: string;
+  destTeams: Array<{ gid: string; name: string }>;
+  selectedTeamGid: string;
+  destProjects: Array<{ gid: string; name: string }>;
+}
+
+const SP_CACHE_KEY = 'sp_cache';
+
+function readSpCache(): SpCache | null {
+  try {
+    const raw = sessionStorage.getItem(SP_CACHE_KEY);
+    return raw ? JSON.parse(raw) as SpCache : null;
+  } catch { return null; }
+}
+
+function writeSpCache(data: SpCache): void {
+  try { sessionStorage.setItem(SP_CACHE_KEY, JSON.stringify(data)); } catch {}
+}
+
+function clearSpCache(): void {
+  try { sessionStorage.removeItem(SP_CACHE_KEY); } catch {}
+}
+
+// ---------------------------------------------------------------------------
+
 export default function SelectProjects({ state, onSelect, onBack }: Props) {
-  const [sourceWorkspaces, setSourceWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedSourceWorkspace, setSelectedSourceWorkspace] = useState('');
-  const [sourceTeams, setSourceTeams] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedSourceTeam, setSelectedSourceTeam] = useState('');
-  const [sourceProjects, setSourceProjects]   = useState<SourceProject[]>([]);
-  const [destWorkspaces, setDestWorkspaces]   = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedDestWorkspaceGid, setSelectedDestWorkspaceGid] = useState(state.destWorkspaceGid ?? '');
+  // Read and validate cache once at init — discard if the source connection changed
+  const [cache] = useState<SpCache | null>(() => {
+    const raw = readSpCache();
+    if (!raw) return null;
+    if (raw.sourcePlatform !== (state.sourcePlatform ?? '') ||
+        raw.sourceWorkspaceName !== (state.sourceWorkspaceName ?? '')) return null;
+    return raw;
+  });
+
+  // Mutable ref tracks full cache payload so incremental updates are cheap
+  const cacheRef = useRef<SpCache>(cache ?? {
+    sourcePlatform:          state.sourcePlatform ?? '',
+    sourceWorkspaceName:     state.sourceWorkspaceName ?? '',
+    sourceWorkspaces:        [],
+    selectedSourceWorkspace: '',
+    sourceTeams:             [],
+    selectedSourceTeam:      '',
+    sourceProjects:          [],
+    includeArchived:         false,
+    destWorkspaces:          [],
+    selectedDestWorkspaceGid: state.destWorkspaceGid ?? '',
+    destTeams:               [],
+    selectedTeamGid:         state.selectedDestTeamGid ?? '',
+    destProjects:            [],
+  });
+
+  function updateCache(partial: Partial<SpCache>): void {
+    cacheRef.current = { ...cacheRef.current, ...partial };
+    writeSpCache(cacheRef.current);
+  }
+
+  // One-time skip flags — prevent re-fetching on mount when cache is available.
+  // Each flag is cleared after its first skip so filter changes still trigger fetches.
+  const skips = useRef({
+    workspaces:     !!cache,
+    sourceTeams:    !!cache,
+    sourceProjects: !!cache,
+    destTeams:      !!cache,
+    destProjects:   !!cache,
+  });
+
+  const [sourceWorkspaces, setSourceWorkspaces] = useState<Array<{ id: string; name: string }>>(cache?.sourceWorkspaces ?? []);
+  const [selectedSourceWorkspace, setSelectedSourceWorkspace] = useState(cache?.selectedSourceWorkspace ?? '');
+  const [sourceTeams, setSourceTeams] = useState<Array<{ id: string; name: string }>>(cache?.sourceTeams ?? []);
+  const [selectedSourceTeam, setSelectedSourceTeam] = useState(cache?.selectedSourceTeam ?? '');
+  const [sourceProjects, setSourceProjects]   = useState<SourceProject[]>(cache?.sourceProjects ?? []);
+  const [destWorkspaces, setDestWorkspaces]   = useState<Array<{ id: string; name: string }>>(cache?.destWorkspaces ?? []);
+  const [selectedDestWorkspaceGid, setSelectedDestWorkspaceGid] = useState(cache?.selectedDestWorkspaceGid ?? state.destWorkspaceGid ?? '');
   const [destWorkspaceVersion, setDestWorkspaceVersion] = useState(0);
-  const [teams, setTeams]                     = useState<AsanaTeam[]>([]);
-  const [destProjects, setDestProjects]       = useState<AsanaProject[]>([]);
+  const [teams, setTeams]                     = useState<AsanaTeam[]>(cache?.destTeams ?? []);
+  const [destProjects, setDestProjects]       = useState<AsanaProject[]>(cache?.destProjects ?? []);
   const [selectedSource, setSelectedSource]   = useState(state.selectedSourceProjectId ?? '');
   const [destMode, setDestMode]               = useState<'existing' | 'new'>(state.isNewDestProject ? 'new' : 'existing');
-  const [selectedTeamGid, setSelectedTeamGid] = useState(state.selectedDestTeamGid ?? '');
+  const [selectedTeamGid, setSelectedTeamGid] = useState(cache?.selectedTeamGid ?? state.selectedDestTeamGid ?? '');
   const [newProjectName, setNewProjectName]   = useState(state.isNewDestProject ? (state.selectedDestProjectName ?? '') : '');
 
   // Project owner (new projects only)
@@ -42,13 +122,13 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   const typeaheadRef = useRef<HTMLDivElement>(null);
 
   const [loadingSource, setLoadingSource]   = useState(false);
-  const [loadingTeams, setLoadingTeams]     = useState(true);
+  const [loadingTeams, setLoadingTeams]     = useState(!cache); // false when restored from cache
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState('');
   const [reloadCount, setReloadCount] = useState(0);
 
   const [sourceSearch, setSourceSearch]     = useState('');
-  const [includeArchived, setIncludeArchived] = useState(false);
+  const [includeArchived, setIncludeArchived] = useState(cache?.includeArchived ?? false);
 
   // Smartsheet manual ID / link entry
   const [sheetIdInput, setSheetIdInput]     = useState('');
@@ -103,6 +183,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     setSelectedTeamGid('');
     setSelectedDest('');
     setProjectQuery('');
+    updateCache({ selectedDestWorkspaceGid: gid, selectedTeamGid: '', destProjects: [] });
     await fetch('/api/session/dest-workspace', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -112,6 +193,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   }
 
   function handleReload() {
+    clearSpCache();
     fetch('/api/session/reset-project', { method: 'POST' }).catch(() => {});
     setSelectedSource('');
     setSelectedSourceWorkspace('');
@@ -126,38 +208,49 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
   // Load source workspaces, destination workspaces on mount (and on reload)
   useEffect(() => {
+    if (skips.current.workspaces) { skips.current.workspaces = false; return; }
+
     fetch('/api/source/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
       .then((ws) => {
         setSourceWorkspaces(ws);
-        if (ws.length > 0 && !selectedSourceWorkspace) setSelectedSourceWorkspace(ws[0].id);
+        updateCache({ sourceWorkspaces: ws });
+        if (ws.length > 0 && !selectedSourceWorkspace) {
+          setSelectedSourceWorkspace(ws[0].id);
+          updateCache({ selectedSourceWorkspace: ws[0].id });
+        }
       })
       .catch(() => { /* workspaces are optional — fail silently */ });
 
     fetch('/api/destination/workspaces')
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
-      .then((ws) => setDestWorkspaces(ws))
+      .then((ws) => { setDestWorkspaces(ws); updateCache({ destWorkspaces: ws }); })
       .catch(() => { /* fail silently — workspace picker is optional */ });
   }, [reloadCount]);
 
   // Reload source teams when source workspace changes
   useEffect(() => {
+    if (skips.current.sourceTeams) { skips.current.sourceTeams = false; return; }
+
     const url = selectedSourceWorkspace
       ? `/api/source/teams?workspaceId=${selectedSourceWorkspace}`
       : '/api/source/teams';
     fetch(url)
       .then((r) => r.json() as Promise<Array<{ id: string; name: string }>>)
-      .then((ts) => setSourceTeams(ts))
+      .then((ts) => { setSourceTeams(ts); updateCache({ sourceTeams: ts }); })
       .catch(() => { /* teams are optional */ });
     setSelectedSourceTeam('');
+    updateCache({ selectedSourceTeam: '' });
   }, [selectedSourceWorkspace, reloadCount]);
 
   // Reload destination teams when workspace changes (or on reload)
   useEffect(() => {
+    if (skips.current.destTeams) { skips.current.destTeams = false; return; }
+
     setLoadingTeams(true);
     fetch('/api/destination/teams')
       .then((r) => r.json() as Promise<AsanaTeam[]>)
-      .then((t) => { setTeams(t); setLoadingTeams(false); })
+      .then((t) => { setTeams(t); setLoadingTeams(false); updateCache({ destTeams: t }); })
       .catch(() => {
         // Teams endpoint may fail for non-org workspaces — fall back to all projects
         setLoadingTeams(false);
@@ -168,6 +261,8 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
   useEffect(() => {
     if (sourceWorkspaces.length > 0 && !selectedSourceWorkspace) return;
     if (sourceTeams.length > 0 && !selectedSourceTeam) return;
+    if (skips.current.sourceProjects) { skips.current.sourceProjects = false; return; }
+
     setLoadingSource(true);
     setSelectedSource('');
     const params = new URLSearchParams();
@@ -177,7 +272,12 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
     const url = params.size > 0 ? `/api/source/projects?${params}` : '/api/source/projects';
     fetch(url)
       .then((r) => r.json() as Promise<SourceProject[]>)
-      .then((src) => { setSourceProjects([...src].sort((a, b) => a.name.localeCompare(b.name))); setLoadingSource(false); })
+      .then((src) => {
+        const sorted = [...src].sort((a, b) => a.name.localeCompare(b.name));
+        setSourceProjects(sorted);
+        setLoadingSource(false);
+        updateCache({ sourceProjects: sorted, selectedSourceWorkspace, selectedSourceTeam, includeArchived });
+      })
       .catch(() => { setError('Failed to load source projects'); setLoadingSource(false); });
   }, [sourceWorkspaces.length, sourceTeams.length, selectedSourceWorkspace, selectedSourceTeam, includeArchived, reloadCount]);
 
@@ -190,6 +290,8 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
   // Reload destination projects when team changes
   useEffect(() => {
+    if (skips.current.destProjects) { skips.current.destProjects = false; return; }
+
     setLoadingProjects(true);
     setDestProjects([]);
     setSelectedDest('');
@@ -201,7 +303,12 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
 
     fetch(url)
       .then((r) => r.json() as Promise<AsanaProject[]>)
-      .then((projects) => { setDestProjects([...projects].sort((a, b) => a.name.localeCompare(b.name))); setLoadingProjects(false); })
+      .then((projects) => {
+        const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
+        setDestProjects(sorted);
+        setLoadingProjects(false);
+        updateCache({ destProjects: sorted, selectedTeamGid });
+      })
       .catch(() => { setError('Failed to load destination projects'); setLoadingProjects(false); });
   }, [selectedTeamGid]);
 
@@ -488,7 +595,7 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
                 <select
                   id="dest-team"
                   value={selectedTeamGid}
-                  onChange={(e) => setSelectedTeamGid(e.target.value)}
+                  onChange={(e) => { setSelectedTeamGid(e.target.value); updateCache({ selectedTeamGid: e.target.value }); }}
                 >
                   <option value="">— All teams —</option>
                   {teams.map((t) => (
