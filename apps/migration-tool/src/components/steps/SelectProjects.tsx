@@ -374,25 +374,31 @@ export default function SelectProjects({ state, onSelect, onBack }: Props) {
               {sourceProjects.length > 10 && (
                 <input
                   type="search"
-                  placeholder="Search projects…"
+                  placeholder={sourceProjects.length > 200 ? 'Type to search projects…' : 'Search projects…'}
                   value={sourceSearch}
                   onChange={(e) => { setSourceSearch(e.target.value); setSelectedSource(''); }}
                   style={{ marginBottom: '6px' }}
                   autoComplete="off"
                 />
               )}
-              <select
-                id="source-project"
-                value={selectedSource}
-                onChange={(e) => { setSelectedSource(e.target.value); setSheetIdInput(''); setSheetIdError(''); }}
-              >
-                <option value="">— Select a project —</option>
-                {sourceProjects
-                  .filter((p) => !sourceSearch.trim() || p.name.toLowerCase().includes(sourceSearch.toLowerCase().trim()))
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-              </select>
+              {sourceProjects.length > 200 && !sourceSearch.trim() ? (
+                <p className="field-hint" style={{ marginTop: 0 }}>
+                  {sourceProjects.length.toLocaleString()} projects loaded — type above to filter, or paste an ID / link below.
+                </p>
+              ) : (
+                <select
+                  id="source-project"
+                  value={selectedSource}
+                  onChange={(e) => { setSelectedSource(e.target.value); setSheetIdInput(''); setSheetIdError(''); }}
+                >
+                  <option value="">— Select a project —</option>
+                  {sourceProjects
+                    .filter((p) => !sourceSearch.trim() || p.name.toLowerCase().includes(sourceSearch.toLowerCase().trim()))
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                </select>
+              )}
               {state.sourcePlatform === 'workfront' && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '0.875rem', cursor: 'pointer' }}>
                   <input

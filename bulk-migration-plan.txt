@@ -1,0 +1,297 @@
+BULK ASANA-TO-ASANA MIGRATION — IMPLEMENTATION PLAN
+=====================================================
+Generated: 2026-07-14
+
+
+OVERVIEW
+--------
+Migrate 80+ Asana projects in a single job run. Field and user mappings are configured once
+before the job starts. The job runs independently of the web session, checkpoints progress to
+both a local file and Asana, and can resume from any failure point — including mid-project at
+the task level.
+
+
+PART 1 — ANALYZER CHANGES
+--------------------------
+Goal: Surface common and library custom fields across all selected Asana source projects so
+the user can map them once.
+
+New concept: "Common fields"
+  - A field is *common* if it appears in 2+ projects with the same GID (library/org-level field)
+    OR the same name and type
+  - Library fields (already flagged isLibraryField: true) are the primary target
+  - Project-level fields that happen to share name+type are secondary — shown separately
+
+Analyzer additions (Asana-to-Asana only):
+
+1. After all projects are analyzed, the server aggregates fields[] across all ProjectAnalysis results
+2. Groups fields by GID (library) and by name+type (name-match)
+3. Returns a commonFields array in AnalysisReport:
+
+  interface CommonFieldSummary {
+    fieldId: string;          // GID (for library) or synthetic ID (for name-match)
+    fieldName: string;
+    fieldType: NormalisedFieldType;
+    isLibraryField: boolean;
+    projectCount: number;     // how many selected projects use this field
+    options?: NormalisedFieldOption[];
+  }
+
+  interface AnalysisReport {
+    // ... existing fields ...
+    commonFields?: CommonFieldSummary[];  // Asana-to-Asana only
+  }
+
+4. The estimator report UI (Asana source only) shows a "Common Fields" section: table of
+   field name, type, library vs. project-level, and how many projects use it. This gives the
+   user visibility before starting the bulk run.
+
+
+PART 2 — JOB ARCHITECTURE
+--------------------------
+Key constraint: HTTP sessions time out. A bulk job processing 80 projects (~hours) cannot be
+tied to a single HTTP request or session-bound state.
+
+Solution: BulkJobManager — server-level singleton
+
+  apps/migrator/server.ts
+    └── BulkJobManager (module-level, not session-bound)
+          ├── Active job state (in-memory)
+          ├── Job state file (Railway filesystem)
+          └── Asana checkpoint task (durable)
+
+The BulkJobManager:
+  - Lives at the module level in server.ts (or extracted to bulkJobManager.ts)
+  - Survives individual HTTP requests
+  - Exposes SSE endpoint for streaming live status to the frontend
+  - Can be polled for current state if the SSE reconnects
+
+
+PART 3 — JOB STATE FILE SCHEMA
+--------------------------------
+Written to a local file (e.g., /tmp/bulk-job-{jobId}.json) after every checkpoint event.
+
+  interface BulkJobState {
+    jobId: string;
+    startedAt: string;
+    sourcePlatform: 'asana';
+    projects: BulkProjectState[];
+    fieldMapping: FieldMappingEntry[];       // common/library fields mapped once
+    userMapping: UserMappingEntry[];
+    checkpointTaskGid?: string;             // GID of the Asana checkpoint task
+    checkpointTaskProjectGid?: string;      // project the checkpoint task lives in
+    completedAt?: string;
+    cancelledAt?: string;
+  }
+
+  type ProjectStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+
+  interface BulkProjectState {
+    sourceProjectId: string;
+    sourceProjectName: string;
+    destProjectGid?: string;       // set after project is created in Asana
+    status: ProjectStatus;
+    startedAt?: string;
+    completedAt?: string;
+    errorMessage?: string;
+    // Task-level checkpoint — index into the flat task list (post-section-sort order)
+    lastCompletedTaskIndex?: number;
+    totalTasks?: number;
+    migratedTasks?: number;
+    migratedSubtasks?: number;
+    // Per-project report, populated when status = 'completed'
+    report?: MigrationReport;
+  }
+
+Checkpoint write triggers:
+  1. After each project completes (success or failure)
+  2. Every N tasks within a project (configurable, default 25)
+  3. After user cancels
+
+
+PART 4 — ASANA CHECKPOINT TASK
+--------------------------------
+A task is created in a designated Asana project (configurable via env var
+BULK_CHECKPOINT_PROJECT_GID) at job start. After each project and each N-task batch, the task
+notes are updated with the current serialized BulkJobState JSON.
+
+Why: Railway filesystem is ephemeral. If the container restarts mid-job, the state file is
+gone. The Asana task survives. On resume, the server checks for an existing checkpoint task first.
+
+Task format:
+  - Name: "Bulk Migration Job {jobId} — {status}"
+  - Notes: full JSON of BulkJobState (truncated to Asana's 65535-char limit if needed;
+    if too large, post as attachment instead)
+  - Attachments: full state JSON as .json file for jobs with many projects
+
+Cleanup: After successful job completion, the checkpoint task is marked complete and the local
+file is deleted. The final aggregate report is posted as a separate Asana task (existing report flow).
+
+
+PART 5 — RESUME LOGIC
+-----------------------
+On job start, the server checks:
+  1. Is there an existing BulkJobState file in /tmp/?
+  2. Is there an Asana checkpoint task with a recent update?
+
+If yes, the user is shown a "Resume incomplete job" prompt in the UI. They can resume or
+start fresh.
+
+Resume algorithm:
+  1. Load BulkJobState from checkpoint
+  2. Skip all projects where status === 'completed'
+  3. For projects where status === 'failed': retry from the beginning (or from
+     lastCompletedTaskIndex if partial)
+  4. For the project where status === 'in_progress': resume from lastCompletedTaskIndex + 1
+       - The destination project GID is already in state (destProjectGid) — skip project creation
+       - Reconstruct the task list from source, slice from the checkpoint index
+  5. For projects where status === 'pending': run normally
+
+Mid-project task recovery detail:
+  - Before starting a project, the full task list is fetched and sorted into execution order
+    (sections -> tasks within sections)
+  - This ordered list is stored in memory as taskQueue
+  - lastCompletedTaskIndex is the index into this queue
+  - On resume, the task queue is rebuilt from source (same fetch), then sliced to
+    [lastCompletedTaskIndex + 1:]
+  - Tasks already migrated are left in place in Asana — no duplication check needed because
+    we track the exact index
+
+
+PART 6 — FIELD MAPPING STRATEGY
+---------------------------------
+Before the job starts, a one-time mapping step:
+
+  1. Analyzer identifies commonFields (library fields + name-match fields appearing in 2+ projects)
+  2. User maps these in the bulk wizard:
+       - Library fields -> map to existing org-level field GID or create new
+       - Name-match fields -> map once, reuse across projects
+  3. Project-level fields unique to a single project -> auto "create new project-level field"
+     (no user action)
+  4. The resulting FieldMappingEntry[] is stored in BulkJobState.fieldMapping
+
+At migration time per project:
+  - For each project's fields: look up fieldMapping by field GID (library) or name+type (name-match)
+  - If found: use the mapped destination
+  - If not found: auto-create as project-level field (same as current single-project behavior)
+
+This avoids: asking the user to map the same "Status" or "Priority" field 80 times.
+
+
+PART 7 — NEW UI WIZARD STEPS (BULK MODE)
+-----------------------------------------
+The existing wizard is single-project. Bulk mode adds a parallel flow:
+
+  Step 0: Select Mode
+    ├── Single project (existing flow)
+    └── Bulk migration (new flow) ↓
+
+  Step 1: Select Projects (existing SelectProjects, multi-select)
+
+  Step 2: Analyze (run analyzer across all selected projects)
+    └── Shows: per-project counts + common fields table
+
+  Step 3: Map Common Fields
+    └── Same field mapping UI, but only shows common/library fields
+    └── "All other fields will be created automatically per project"
+
+  Step 4: Map Users (existing user mapping UI, users unioned across all projects)
+
+  Step 5: Configure Job
+    └── Destination workspace
+    └── Skip attachments? (Y/N)
+    └── Tasks-per-checkpoint (default 25)
+    └── Checkpoint project GID (pre-filled from env var)
+
+  Step 6: Run
+    └── SSE progress stream
+    └── Per-project status table (pending / in_progress / done / failed)
+    └── Cancel button
+    └── "Resume from checkpoint" prompt if applicable
+
+  Step 7: Aggregate Report
+
+
+PART 8 — SERVER ENDPOINTS
+---------------------------
+  POST  /api/bulk/start       Start a new bulk job; body contains project list, mappings, config
+  POST  /api/bulk/resume      Resume from checkpoint file or Asana task
+  GET   /api/bulk/status      Returns current BulkJobState snapshot
+  GET   /api/bulk/stream      SSE endpoint — pushes progress events
+  POST  /api/bulk/cancel      Graceful cancel — finishes current task, writes checkpoint
+  GET   /api/bulk/checkpoint  Checks for an existing checkpoint (for "resume" prompt)
+
+SSE event types:
+  { type: 'project_start',  projectId, projectName, index, total }
+  { type: 'project_done',   projectId, report }
+  { type: 'project_failed', projectId, error }
+  { type: 'task_progress',  projectId, taskIndex, totalTasks }
+  { type: 'job_done',       aggregateReport }
+  { type: 'job_cancelled',  checkpointSaved: boolean }
+
+
+PART 9 — AGGREGATE REPORT
+---------------------------
+  interface BulkMigrationReport {
+    jobId: string;
+    startedAt: string;
+    completedAt: string;
+    sourcePlatform: 'asana';
+    totalProjects: number;
+    completedProjects: number;
+    failedProjects: number;
+    skippedProjects: number;
+    totals: {
+      tasks: number;
+      subtasks: number;
+      comments: number;
+      attachments: number;
+      statusUpdates: number;
+      dependencies: number;
+    };
+    projectSummaries: Array<{
+      sourceProjectId: string;
+      sourceProjectName: string;
+      destProjectGid?: string;
+      status: ProjectStatus;
+      errorMessage?: string;
+      counts?: { tasks: number; subtasks: number; /* ... */ };
+    }>;
+    trackingTaskGid?: string;  // GID of report task posted to Asana
+  }
+
+The aggregate report is posted to Asana as a task in the tracking project (same as
+single-project flow), with each project's individual report attached as sub-notes or in the
+task description.
+
+
+PART 10 — FILE CLEANUP STRATEGY
+---------------------------------
+At job end (success or cancel):
+  1. Post full BulkJobState JSON as attachment to the checkpoint task in Asana (durable archive)
+  2. Post aggregate report as a new tracking task (existing flow)
+  3. Delete /tmp/bulk-job-{jobId}.json
+  4. Mark checkpoint task complete (or add a comment "Job completed successfully")
+
+On container restart mid-job:
+  1. At server startup, scan /tmp/ for any bulk-job-*.json files
+  2. If found, log a warning and set a "resumable job available" flag
+  3. The UI polls /api/bulk/checkpoint on load and shows the resume prompt
+
+
+OPEN QUESTIONS BEFORE IMPLEMENTATION
+--------------------------------------
+1. Checkpoint project GID — what Asana project should checkpoint tasks live in?
+   Probably the same tracking project used for reports.
+
+2. N-task checkpoint interval — 25 tasks is a reasonable default, but for very large
+   projects (500+ tasks) you may want 50.
+
+3. Failure policy — on project failure, should the job stop or continue with the next project?
+   Recommend: continue (log the failure, mark project as 'failed', move on).
+
+4. Auth during long runs — Railway's session-less architecture means this isn't a problem,
+   but the Asana PAT needs to be valid for the full duration. No token refresh needed for PATs.
+
+5. UI for bulk mode — add to the existing estimator wizard, or a separate /bulk route?
+   Recommend: separate route, shares the same step components where possible.

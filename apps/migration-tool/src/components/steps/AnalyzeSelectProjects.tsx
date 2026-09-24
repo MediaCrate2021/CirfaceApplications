@@ -25,6 +25,11 @@ export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props
   const [error, setError] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
 
+  // Paste-to-select
+  const [pasteInput, setPasteInput] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteResult, setPasteResult] = useState<{ matched: number; unmatched: string[] } | null>(null);
+
   // Load workspaces on mount — auto-select first
   useEffect(() => {
     fetch('/api/source/workspaces')
@@ -83,6 +88,28 @@ export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props
     } else {
       setChecked((prev) => { const next = new Set(prev); filtered.forEach((p) => next.add(p.id)); return next; });
     }
+  }
+
+  function handlePasteSelect() {
+    const lines = pasteInput
+      .split('\n')
+      .map((line) => line.split('\t')[0].trim())  // take first column if pasted from a spreadsheet
+      .filter(Boolean);
+
+    const unmatched: string[] = [];
+    const nextChecked = new Set(checked);
+    for (const line of lines) {
+      const lower = line.toLowerCase();
+      const match = projects.find((p) => p.name.toLowerCase() === lower);
+      if (match) {
+        nextChecked.add(match.id);
+      } else {
+        unmatched.push(line);
+      }
+    }
+    setChecked(nextChecked);
+    setPasteResult({ matched: lines.length - unmatched.length, unmatched });
+    setPasteInput('');
   }
 
   function handleContinue() {
@@ -166,6 +193,53 @@ export default function AnalyzeSelectProjects({ state, onSelect, onBack }: Props
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+          </div>
+
+          <div className="field-group" style={{ marginBottom: '16px' }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => { setPasteOpen((o) => !o); setPasteResult(null); }}
+            >
+              {pasteOpen ? '▲ Hide paste list' : '▼ Paste list to select'}
+            </button>
+            {pasteOpen && (
+              <div style={{ marginTop: '10px' }}>
+                <p className="field-hint">Paste project names, one per line. Names are matched case-insensitively.</p>
+                <textarea
+                  rows={8}
+                  style={{ width: '100%', maxWidth: '480px', fontFamily: 'monospace', fontSize: '0.85rem', resize: 'vertical' }}
+                  placeholder={"Project Alpha\nProject Beta\nProject Gamma"}
+                  value={pasteInput}
+                  onChange={(e) => { setPasteInput(e.target.value); setPasteResult(null); }}
+                />
+                <div style={{ marginTop: '8px' }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handlePasteSelect}
+                    disabled={!pasteInput.trim()}
+                  >
+                    Select matching
+                  </button>
+                </div>
+                {pasteResult && (
+                  <div style={{ marginTop: '10px' }}>
+                    <p className="field-hint" style={{ color: 'var(--color-success, green)' }}>
+                      {pasteResult.matched} project{pasteResult.matched === 1 ? '' : 's'} matched and selected.
+                    </p>
+                    {pasteResult.unmatched.length > 0 && (
+                      <div>
+                        <p className="field-hint" style={{ color: 'var(--color-error, red)' }}>
+                          {pasteResult.unmatched.length} name{pasteResult.unmatched.length === 1 ? '' : 's'} not found:
+                        </p>
+                        <ul className="field-hint" style={{ margin: '4px 0 0 16px', color: 'var(--color-error, red)' }}>
+                          {pasteResult.unmatched.map((name) => <li key={name}>{name}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="project-checklist">
